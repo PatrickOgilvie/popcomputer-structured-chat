@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "noEmit": true,
+    "rootDir": ".",
+    "paths": {
+      "@popcomputer/structured-chat": ["./src/index.ts"],
+      "@popcomputer/structured-chat/assistant-ui": [
+        "./src/integrations/assistant-ui.tsx"
+      ],
+      "@popcomputer/structured-chat/testing": ["./src/testing.ts"]
+    }
+  },
+  "include": ["examples/**/*.ts", "examples/**/*.tsx"]
+}
