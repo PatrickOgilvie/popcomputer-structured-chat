@@ -50,17 +50,17 @@ export const PromptInjectionPolicy = defineModelGuard({
     ),
 })
 
-const SearchAgencies = defineTool({
-  name: "search_agencies",
-  description: "Find agencies relevant to the project brief.",
+const FindResources = defineTool({
+  name: "find_resources",
+  description: "Find resources relevant to the request.",
   input: Schema.Struct({ query: Schema.NonEmptyTrimmedString }),
   execute: ({ query }) => Effect.succeed({ query }),
 })
 
 /** Closed search stage protected by the application policy. */
-export const Matching = Stage.tools({
-  name: "matching",
-  instructions: ["Route the completed brief to one search."],
-  tools: [SearchAgencies],
+export const Lookup = Stage.tools({
+  name: "lookup",
+  instructions: ["Route the completed request to one resource lookup."],
+  tools: [FindResources],
   guards: [PromptInjectionPolicy],
 })

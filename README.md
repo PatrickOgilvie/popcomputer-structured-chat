@@ -28,40 +28,40 @@ import {
   Stage,
   Tool,
 } from "@popcomputer/structured-chat"
-import { Effect, Schema } from "effect"
+import { Schema } from "effect"
 
-const AgencyCards = defineView({
-  name: "agency_cards",
+const ResultCards = defineView({
+  name: "result_cards",
   version: 1,
   schema: Schema.Struct({
-    agencies: Schema.Array(
+    results: Schema.Array(
       Schema.Struct({
         id: Schema.String,
-        name: Schema.String,
-        reason: Schema.String,
+        title: Schema.String,
+        summary: Schema.String,
       }),
     ),
   }),
 })
 
-const SearchAgencies = defineTool({
-  name: "search_agencies",
-  description: "Find agencies relevant to the completed project brief.",
+const FindResources = defineTool({
+  name: "find_resources",
+  description: "Find resources relevant to the completed request.",
   input: Schema.Struct({ query: Schema.NonEmptyTrimmedString }),
-  execute: ({ query }) => AgencySearch.find(query),
+  execute: ({ query }) => ResourceCatalog.search(query),
 }).pipe(
-  Tool.modelResult(AgencyEvidenceSchema, ({ evidence }) => evidence),
-  Tool.present(AgencyCards, ({ agencies }) => ({ agencies })),
+  Tool.modelResult(ResourceEvidenceSchema, ({ evidence }) => evidence),
+  Tool.present(ResultCards, ({ results }) => ({ results })),
 )
 
-const Matching = Stage.tools({
-  name: "matching",
-  instructions: ["Route the completed brief to one agency search."],
-  tools: [SearchAgencies],
+const Lookup = Stage.tools({
+  name: "lookup",
+  instructions: ["Route the completed request to one resource lookup."],
+  tools: [FindResources],
 })
 ```
 
-`SearchAgencies` is the single source of truth for one capability. Its input
+`FindResources` is the single source of truth for one capability. Its input
 schema becomes both the model-facing JSON Schema and the authoritative runtime
 parser. Its Effect error and service requirements remain typed.
 
@@ -76,6 +76,10 @@ The three result surfaces are deliberately separate:
 Internal data does not reach the model or browser merely because a tool loaded
 it.
 
+See the compile-checked
+[`resource-search.ts`](./examples/resource-search.ts) example for a complete
+tool, service, model projection, browser projection, and stage definition.
+
 ## Compose directly with document-graph
 
 Structured chat does not wrap or replace retrieval. An application-defined
@@ -83,24 +87,24 @@ Structured chat does not wrap or replace retrieval. An application-defined
 execution directly:
 
 ```ts
-import { FindAgencies } from "./agency-graph.js"
+import { SearchKnowledgeBase } from "./knowledge-graph.js"
 
-const SearchAgencies = defineTool({
-  name: "search_agencies",
-  description: "Find agencies supported by relevant work evidence.",
+const FindResources = defineTool({
+  name: "find_resources",
+  description: "Find resources supported by relevant source evidence.",
   input: Schema.Struct({ query: Schema.NonEmptyTrimmedString }),
-  execute: ({ query }) => FindAgencies.search(query, { limit: 6 }),
+  execute: ({ query }) => SearchKnowledgeBase.search(query, { limit: 6 }),
 }).pipe(
-  Tool.modelResult(AgencyEvidenceSchema, toModelEvidence),
-  Tool.present(AgencyCards, toAgencyCards),
+  Tool.modelResult(ResourceEvidenceSchema, toModelEvidence),
+  Tool.present(ResultCards, toResultCards),
 )
 ```
 
-`FindAgencies` remains the application-owned graph retrieval policy: it can
-combine direct Agency profile matches with Work evidence reached through a
-typed relationship. Structured chat contributes the closed tool schema,
-stage policy, result projections, and UI protocol. The graph's typed failures
-and Effect requirements flow through the tool without another adapter layer.
+`SearchKnowledgeBase` remains the application-owned graph retrieval policy: it
+can combine direct resource matches with supporting documents reached through
+typed relationships. Structured chat contributes the closed tool schema, stage
+policy, result projections, and UI protocol. The graph's typed failures and
+Effect requirements flow through the tool without another adapter layer.
 
 ## Put a free-form conversation on rails
 
@@ -115,41 +119,40 @@ import {
 } from "@popcomputer/structured-chat"
 import { Schema } from "effect"
 
-const ProjectBrief = Stage.collect({
-  name: "project_brief",
+const RequestDetails = Stage.collect({
+  name: "request_details",
   questions: {
     guidance:
-      "Ask one conversational question at a time and briefly explain why the answer improves the match.",
+      "Ask one conversational question at a time and briefly explain why the answer improves the result.",
     escape: "Not sure yet",
   },
   fields: {
-    priority: Answer.semantic(Schema.NonEmptyTrimmedString, {
-      description:
-        "The unmet need the client most wants an agency to solve.",
+    goal: Answer.semantic(Schema.NonEmptyTrimmedString, {
+      description: "The outcome the user wants to achieve.",
       ask: Question.adaptiveChoice(
-        "Where would outside agency expertise help most?",
+        "What would you like help accomplishing?",
         {
           minimumOptions: 3,
           maximumOptions: 5,
           fallbackOptions: [
-            "Launch or grow a product",
-            "Build the brand long term",
-            "Fix a performance problem",
+            "Understand a topic",
+            "Compare available options",
+            "Plan the next steps",
           ],
         },
       ),
     }),
-    location: Answer.explicit(Schema.NonEmptyTrimmedString, {
-      description: "Where the client is based.",
-      ask: Question.fixed("Where are you based?"),
+    audience: Answer.explicit(Schema.NonEmptyTrimmedString, {
+      description: "Who the requested result is for.",
+      ask: Question.fixed("Who is this for?"),
     }),
   },
 })
 
-const Matchmaker = defineChat({
-  name: "agency_matchmaker",
+const ResourceFinder = defineChat({
+  name: "resource_finder",
   version: 1,
-  stages: [ProjectBrief, Matching],
+  stages: [RequestDetails, Lookup],
 })
 ```
 
@@ -170,7 +173,7 @@ while the field is pending. The value is validated against the answer schema
 at definition time and requires `questions.escape` to be configured; a
 confirmed field still requires its question to have been issued first.
 Fields without an escape value stay unresolved and are re-asked from another
-angle, so a client who genuinely cannot answer never blocks the workflow
+angle, so a user who genuinely cannot answer never blocks the workflow
 unless the application wants it to.
 
 For an adaptive choice, valid contextual model suggestions take precedence.
@@ -214,15 +217,15 @@ Applications can read the typed value and its provenance without reaching into
 the persisted state shape:
 
 ```ts
-const priority = Matchmaker.getAcceptedAnswer(
+const goal = ResourceFinder.getAcceptedAnswer(
   reply.turn.state,
-  ProjectBrief,
-  "priority",
+  RequestDetails,
+  "goal",
 )
 
-priority?.value
-priority?.evidence.messageIndex
-priority?.evidence.quote
+goal?.value
+goal?.evidence.messageIndex
+goal?.evidence.quote
 ```
 
 For semantic answers, the quote supports the model's inference; it does not
@@ -234,23 +237,23 @@ Keep parsing and business acceptance separate when a structurally valid value
 may still be unsuitable for the workflow:
 
 ```ts
-class BudgetTooLow extends Schema.TaggedError<BudgetTooLow>()(
-  "BudgetTooLow",
-  { minimum: Schema.Number },
+class ResultLimitOutOfRange extends Schema.TaggedError<ResultLimitOutOfRange>()(
+  "ResultLimitOutOfRange",
+  { minimum: Schema.Number, maximum: Schema.Number },
 ) {}
 
-const Budget = Answer.explicit(Schema.Number, {
+const ResultLimit = Answer.explicit(Schema.Number, {
   // The description remains model-visible, so repeat acceptance constraints.
-  description: "Project budget in GBP; must be at least 5,000",
-  ask: Question.fixed("What budget have you set aside?"),
-  validate: (budget) =>
-    budget >= 5_000
+  description: "Number of results; must be a whole number from 1 to 20",
+  ask: Question.fixed("How many results would you like?"),
+  validate: (limit) =>
+    Number.isInteger(limit) && limit >= 1 && limit <= 20
       ? Effect.void
-      : Effect.fail(new BudgetTooLow({ minimum: 5_000 })),
+      : Effect.fail(
+          new ResultLimitOutOfRange({ minimum: 1, maximum: 20 }),
+        ),
   reject: {
-    ask: Question.fixed(
-      "Our minimum engagement is £5,000. Could you revise the budget?",
-    ),
+    ask: Question.fixed("Choose a whole number from 1 to 20."),
   },
 })
 ```
@@ -313,8 +316,8 @@ const program = Effect.gen(function* () {
   const request = yield* parseRequest(StructuredChatTurnRequestSchema)
   const publicSessionId = request.session?.id ?? crypto.randomUUID()
 
-  const reply = yield* Matchmaker.reply({
-    namespace: authenticatedUser.id,
+  const reply = yield* ResourceFinder.reply({
+    namespace: authenticatedActor.id,
     sessionId: publicSessionId,
     expectedRevision: request.session?.revision,
     message: request.message,
@@ -324,7 +327,7 @@ const program = Effect.gen(function* () {
     { ...reply, sessionId: publicSessionId },
     {
       result: ({ result }) => [
-        Text.make("These are the strongest evidence-backed matches."),
+        Text.make("Here are the most relevant evidence-backed resources."),
         ...result.views,
       ],
     },
@@ -357,13 +360,13 @@ meaning.
 ## Continue naturally after the first tool result
 
 `Stage.tools(...)` stays active by default. A user can refine the previous
-search without restarting the collection stage:
+lookup without restarting the collection stage:
 
 ```txt
-User: We need a public-sector service redesign.
-Assistant: [search results]
-User: Favour agencies with accessibility experience.
-Assistant: [refined search results]
+User: We need onboarding guidance for a new team.
+Assistant: [resource results]
+User: Prefer concise resources with practical examples.
+Assistant: [refined resource results]
 ```
 
 When a tool defines `Tool.modelResult(...)`, each bounded result is retained in
@@ -389,20 +392,20 @@ Declare side effects honestly. A command receives the package-derived stable
 ID that its application endpoint must use as an idempotency key:
 
 ```ts
-const Submit = defineCommand({
-  name: "submit_application",
-  description: "Submit the confirmed application once.",
-  input: SubmitApplicationInput,
+const CreateRequest = defineCommand({
+  name: "create_request",
+  description: "Create the confirmed request once.",
+  input: CreateRequestInput,
   execute: (input, { commandId }) =>
-    Applications.submit(input, { idempotencyKey: commandId }),
+    Requests.create(input, { idempotencyKey: commandId }),
 }).pipe(
-  Tool.present(SubmissionReceipt, toSubmissionReceipt),
+  Tool.present(RequestReceipt, toRequestReceipt),
 )
 
-const SubmitApplication = Stage.command({
-  name: "submit_application",
-  instructions: ["Submit the confirmed application."],
-  command: Submit,
+const CreateRequestStage = Stage.command({
+  name: "create_request",
+  instructions: ["Create the confirmed request."],
+  command: CreateRequest,
 })
 ```
 
@@ -431,10 +434,10 @@ Repair is disabled by default. Enable it only on chats whose final stage is a
 repeatable query:
 
 ```ts
-const Matchmaker = defineChat({
-  name: "agency_matchmaker",
+const RepairableResourceFinder = defineChat({
+  name: "resource_finder",
   version: 2,
-  stages: [ProjectBrief, Matching],
+  stages: [RequestDetails, Lookup],
   repair: Repair.standard({ maximumCorrections: 5 }),
 })
 ```
@@ -550,21 +553,21 @@ import {
 } from "@popcomputer/structured-chat/assistant-ui"
 import type { ReactNode } from "react"
 
-const AgencyCardsUI = makeAssistantView(AgencyCards, {
-  render: AgencyCardsComponent,
+const ResultCardsUI = makeAssistantView(ResultCards, {
+  render: ResultCardsComponent,
   fallback: InvalidCardFallback,
 })
 
 const QuestionUI = makeAssistantView(CollectQuestionView, {
-  render: ProjectQuestion,
+  render: RequestQuestion,
   fallback: InvalidQuestionFallback,
 })
 
 const model = makeAssistantChatModelAdapter({
-  endpoint: "/api/matchmaker/turn",
+  endpoint: "/api/resource-finder/turn",
 })
 
-export function MatchmakerRuntime({
+export function ResourceFinderRuntime({
   children,
 }: Readonly<{ children: ReactNode }>) {
   const runtime = useLocalRuntime(model)
@@ -572,7 +575,7 @@ export function MatchmakerRuntime({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <QuestionUI />
-      <AgencyCardsUI />
+      <ResultCardsUI />
       {children}
     </AssistantRuntimeProvider>
   )
@@ -598,16 +601,16 @@ history as authoritative.
 The default remains one call:
 
 ```ts
-const result = yield* Matching.run(messages)
+const result = yield* Lookup.run(messages)
 ```
 
 Approval flows, dry runs, and evals can stop after a strictly parsed proposal:
 
 ```ts
-const call = yield* Matching.plan(messages)
+const call = yield* Lookup.plan(messages)
 
 // Application-owned review or approval.
-const result = yield* Matching.toolSet.execute(call)
+const result = yield* Lookup.toolSet.execute(call)
 ```
 
 `plan` uses the same trusted instructions, closed tool set, guards, provider
@@ -627,15 +630,22 @@ import {
 } from "@popcomputer/structured-chat/testing"
 
 const ModelTest = Scenario.model(
-  Scenario.answers(ProjectBrief, {
-    location: Scenario.quoted("Leeds", { quote: "based in Leeds" }),
+  Scenario.answers(RequestDetails, {
+    goal: Scenario.quoted("prepare an onboarding plan", {
+      quote: "prepare an onboarding plan",
+    }),
+    audience: Scenario.quoted("new team members", {
+      quote: "new team members",
+    }),
   }),
-  Scenario.call(SearchAgencies, { query: "Leeds public services" }),
+  Scenario.call(FindResources, {
+    query: "onboarding plan for new team members",
+  }),
 )
 
-const reply = yield* Matchmaker.reply({
+const reply = yield* ResourceFinder.reply({
   sessionId: "scenario-1",
-  message: "We are based in Leeds.",
+  message: "Help me prepare an onboarding plan for new team members.",
 }).pipe(
   Effect.provide(Layer.merge(ModelTest, inMemoryChatSessionStore)),
 )
@@ -657,8 +667,8 @@ rules:
 
 ```ts
 Scenario.repairs(
-  Scenario.replace(ProjectBrief, "location", "Manchester", {
-    quote: "Actually, Manchester",
+  Scenario.replace(RequestDetails, "audience", "engineering managers", {
+    quote: "Actually, engineering managers",
   }),
 )
 ```
@@ -703,10 +713,10 @@ const InjectionPolicy = defineModelGuard({
     PolicyService.checkCall({ messages, call }),
 })
 
-const Matching = Stage.tools({
-  name: "matching",
-  instructions: ["Route the completed brief to one search."],
-  tools: [SearchAgencies],
+const Lookup = Stage.tools({
+  name: "lookup",
+  instructions: ["Route the completed request to one resource lookup."],
+  tools: [FindResources],
   guards: [InjectionPolicy],
 })
 ```

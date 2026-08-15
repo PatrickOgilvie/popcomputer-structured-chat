@@ -9,45 +9,45 @@ import {
 
 const SearchCatalog = defineTool({
   name: "search_catalog",
-  description: "Search the catalog for relevant agency matches.",
+  description: "Search the catalog for relevant resources.",
   input: Schema.Struct({ query: Schema.NonEmptyTrimmedString }),
   execute: ({ query }) => Effect.succeed({ query }),
 })
 
 const Search = Stage.tools({
   name: "search",
-  instructions: ["Search the catalog using the completed project brief."],
+  instructions: ["Search the catalog using the completed request details."],
   tools: [SearchCatalog],
 })
 
-const ProjectBrief = Stage.collect({
-  name: "project_brief",
+const RequestDetails = Stage.collect({
+  name: "request_details",
   questions: {
     guidance: "Ask one concise, conversational question at a time.",
     escape: "Not sure yet",
   },
   fields: {
-    priority: Answer.confirmed(Schema.NonEmptyTrimmedString, {
-      description: "Where the client most needs outside help.",
+    goal: Answer.confirmed(Schema.NonEmptyTrimmedString, {
+      description: "The outcome the user wants to achieve.",
       ask: Question.adaptiveChoice(
-        "Where could an agency make the biggest difference?",
+        "What would you like help accomplishing?",
         {
           minimumOptions: 2,
           maximumOptions: 3,
           fallbackOptions: [
-            "Launch or grow a product",
-            "Build the brand long term",
-            "Fix a performance problem",
+            "Understand a topic",
+            "Compare available options",
+            "Plan the next steps",
           ],
         },
       ),
     }),
-    location: Answer.confirmed(Schema.NonEmptyTrimmedString, {
-      description: "Where the client is based.",
+    audience: Answer.confirmed(Schema.NonEmptyTrimmedString, {
+      description: "Who the requested result is for.",
       ask: Question.adaptive(
-        "Ask where the client is based and whether location matters.",
+        "Ask who will use the result and what they already know.",
         {
-          fallback: "Where are you based, and does location matter?",
+          fallback: "Who is this for, and what do they already know?",
         },
       ),
     }),
@@ -55,22 +55,22 @@ const ProjectBrief = Stage.collect({
 })
 
 /** A required ask-then-answer workflow before catalog search. */
-export const Matchmaker = defineChat({
-  name: "matchmaker",
+export const GuidedResourceFinder = defineChat({
+  name: "guided_resource_finder",
   version: 1,
-  stages: [ProjectBrief, Search],
+  stages: [RequestDetails, Search],
 })
 
-const ProjectUnderstanding = Stage.collect({
-  name: "project_understanding",
+const RequestUnderstanding = Stage.collect({
+  name: "request_understanding",
   fields: {
     intent: Answer.semantic(Schema.NonEmptyTrimmedString, {
       description:
-        "The client's searchable need, desired outcome, sector, or relevant experience.",
+        "The user's searchable goal, subject, constraints, or desired outcome.",
       ask: Question.adaptive(
         "Ask one useful follow-up only when the request is not searchable yet.",
         {
-          fallback: "What outcome or experience should I search for?",
+          fallback: "What subject or outcome should I search for?",
         },
       ),
     }),
@@ -78,15 +78,15 @@ const ProjectUnderstanding = Stage.collect({
 })
 
 /** A chat that can infer a searchable intent from the opening request. */
-export const FreeformMatchmaker = defineChat({
-  name: "freeform_matchmaker",
+export const FreeformResourceFinder = defineChat({
+  name: "freeform_resource_finder",
   version: 1,
-  stages: [ProjectUnderstanding, Search],
+  stages: [RequestUnderstanding, Search],
 })
 
 /** A chat whose catalog search tool is available on the opening turn. */
-export const OpenSearchChat = defineChat({
-  name: "open_search_chat",
+export const OpenResourceSearch = defineChat({
+  name: "open_resource_search",
   version: 1,
   stages: [Search],
 })
