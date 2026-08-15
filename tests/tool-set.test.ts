@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Either, Schema } from "effect"
+import { Effect, Result, Schema } from "effect"
 import {
   defineTool,
   defineToolSet,
@@ -27,11 +27,11 @@ describe("defineToolSet", () => {
     const tools = defineToolSet(Search)
     const [envelope, name, arguments_] = await Effect.runPromise(
       Effect.all([
-        Effect.either(tools.parseCall({ arguments: {} })),
-        Effect.either(
+        Effect.result(tools.parseCall({ arguments: {} })),
+        Effect.result(
           tools.parseCall({ name: "missing", arguments: {} }),
         ),
-        Effect.either(
+        Effect.result(
           tools.parseCall({
             name: "search",
             arguments: { query: 42 },
@@ -40,23 +40,23 @@ describe("defineToolSet", () => {
       ]),
     )
 
-    expect(Either.isLeft(envelope)).toBe(true)
-    expect(Either.isLeft(name)).toBe(true)
-    expect(Either.isLeft(arguments_)).toBe(true)
+    expect(Result.isFailure(envelope)).toBe(true)
+    expect(Result.isFailure(name)).toBe(true)
+    expect(Result.isFailure(arguments_)).toBe(true)
     if (
-      Either.isLeft(envelope) &&
-      Either.isLeft(name) &&
-      Either.isLeft(arguments_)
+      Result.isFailure(envelope) &&
+      Result.isFailure(name) &&
+      Result.isFailure(arguments_)
     ) {
-      expect(envelope.left).toMatchObject({
+      expect(envelope.failure).toMatchObject({
         reason: "invalid_envelope",
         tool: null,
       })
-      expect(name.left).toMatchObject({
+      expect(name.failure).toMatchObject({
         reason: "unknown_tool",
         tool: "missing",
       })
-      expect(arguments_.left).toMatchObject({
+      expect(arguments_.failure).toMatchObject({
         reason: "invalid_arguments",
         tool: "search",
       })
@@ -78,7 +78,7 @@ describe("defineToolSet", () => {
       ),
     )
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         defineToolSet(InvalidProjection).executeCall({
           name: "invalid_projection",
           arguments: {},
@@ -86,9 +86,9 @@ describe("defineToolSet", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidToolProjection)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidToolProjection)
     }
   })
 
@@ -109,7 +109,7 @@ describe("defineToolSet", () => {
   test("rejects a valid tool that is outside the current set", async () => {
     const tools = defineToolSet(Search)
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         tools.executeCall({
           name: Delete.name,
           arguments: { id: "agency:1" },
@@ -117,9 +117,9 @@ describe("defineToolSet", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidToolCall)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidToolCall)
     }
   })
 

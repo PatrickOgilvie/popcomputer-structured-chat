@@ -56,21 +56,23 @@ export const inMemoryChatSessionStore: Layer.Layer<ChatSessionStore> =
   Layer.effect(
     ChatSessionStore,
     Ref.make<ReadonlyMap<string, ChatSessionSnapshot>>(new Map()).pipe(
-      Effect.map((sessions) => ({
-        load: (scope: ChatSessionScope) =>
-          Ref.get(sessions).pipe(
-            Effect.map((current) => current.get(scopeKey(scope)) ?? null),
-          ),
-        replace: (input: ReplaceChatSessionInput) =>
-          Ref.modify(sessions, (current) =>
-            replaceSnapshot(current, input),
-          ).pipe(
-            Effect.flatMap((result) =>
-              result instanceof ChatSessionConflict
-                ? Effect.fail(result)
-                : Effect.succeed({ revision: result.revision }),
+      Effect.map((sessions) =>
+        ChatSessionStore.of({
+          load: (scope: ChatSessionScope) =>
+            Ref.get(sessions).pipe(
+              Effect.map((current) => current.get(scopeKey(scope)) ?? null),
             ),
-          ),
-      })),
+          replace: (input: ReplaceChatSessionInput) =>
+            Ref.modify(sessions, (current) =>
+              replaceSnapshot(current, input),
+            ).pipe(
+              Effect.flatMap((result) =>
+                result instanceof ChatSessionConflict
+                  ? Effect.fail(result)
+                  : Effect.succeed({ revision: result.revision }),
+              ),
+            ),
+        }),
+      ),
     ),
   )

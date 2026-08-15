@@ -15,9 +15,9 @@ export interface StandardRepairOptions {
   readonly maximumCorrections?: number
 }
 
-const maximumCorrectionsSchema = Schema.Number.pipe(
-  Schema.int(),
-  Schema.between(1, 20),
+const maximumCorrectionsSchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 1, maximum: 20 }),
 )
 
 const standard = (

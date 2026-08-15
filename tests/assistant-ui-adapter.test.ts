@@ -139,7 +139,7 @@ describe("makeAssistantChatModelAdapter", () => {
       ),
     )
     const body = Schema.decodeUnknownSync(
-      Schema.parseJson(StructuredChatTurnRequestSchema),
+      Schema.fromJsonString(StructuredChatTurnRequestSchema),
     )(String(requests[0]?.init.body))
 
     expect(requests[0]?.input).toBe("/api/chat")
@@ -222,7 +222,7 @@ describe("makeAssistantChatModelAdapter", () => {
       ]),
     )
     const body = Schema.decodeUnknownSync(
-      Schema.parseJson(StructuredChatTurnRequestSchema),
+      Schema.fromJsonString(StructuredChatTurnRequestSchema),
     )(String(requests[0]?.body))
 
     expect(body).toEqual({ message: "The current answer" })

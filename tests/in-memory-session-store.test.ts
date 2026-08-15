@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Either, Schema } from "effect"
+import { Effect, Result, Schema } from "effect"
 import {
   ChatSessionConflict,
   ChatSessionSnapshotSchema,
@@ -36,7 +36,7 @@ describe("inMemoryChatSessionStore", () => {
           ["first", "second"].map((writer) =>
             store.replace(replacement("1", writer)).pipe(
               Effect.as(writer),
-              Effect.either,
+              Effect.result,
             ),
           ),
           { concurrency: 2 },
@@ -47,16 +47,16 @@ describe("inMemoryChatSessionStore", () => {
       }).pipe(Effect.provide(inMemoryChatSessionStore)),
     )
 
-    const winners = result.attempts.filter(Either.isRight)
-    const conflicts = result.attempts.filter(Either.isLeft)
+    const winners = result.attempts.filter(Result.isSuccess)
+    const conflicts = result.attempts.filter(Result.isFailure)
     expect(winners).toHaveLength(1)
     expect(conflicts).toHaveLength(1)
-    expect(conflicts[0]?.left).toBeInstanceOf(ChatSessionConflict)
+    expect(conflicts[0]?.failure).toBeInstanceOf(ChatSessionConflict)
 
     const snapshot = Schema.decodeUnknownSync(
       ChatSessionSnapshotSchema,
     )(result.loaded)
     expect(snapshot.revision).toBe("2")
-    expect(snapshot.state).toEqual({ writer: winners[0]?.right })
+    expect(snapshot.state).toEqual({ writer: winners[0]?.success })
   })
 })

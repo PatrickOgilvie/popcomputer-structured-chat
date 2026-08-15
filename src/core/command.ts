@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect"
 
 /** Opaque deterministic identity supplied to one command execution. */
 export const CommandIdSchema = Schema.String.pipe(
-  Schema.pattern(/^cmd_[0-9a-f]{64}$/),
+  Schema.check(Schema.isPattern(/^cmd_[0-9a-f]{64}$/)),
   Schema.brand("CommandId"),
 )
 

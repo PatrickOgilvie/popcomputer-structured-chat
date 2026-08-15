@@ -24,8 +24,10 @@ import type { JsonValue } from "./json-value.js"
 
 /** Bounded application-authored instruction supplied to a model adapter. */
 export const TrustedInstructionSchema =
-  Schema.NonEmptyTrimmedString.pipe(
-    Schema.maxLength(20_000),
+  Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(20_000),
+  ).pipe(
     Schema.brand("TrustedInstruction"),
   )
 
@@ -35,16 +37,17 @@ export type TrustedInstruction = Schema.Schema.Type<
 >
 
 /** Conversation role accepted as untrusted model context. */
-export const ConversationRoleSchema = Schema.Literal(
+export const ConversationRoleSchema = Schema.Literals([
   "user",
   "assistant",
-)
+])
 
 /** One bounded conversation message treated as untrusted model context. */
 export const UntrustedMessageSchema = Schema.Struct({
   role: ConversationRoleSchema,
-  content: Schema.NonEmptyTrimmedString.pipe(
-    Schema.maxLength(50_000),
+  content: Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(50_000),
   ),
 })
 
@@ -63,12 +66,12 @@ export const countUntrustedMessageCharacters = (
   )
 
 /** Safe reason that a configured chat model could not complete a step. */
-export const ChatModelUnavailableReasonSchema = Schema.Literal(
+export const ChatModelUnavailableReasonSchema = Schema.Literals([
   "request_failed",
   "timed_out",
   "response_blocked",
   "invalid_response",
-)
+])
 
 /** A configured chat model could not complete a structured step. */
 export class ChatModelUnavailable extends Schema.TaggedError<ChatModelUnavailable>()(
@@ -77,18 +80,24 @@ export class ChatModelUnavailable extends Schema.TaggedError<ChatModelUnavailabl
 ) {}
 
 /** Safe reason that a tool schema cannot use strict provider decoding. */
-export const UnsupportedModelToolSchemaReasonSchema = Schema.Literal(
+export const UnsupportedModelToolSchemaReasonSchema = Schema.Literals([
   "root_not_object",
   "additional_properties_allowed",
   "optional_property",
-)
+])
 
 /** A model tool schema is incompatible with strict provider decoding. */
 export class UnsupportedModelToolSchema extends Schema.TaggedError<UnsupportedModelToolSchema>()(
   "UnsupportedModelToolSchema",
   {
-    tool: Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(100)),
-    path: Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(2_000)),
+    tool: Schema.Trimmed.check(
+      Schema.isNonEmpty(),
+      Schema.isMaxLength(100),
+    ),
+    path: Schema.Trimmed.check(
+      Schema.isNonEmpty(),
+      Schema.isMaxLength(2_000),
+    ),
     reason: UnsupportedModelToolSchemaReasonSchema,
   },
 ) {}
@@ -115,9 +124,12 @@ export interface StructuredChatModelService {
 }
 
 /** Effect service for the configured structured chat model adapter. */
-export class StructuredChatModel extends Context.Tag(
+export class StructuredChatModel extends Context.Service<
+  StructuredChatModel,
+  StructuredChatModelService
+>()(
   "@popcomputer/structured-chat/StructuredChatModel",
-)<StructuredChatModel, StructuredChatModelService>() {}
+) {}
 
 /** Input for one required, stage-scoped tool step. */
 export interface RunToolStepInput<
@@ -174,7 +186,7 @@ export const planToolCall = <
     messages: input.messages,
     toolNames: input.tools.models.map(({ name }) => name),
   }).pipe(
-    Effect.zipRight(StructuredChatModel),
+    Effect.andThen(StructuredChatModel),
     Effect.flatMap((model) => {
       const requestParsedCall = (
         instructions: ReadonlyArray<TrustedInstruction>,
@@ -225,7 +237,7 @@ export const planToolCall = <
             "Retrying structured model output",
           ).pipe(
             Effect.annotateLogs(annotations),
-            Effect.zipRight(
+            Effect.andThen(
               requestParsedCall(
                 [
                   ...input.instructions,

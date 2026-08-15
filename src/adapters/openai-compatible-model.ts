@@ -1,4 +1,4 @@
-import { Effect, Either, Layer, Schema } from "effect"
+import { Effect, Exit, Layer, Schema } from "effect"
 import {
   ChatModelUnavailable,
   StructuredChatModel,
@@ -14,9 +14,9 @@ import {
 } from "../core/json-value.js"
 
 /** Bounded timeout for one provider tool-call request. */
-export const StructuredChatRequestTimeoutSchema = Schema.Number.pipe(
-  Schema.int(),
-  Schema.between(1, 60_000),
+export const StructuredChatRequestTimeoutSchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 1, maximum: 60_000 }),
 )
 
 interface OpenAICompatibleMessage {
@@ -43,10 +43,10 @@ interface OpenAICompatibleInput {
   readonly [key: string]: OpenAICompatibleInputValue
 }
 
-const OpenAICompatibleToolArgumentsSchema = Schema.Literal(
+const OpenAICompatibleToolArgumentsSchema = Schema.Literals([
   "guided",
   "strict",
-)
+])
 
 type OpenAICompatibleToolArguments = Schema.Schema.Type<
   typeof OpenAICompatibleToolArgumentsSchema
@@ -54,7 +54,10 @@ type OpenAICompatibleToolArguments = Schema.Schema.Type<
 
 /** Bounded provider model identifier used for routing and diagnostics. */
 export const StructuredChatModelIdSchema =
-  Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(200))
+  Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(200),
+  )
 
 /** Bounded provider model identifier used for routing and diagnostics. */
 export type StructuredChatModelId = Schema.Schema.Type<
@@ -85,10 +88,10 @@ export interface OpenAIProviderConfig
   extends OpenAICompatibleProviderConfig {}
 
 /** Stable identifier for a built-in model provider. */
-export const StructuredChatProviderIdSchema = Schema.Literal(
+export const StructuredChatProviderIdSchema = Schema.Literals([
   "cloudflare-workers-ai",
   "openai",
-)
+])
 
 /** Stable identifier for a built-in model provider. */
 export type StructuredChatProviderId = Schema.Schema.Type<
@@ -189,24 +192,25 @@ export const ModelProvider = {
 } as const
 
 const ToolCallResponseSchema = Schema.Struct({
-  choices: Schema.Tuple(
+  choices: Schema.Tuple([
     Schema.Struct({
       message: Schema.Struct({
-        tool_calls: Schema.Tuple(
+        tool_calls: Schema.Tuple([
           Schema.Struct({
             function: Schema.Struct({
-              name: Schema.NonEmptyTrimmedString.pipe(
-                Schema.maxLength(100),
+              name: Schema.Trimmed.check(
+                Schema.isNonEmpty(),
+                Schema.isMaxLength(100),
               ),
-              arguments: Schema.String.pipe(
-                Schema.maxLength(20_000),
+              arguments: Schema.String.check(
+                Schema.isMaxLength(20_000),
               ),
             }),
           }),
-        ),
+        ]),
       }),
     }),
-  ),
+  ]),
 })
 
 const unavailable = (
@@ -218,17 +222,14 @@ const unavailable = (
 const parseJson = (
   input: string,
 ): Effect.Effect<JsonValue, ChatModelUnavailable> =>
-  Effect.try({
-    // SAFETY: JSON.parse without a reviver can only return a JSON value when
-    // parsing succeeds; failures are mapped to the typed unavailable reason.
-    try: (): JsonValue => JSON.parse(input) as JsonValue,
-    catch: () => unavailable("invalid_response"),
-  })
+  Schema.decodeEffect(Schema.fromJsonString(JsonValueSchema))(input).pipe(
+    Effect.mapError(() => unavailable("invalid_response")),
+  )
 
-const JsonSchemaObjectSchema = Schema.Record({
-  key: Schema.String,
-  value: JsonValueSchema,
-})
+const JsonSchemaObjectSchema = Schema.Record(
+  Schema.String,
+  JsonValueSchema,
+)
 
 type JsonSchemaObject = Schema.Schema.Type<typeof JsonSchemaObjectSchema>
 
@@ -365,11 +366,11 @@ const findStrictSchemaIssue = (
 const strictToolIssue = (
   tool: ModelToolDefinition,
 ): UnsupportedModelToolSchema | undefined => {
-  const parsedSchema = Schema.decodeUnknownEither(JsonSchemaObjectSchema)(
+  const parsedSchema = Schema.decodeUnknownExit(JsonSchemaObjectSchema)(
     tool.inputSchema,
     { onExcessProperty: "error" },
   )
-  if (Either.isLeft(parsedSchema)) {
+  if (Exit.isFailure(parsedSchema)) {
     return new UnsupportedModelToolSchema({
       tool: tool.name,
       path: "#",
@@ -377,7 +378,7 @@ const strictToolIssue = (
     })
   }
 
-  const issue = findStrictSchemaIssue(parsedSchema.right)
+  const issue = findStrictSchemaIssue(parsedSchema.value)
   return issue === undefined
     ? undefined
     : new UnsupportedModelToolSchema({
@@ -468,12 +469,12 @@ export const makeStructuredChatModel = (
             catch: (cause) => unavailable(classifyError(cause)),
           }),
         ),
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: timeoutMilliseconds,
-          onTimeout: () => unavailable("timed_out"),
+          orElse: () => Effect.fail(unavailable("timed_out")),
         }),
         Effect.flatMap((response) =>
-          Schema.decodeUnknown(ToolCallResponseSchema)(response).pipe(
+          Schema.decodeUnknownEffect(ToolCallResponseSchema)(response).pipe(
             Effect.mapError(() => unavailable("invalid_response")),
           ),
         ),
@@ -498,5 +499,5 @@ export const structuredChatModelLayer = (
 ): Layer.Layer<StructuredChatModel> =>
   Layer.succeed(
     StructuredChatModel,
-    makeStructuredChatModel(config),
+    StructuredChatModel.of(makeStructuredChatModel(config)),
   )

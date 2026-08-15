@@ -15,14 +15,14 @@ export type JsonValue =
   | ReadonlyArray<JsonValue>
 
 /** Runtime parser for recursively JSON-serializable values. */
-export const JsonValueSchema: Schema.Schema<JsonValue> = Schema.suspend(
+export const JsonValueSchema: Schema.Codec<JsonValue> = Schema.suspend(
   () =>
-    Schema.Union(
+    Schema.Union([
       Schema.String,
-      Schema.JsonNumber,
+      Schema.Finite,
       Schema.Boolean,
       Schema.Null,
       Schema.Array(JsonValueSchema),
-      Schema.Record({ key: Schema.String, value: JsonValueSchema }),
-    ),
+      Schema.Record(Schema.String, JsonValueSchema),
+    ]),
 )

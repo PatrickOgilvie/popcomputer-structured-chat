@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Either, Layer, Ref, Schema } from "effect"
+import { Effect, Layer, Ref, Result, Schema } from "effect"
 import {
   defineModelGuard,
   defineTool,
@@ -93,7 +93,7 @@ describe("Stage.tools", () => {
       check: () => Effect.void,
       checkCall: () =>
         Ref.update(checks, (count) => count + 1).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             Effect.fail(
               new PlannedCallRejected({
                 reason: "unsafe_proposal",
@@ -116,7 +116,7 @@ describe("Stage.tools", () => {
         }),
     })
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         Approval.plan([Message.user("Find an agency")]).pipe(
           Effect.provide(model),
         ),
@@ -124,9 +124,9 @@ describe("Stage.tools", () => {
     )
     const checkCount = await Effect.runPromise(Ref.get(checks))
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(PlannedCallRejected)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(PlannedCallRejected)
     }
     expect(checkCount).toBe(1)
   })
@@ -158,12 +158,12 @@ describe("Stage.tools", () => {
     const result = await Effect.runPromise(
       Approval.plan([Message.user("Find an agency")]).pipe(
         Effect.provide(model),
-        Effect.either,
+        Effect.result,
       ),
     )
     const requestCount = await Effect.runPromise(Ref.get(requests))
 
-    expect(Either.isLeft(result)).toBe(true)
+    expect(Result.isFailure(result)).toBe(true)
     expect(requestCount).toBe(0)
   })
 })

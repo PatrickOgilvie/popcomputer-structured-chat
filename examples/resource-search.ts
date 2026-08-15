@@ -20,14 +20,14 @@ interface ResourceMatch {
   readonly retrievedText: string
 }
 
-class ResourceCatalog extends Context.Tag("ResourceCatalog")<
+class ResourceCatalog extends Context.Service<
   ResourceCatalog,
   {
     readonly search: (
       query: string,
     ) => Effect.Effect<ReadonlyArray<ResourceMatch>>
   }
->() {}
+>()("ResourceCatalog") {}
 
 const ResultCards = defineView({
   name: "result_cards",
@@ -55,11 +55,14 @@ const ResourceEvidence = Schema.Struct({
 export const FindResources = defineTool({
   name: "find_resources",
   description: "Find resources relevant to the request.",
-  input: Schema.Struct({ query: Schema.NonEmptyTrimmedString }),
+  input: Schema.Struct({
+    query: Schema.Trimmed.check(Schema.isNonEmpty()),
+  }),
   execute: ({ query }) =>
-    ResourceCatalog.pipe(
-      Effect.flatMap((catalog) => catalog.search(query)),
-    ),
+    Effect.gen(function* () {
+      const catalog = yield* ResourceCatalog
+      return yield* catalog.search(query)
+    }),
 }).pipe(
   Tool.modelResult(ResourceEvidence, (matches) => ({
     matches: matches.map(({ id, summary }) => ({ id, summary })),

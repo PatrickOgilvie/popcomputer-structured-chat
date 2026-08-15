@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test"
 import {
   Context,
   Effect,
-  Either,
   Layer,
   Ref,
+  Result,
   Schema,
 } from "effect"
 import {
@@ -102,10 +102,10 @@ class BudgetTooLow extends Schema.TaggedError<BudgetTooLow>()(
   { minimum: Schema.Number },
 ) {}
 
-class BudgetPolicy extends Context.Tag("BudgetPolicy")<
+class BudgetPolicy extends Context.Service<
   BudgetPolicy,
   { readonly minimum: number }
->() {}
+>()("BudgetPolicy") {}
 
 const BudgetBrief = Stage.collect({
   name: "budget_brief",
@@ -198,7 +198,7 @@ describe("Stage.collect", () => {
           ask: Question.fixed("First?"),
           validate: () =>
             Effect.sync(() => order.push("first")).pipe(
-              Effect.zipRight(
+              Effect.andThen(
                 Effect.fail(new BudgetTooLow({ minimum: 1 })),
               ),
             ),
@@ -231,7 +231,7 @@ describe("Stage.collect", () => {
     })
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         Ordered.run({
           state: Ordered.initialState,
           messages: [Message.user("one then two")],
@@ -239,12 +239,12 @@ describe("Stage.collect", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
+    expect(Result.isFailure(result)).toBe(true)
     expect(order).toEqual(["first"])
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(AnswerValidationRejected)
-      if (result.left instanceof AnswerValidationRejected) {
-        expect(result.left.field).toBe("first")
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(AnswerValidationRejected)
+      if (result.failure instanceof AnswerValidationRejected) {
+        expect(result.failure.field).toBe("first")
       }
     }
   })
@@ -269,7 +269,7 @@ describe("Stage.collect", () => {
     const policy = Layer.succeed(BudgetPolicy, { minimum: 5_000 })
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         BudgetBrief.run({
           state: BudgetBrief.initialState,
           messages: [Message.user("We can spend £2,000.")],
@@ -277,14 +277,14 @@ describe("Stage.collect", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(AnswerValidationRejected)
-      if (result.left instanceof AnswerValidationRejected) {
-        expect(result.left.stage).toBe("budget_brief")
-        expect(result.left.field).toBe("budget")
-        expect(result.left.error).toBeInstanceOf(BudgetTooLow)
-        expect(result.left.question).toEqual({
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(AnswerValidationRejected)
+      if (result.failure instanceof AnswerValidationRejected) {
+        expect(result.failure.stage).toBe("budget_brief")
+        expect(result.failure.field).toBe("budget")
+        expect(result.failure.error).toBeInstanceOf(BudgetTooLow)
+        expect(result.failure.question).toEqual({
           field: "budget",
           mode: "explicit",
           text: "Our minimum engagement is £5,000. Could you revise the budget?",
@@ -548,7 +548,7 @@ describe("Stage.collect", () => {
 
   test("strictly parses persisted state and registered asked fields", async () => {
     const excess = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         Brief.parseState({
           accepted: {},
           asked: {},
@@ -557,7 +557,7 @@ describe("Stage.collect", () => {
       ),
     )
     const unknownField = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         Brief.parseState({
           accepted: {},
           asked: {
@@ -567,7 +567,7 @@ describe("Stage.collect", () => {
       ),
     )
     const missingEvidence = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         Brief.parseState({
           accepted: {
             project: { value: "A public service website" },
@@ -577,9 +577,9 @@ describe("Stage.collect", () => {
       ),
     )
 
-    expect(Either.isLeft(excess)).toBe(true)
-    expect(Either.isLeft(unknownField)).toBe(true)
-    expect(Either.isLeft(missingEvidence)).toBe(true)
+    expect(Result.isFailure(excess)).toBe(true)
+    expect(Result.isFailure(unknownField)).toBe(true)
+    expect(Result.isFailure(missingEvidence)).toBe(true)
   })
 
   test("marks issued questions idempotently", () => {
@@ -622,7 +622,7 @@ describe("Stage.collect", () => {
         }),
     })
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         AdaptiveBrief.run({
           state: {
             accepted: {},
@@ -638,16 +638,16 @@ describe("Stage.collect", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidCollectStageResponse)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidCollectStageResponse)
     }
     expect(modelCalls).toBe(0)
   })
 
   test("rejects adaptive-choice fallbacks that fail the answer schema", () => {
     expect(() =>
-      Answer.confirmed(Schema.String.pipe(Schema.maxLength(5)), {
+      Answer.confirmed(Schema.String.check(Schema.isMaxLength(5)), {
         description: "A tightly bounded answer",
         ask: Question.adaptiveChoice("Choose one", {
           minimumOptions: 2,
@@ -663,7 +663,7 @@ describe("Stage.collect", () => {
       name: "bounded_brief",
       fields: {
         priority: Answer.confirmed(
-          Schema.String.pipe(Schema.maxLength(20)),
+          Schema.String.check(Schema.isMaxLength(20)),
           {
             description: "The priority",
             ask: Question.adaptiveChoice("Which area needs the most help?", {

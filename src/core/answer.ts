@@ -7,24 +7,25 @@ import type {
 } from "./question.js"
 
 /** How strongly a collect-stage answer must be grounded in user messages. */
-export const AnswerModeSchema = Schema.Literal(
+export const AnswerModeSchema = Schema.Literals([
   "semantic",
   "explicit",
   "confirmed",
-)
+])
 
 /** How strongly a collect-stage answer must be grounded in user messages. */
 export type AnswerMode = Schema.Schema.Type<typeof AnswerModeSchema>
 
-const AnswerDescriptionSchema = Schema.NonEmptyTrimmedString.pipe(
-  Schema.maxLength(1_000),
+const AnswerDescriptionSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(1_000),
 )
 
 /** Minimum runtime shape retained for every collect-stage answer. */
 export interface AnswerDefinitionContract {
   readonly _tag: "AnswerDefinition"
   readonly mode: AnswerMode
-  readonly schema: Schema.Schema.AnyNoContext
+  readonly schema: Schema.ConstraintCodec<unknown, unknown>
   readonly description: string
   readonly question: QuestionDefinitionContract
   readonly validate?: (
@@ -41,23 +42,23 @@ export interface AnswerDefinitionContract {
 /** One typed fact required by a collect stage. */
 export interface AnswerDefinition<
   Mode extends AnswerMode,
-  ValueSchema extends Schema.Schema.AnyNoContext,
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
   Error = never,
   Requirements = never,
 > extends AnswerDefinitionContract {
   readonly mode: Mode
   readonly schema: ValueSchema
-  readonly question: QuestionDefinition<Schema.Schema.Type<ValueSchema>>
+  readonly question: QuestionDefinition<ValueSchema["Type"]>
   readonly validate?: (
-    value: Schema.Schema.Type<ValueSchema>,
+    value: ValueSchema["Type"],
   ) => Effect.Effect<void, Error, Requirements>
   readonly reject?: {
     readonly ask:
       | FixedQuestion
-      | ChoiceQuestion<Schema.Schema.Type<ValueSchema>>
+      | ChoiceQuestion<ValueSchema["Type"]>
   }
   readonly escape?: {
-    readonly value: Schema.Schema.Type<ValueSchema>
+    readonly value: ValueSchema["Type"]
   }
 }
 
@@ -103,14 +104,14 @@ export type DefineAnswerInput<
 
 const defineAnswer = <
   const Mode extends AnswerMode,
-  ValueSchema extends Schema.Schema.AnyNoContext,
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
   Error,
   Requirements,
 >(
   mode: Mode,
   schema: ValueSchema,
   input: DefineAnswerInput<
-    Schema.Schema.Type<ValueSchema>,
+    ValueSchema["Type"],
     Error,
     Requirements
   >,
@@ -142,48 +143,55 @@ const defineAnswer = <
     ),
     question: input.ask,
   }
-  const withEscape =
-    input.escape === undefined
+  if (input.escape === undefined) {
+    return input.validate === undefined
       ? base
       : {
           ...base,
-          escape: {
-            value: Schema.validateSync(schema)(input.escape.value),
-          },
+          validate: input.validate,
+          reject: input.reject,
         }
+  }
+
+  const escape = {
+    value: Schema.decodeSync(Schema.toType(schema))(input.escape.value),
+  }
   return input.validate === undefined
-    ? withEscape
+    ? { ...base, escape }
     : {
-        ...withEscape,
+        ...base,
+        escape,
         validate: input.validate,
         reject: input.reject,
       }
 }
 
-function semantic<ValueSchema extends Schema.Schema.AnyNoContext>(
+function semantic<
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
+>(
   schema: ValueSchema,
-  input: DefineUnvalidatedAnswerInput<Schema.Schema.Type<ValueSchema>>,
+  input: DefineUnvalidatedAnswerInput<ValueSchema["Type"]>,
 ): AnswerDefinition<"semantic", ValueSchema, never, never>
 function semantic<
-  ValueSchema extends Schema.Schema.AnyNoContext,
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
   Error,
   Requirements,
 >(
   schema: ValueSchema,
   input: DefineValidatedAnswerInput<
-    Schema.Schema.Type<ValueSchema>,
+    ValueSchema["Type"],
     Error,
     Requirements
   >,
 ): AnswerDefinition<"semantic", ValueSchema, Error, Requirements>
 function semantic<
-  ValueSchema extends Schema.Schema.AnyNoContext,
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
   Error,
   Requirements,
 >(
   schema: ValueSchema,
   input: DefineAnswerInput<
-    Schema.Schema.Type<ValueSchema>,
+    ValueSchema["Type"],
     Error,
     Requirements
   >,
@@ -191,30 +199,32 @@ function semantic<
   return defineAnswer("semantic", schema, input)
 }
 
-function explicit<ValueSchema extends Schema.Schema.AnyNoContext>(
+function explicit<
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
+>(
   schema: ValueSchema,
-  input: DefineUnvalidatedAnswerInput<Schema.Schema.Type<ValueSchema>>,
+  input: DefineUnvalidatedAnswerInput<ValueSchema["Type"]>,
 ): AnswerDefinition<"explicit", ValueSchema, never, never>
 function explicit<
-  ValueSchema extends Schema.Schema.AnyNoContext,
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
   Error,
   Requirements,
 >(
   schema: ValueSchema,
   input: DefineValidatedAnswerInput<
-    Schema.Schema.Type<ValueSchema>,
+    ValueSchema["Type"],
     Error,
     Requirements
   >,
 ): AnswerDefinition<"explicit", ValueSchema, Error, Requirements>
 function explicit<
-  ValueSchema extends Schema.Schema.AnyNoContext,
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
   Error,
   Requirements,
 >(
   schema: ValueSchema,
   input: DefineAnswerInput<
-    Schema.Schema.Type<ValueSchema>,
+    ValueSchema["Type"],
     Error,
     Requirements
   >,
@@ -222,30 +232,32 @@ function explicit<
   return defineAnswer("explicit", schema, input)
 }
 
-function confirmed<ValueSchema extends Schema.Schema.AnyNoContext>(
+function confirmed<
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
+>(
   schema: ValueSchema,
-  input: DefineUnvalidatedAnswerInput<Schema.Schema.Type<ValueSchema>>,
+  input: DefineUnvalidatedAnswerInput<ValueSchema["Type"]>,
 ): AnswerDefinition<"confirmed", ValueSchema, never, never>
 function confirmed<
-  ValueSchema extends Schema.Schema.AnyNoContext,
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
   Error,
   Requirements,
 >(
   schema: ValueSchema,
   input: DefineValidatedAnswerInput<
-    Schema.Schema.Type<ValueSchema>,
+    ValueSchema["Type"],
     Error,
     Requirements
   >,
 ): AnswerDefinition<"confirmed", ValueSchema, Error, Requirements>
 function confirmed<
-  ValueSchema extends Schema.Schema.AnyNoContext,
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
   Error,
   Requirements,
 >(
   schema: ValueSchema,
   input: DefineAnswerInput<
-    Schema.Schema.Type<ValueSchema>,
+    ValueSchema["Type"],
     Error,
     Requirements
   >,

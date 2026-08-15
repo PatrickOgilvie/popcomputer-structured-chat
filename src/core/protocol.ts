@@ -8,24 +8,28 @@ import { defineView } from "./view.js"
 /** Bounded plain text emitted by a structured chat presenter. */
 export const AssistantTextPartSchema = Schema.Struct({
   type: Schema.Literal("text"),
-  text: Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(20_000)),
+  text: Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(20_000),
+  ),
 })
 
 /** Provider-neutral named data emitted by a structured chat presenter. */
 export const AssistantDataPartSchema = Schema.Struct({
   type: Schema.Literal("data"),
-  name: Schema.NonEmptyTrimmedString.pipe(
-    Schema.maxLength(100),
-    Schema.pattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+  name: Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(100),
+    Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
   ),
   data: Schema.Unknown,
 })
 
 /** Message parts transported from a structured chat action to a browser. */
-export const AssistantMessagePartSchema = Schema.Union(
+export const AssistantMessagePartSchema = Schema.Union([
   AssistantTextPartSchema,
   AssistantDataPartSchema,
-)
+])
 
 /** Message parts transported from a structured chat action to a browser. */
 export type AssistantMessagePart = Schema.Schema.Type<
@@ -35,8 +39,8 @@ export type AssistantMessagePart = Schema.Schema.Type<
 /** Strict assistant message returned by one structured chat action. */
 export const StructuredChatAssistantMessageSchema = Schema.Struct({
   role: Schema.Literal("assistant"),
-  content: Schema.NonEmptyArray(AssistantMessagePartSchema).pipe(
-    Schema.maxItems(20),
+  content: Schema.NonEmptyArray(AssistantMessagePartSchema).check(
+    Schema.isMaxLength(20),
   ),
 })
 
@@ -59,7 +63,10 @@ export type StructuredChatSessionReference = Schema.Schema.Type<
 /** Browser request carrying no server-owned chat state. */
 export const StructuredChatTurnRequestSchema = Schema.Struct({
   session: Schema.optional(StructuredChatSessionReferenceSchema),
-  message: Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(50_000)),
+  message: Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(50_000),
+  ),
 })
 
 /** Browser request carrying no server-owned chat state. */
@@ -84,14 +91,26 @@ export const CollectQuestionView = defineView({
   name: "collect_question",
   version: 1,
   schema: Schema.Struct({
-    stage: Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(100)),
-    field: Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(100)),
-    text: Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(500)),
+    stage: Schema.Trimmed.check(
+      Schema.isNonEmpty(),
+      Schema.isMaxLength(100),
+    ),
+    field: Schema.Trimmed.check(
+      Schema.isNonEmpty(),
+      Schema.isMaxLength(100),
+    ),
+    text: Schema.Trimmed.check(
+      Schema.isNonEmpty(),
+      Schema.isMaxLength(500),
+    ),
     options: Schema.Array(
       Schema.Struct({
-        label: Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(100)),
+        label: Schema.Trimmed.check(
+          Schema.isNonEmpty(),
+          Schema.isMaxLength(100),
+        ),
       }),
-    ).pipe(Schema.maxItems(20)),
+    ).check(Schema.isMaxLength(20)),
   }),
 })
 
@@ -134,7 +153,10 @@ export interface PresentChatReplyOptions<Turn extends PresentableTurn> {
 
 /** Construct and validate one plain assistant text part. */
 const makeText = (text: string): AssistantMessagePart =>
-  Schema.validateSync(AssistantTextPartSchema)({ type: "text", text })
+  Schema.decodeSync(Schema.toType(AssistantTextPartSchema))({
+    type: "text",
+    text,
+  })
 
 /** Constructors for deterministic assistant message parts. */
 export const Text = {
@@ -156,7 +178,7 @@ interface StructuredChatResponseCandidate {
 const parseResponse = (
   input: StructuredChatResponseCandidate,
 ): Effect.Effect<StructuredChatTurnResponse, InvalidChatPresentation> =>
-  Schema.decodeUnknown(StructuredChatTurnResponseSchema)(input, {
+  Schema.decodeUnknownEffect(StructuredChatTurnResponseSchema)(input, {
     onExcessProperty: "error",
   }).pipe(Effect.mapError(invalidPresentation))
 

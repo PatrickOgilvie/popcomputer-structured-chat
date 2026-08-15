@@ -14,7 +14,7 @@ The framework derives the model tool schemas, runtime validation, workflow
 state, browser protocol, and Effect requirements from those definitions.
 
 ```sh
-bun add @popcomputer/structured-chat effect
+bun add @popcomputer/structured-chat@next effect@^4.0.0-rc.109
 ```
 
 The published entry points are ESM-only and support Node.js 22 or newer.
@@ -47,7 +47,9 @@ const ResultCards = defineView({
 const FindResources = defineTool({
   name: "find_resources",
   description: "Find resources relevant to the completed request.",
-  input: Schema.Struct({ query: Schema.NonEmptyTrimmedString }),
+  input: Schema.Struct({
+    query: Schema.Trimmed.check(Schema.isNonEmpty()),
+  }),
   execute: ({ query }) => ResourceCatalog.search(query),
 }).pipe(
   Tool.modelResult(ResourceEvidenceSchema, ({ evidence }) => evidence),
@@ -92,7 +94,9 @@ import { SearchKnowledgeBase } from "./knowledge-graph.js"
 const FindResources = defineTool({
   name: "find_resources",
   description: "Find resources supported by relevant source evidence.",
-  input: Schema.Struct({ query: Schema.NonEmptyTrimmedString }),
+  input: Schema.Struct({
+    query: Schema.Trimmed.check(Schema.isNonEmpty()),
+  }),
   execute: ({ query }) => SearchKnowledgeBase.search(query, { limit: 6 }),
 }).pipe(
   Tool.modelResult(ResourceEvidenceSchema, toModelEvidence),
@@ -127,7 +131,7 @@ const RequestDetails = Stage.collect({
     escape: "Not sure yet",
   },
   fields: {
-    goal: Answer.semantic(Schema.NonEmptyTrimmedString, {
+    goal: Answer.semantic(Schema.Trimmed.check(Schema.isNonEmpty()), {
       description: "The outcome the user wants to achieve.",
       ask: Question.adaptiveChoice(
         "What would you like help accomplishing?",
@@ -142,7 +146,7 @@ const RequestDetails = Stage.collect({
         },
       ),
     }),
-    audience: Answer.explicit(Schema.NonEmptyTrimmedString, {
+    audience: Answer.explicit(Schema.Trimmed.check(Schema.isNonEmpty()), {
       description: "Who the requested result is for.",
       ask: Question.fixed("Who is this for?"),
     }),

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Either, Layer, Ref, Schema } from "effect"
+import { Effect, Layer, Ref, Result, Schema } from "effect"
 import {
   Answer,
   ChatSessionStore,
@@ -114,7 +114,7 @@ describe("Stage.command", () => {
           ...current,
           { id: commandId, recipient },
         ]).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             Ref.modify(outcomes, (current) => {
               const prior = current.get(commandId)
               if (prior !== undefined) {
@@ -157,7 +157,7 @@ describe("Stage.command", () => {
     })
     const live = Layer.merge(model, unavailableStore)
     const reply = () =>
-      Effect.either(
+      Effect.result(
         DeliveryChat.reply({
           namespace: "account-one",
           sessionId: "delivery-session",
@@ -169,8 +169,8 @@ describe("Stage.command", () => {
     const second = await Effect.runPromise(reply())
     const recorded = await Effect.runPromise(Ref.get(attempts))
 
-    expect(Either.isLeft(first)).toBe(true)
-    expect(Either.isLeft(second)).toBe(true)
+    expect(Result.isFailure(first)).toBe(true)
+    expect(Result.isFailure(second)).toBe(true)
     expect(recorded).toHaveLength(2)
     expect(recorded[0]?.id).toBe(recorded[1]?.id)
     expect(await Effect.runPromise(Ref.get(sends))).toBe(1)
@@ -212,7 +212,7 @@ describe("Stage.command", () => {
           sessionId: "terminal-delivery",
           message: "Send hello.",
         })
-        const second = yield* Effect.either(
+        const second = yield* Effect.result(
           DeliveryChat.reply({
             sessionId: "terminal-delivery",
             expectedRevision: first.revision,
@@ -224,7 +224,7 @@ describe("Stage.command", () => {
     )
 
     expect(result.first.turn._tag).toBe("Complete")
-    expect(Either.isLeft(result.second)).toBe(true)
+    expect(Result.isFailure(result.second)).toBe(true)
     expect(await Effect.runPromise(Ref.get(executions))).toBe(1)
   })
 
@@ -345,7 +345,7 @@ describe("Stage.command", () => {
     })
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         DeliveryChat.reply({
           sessionId: "bounded-delivery",
           expectedRevision: "1",
@@ -354,7 +354,7 @@ describe("Stage.command", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
+    expect(Result.isFailure(result)).toBe(true)
     expect(modelCalls).toBe(0)
     expect(commandCalls).toBe(0)
   })
@@ -391,7 +391,7 @@ describe("Stage.command", () => {
     })
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         DeliveryChat.run({
           state: DeliveryChat.initialState,
           messages: [Message.user("Send it")],
@@ -399,7 +399,7 @@ describe("Stage.command", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
+    expect(Result.isFailure(result)).toBe(true)
     expect(modelCalls).toBe(0)
     expect(commandCalls).toBe(0)
   })

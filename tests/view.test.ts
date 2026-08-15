@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Either, Schema } from "effect"
+import { Effect, Result, Schema } from "effect"
 import { defineView } from "../src/index.js"
 
 const AgencyCards = defineView({
   name: "agency_cards",
   version: 2,
   schema: Schema.Struct({
-    title: Schema.NonEmptyTrimmedString,
+    title: Schema.Trimmed.check(Schema.isNonEmpty()),
     agencyIds: Schema.Array(Schema.String),
   }),
 })
@@ -62,21 +62,20 @@ describe("defineView", () => {
   })
 
   test("strictly parses application-owned display data", async () => {
+    const applicationData = {
+      title: "Recommended agencies",
+      agencyIds: ["agency:1"],
+      privateNotes: "must not reach the browser",
+    }
     const parsed = await Effect.runPromise(
-      Effect.either(
-        AgencyCards.parseData({
-          title: "Recommended agencies",
-          agencyIds: ["agency:1"],
-          privateNotes: "must not reach the browser",
-        }),
-      ),
+      Effect.result(AgencyCards.parseData(applicationData)),
     )
 
-    expect(Either.isLeft(parsed)).toBe(true)
+    expect(Result.isFailure(parsed)).toBe(true)
   })
 
   test("strictly decodes serialized browser parts", () => {
-    const decoded = AgencyCards.decodeEither({
+    const decoded = AgencyCards.decodeResult({
       type: "data",
       name: "agency_cards",
       data: {
@@ -86,7 +85,7 @@ describe("defineView", () => {
       },
     })
 
-    expect(Either.isLeft(decoded)).toBe(true)
+    expect(Result.isFailure(decoded)).toBe(true)
   })
 
   test("reserves schemaVersion for the protocol", () => {

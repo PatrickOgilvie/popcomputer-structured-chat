@@ -22,8 +22,9 @@ const scenarioQuote = Symbol(
   "@popcomputer/structured-chat/testing/ScenarioQuote",
 )
 
-const ScenarioQuoteSchema = Schema.NonEmptyTrimmedString.pipe(
-  Schema.maxLength(2_000),
+const ScenarioQuoteSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(2_000),
 )
 
 /** One typed scenario value paired with its exact supporting user quote. */
@@ -159,7 +160,7 @@ const answers = <
       if (value === undefined || answer === undefined) {
         continue
       }
-      encodedAnswers[field] = Schema.decodeSync(JsonValueSchema)(
+      encodedAnswers[field] = Schema.decodeUnknownSync(JsonValueSchema)(
         Schema.encodeSync(answer.schema)(value.value),
       )
       evidenceIndex(request, value)
@@ -197,7 +198,7 @@ const call = <Tool extends ToolDefinitionContract>(
 ): ScenarioStep => ({
   respond: () => ({
     name: tool.name,
-    arguments: Schema.decodeSync(JsonValueSchema)(
+    arguments: Schema.decodeUnknownSync(JsonValueSchema)(
       Schema.encodeSync(tool.inputSchema)(input),
     ),
   }),
@@ -226,7 +227,7 @@ const replace = <
         _tag: "ReplaceAcceptedAnswer",
         stage: stage.name,
         field,
-        value: Schema.decodeSync(JsonValueSchema)(
+        value: Schema.decodeUnknownSync(JsonValueSchema)(
           Schema.encodeSync(answer.schema)(value),
         ),
         evidence: {
@@ -286,7 +287,7 @@ const model = (
     Ref.make(0).pipe(
       Effect.map((cursor) => {
         const steps = [first, ...remaining]
-        return {
+        return StructuredChatModel.of({
           requestTool: (request: ToolModelRequest) =>
             Ref.getAndUpdate(cursor, (index) => index + 1).pipe(
               Effect.flatMap((index) => {
@@ -300,7 +301,7 @@ const model = (
                   : Effect.sync(() => step.respond(request))
               }),
             ),
-        }
+        })
       }),
     ),
   )

@@ -1,4 +1,4 @@
-import { Effect, Schema, unsafeCoerce } from "effect"
+import { Effect, Function as Fn, Schema } from "effect"
 import {
   Instruction,
   planToolCall,
@@ -31,6 +31,7 @@ import type {
   ToolCall,
   ToolExecution,
   QueryToolDefinitionContract,
+  ToolSchema,
 } from "./tool.js"
 import { defineCollectStage } from "./collect-stage.js"
 import { StageNameSchema } from "./stage-name.js"
@@ -42,10 +43,10 @@ import {
 export { StageNameSchema } from "./stage-name.js"
 
 /** State transition applied after one tool-stage execution. */
-export const ToolStageAfterExecutionSchema = Schema.Literal(
+export const ToolStageAfterExecutionSchema = Schema.Literals([
   "stay",
   "complete",
-)
+])
 
 /** State transition applied after one tool-stage execution. */
 export type ToolStageAfterExecution = Schema.Schema.Type<
@@ -73,12 +74,12 @@ export interface ToolStageRuntime {
     messages: ReadonlyArray<UntrustedMessage>,
     additionalTool: QueryToolDefinitionContract,
   ) => Effect.Effect<
-    ToolCall<string, Schema.Schema.AnyNoContext>,
+    ToolCall<string, ToolSchema>,
     unknown,
     unknown
   >
   readonly execute: (
-    call: ToolCall<string, Schema.Schema.AnyNoContext>,
+    call: ToolCall<string, ToolSchema>,
   ) => Effect.Effect<unknown, unknown, unknown>
   readonly run: (
     messages: ReadonlyArray<UntrustedMessage>,
@@ -281,7 +282,7 @@ const defineToolStage = <
   // SAFETY: when guards are omitted, Guards uses its readonly [] default; an
   // explicitly supplied tuple is returned unchanged.
   const guards =
-    definition.guards ?? unsafeCoerce<readonly [], Guards>([])
+    definition.guards ?? Fn.cast<readonly [], Guards>([])
   const afterExecution = Schema.decodeSync(
     ToolStageAfterExecutionSchema,
   )(definition.afterExecution ?? "stay")
@@ -302,9 +303,12 @@ const defineToolStage = <
     plan(messages).pipe(Effect.flatMap(toolSet.execute))
   // SAFETY: chat repair supplies only a call parsed by a combined set that
   // contains this exact query tuple; non-repair names therefore belong here.
-  const executeRuntime = toolSet.execute as (
-    call: ToolCall<string, Schema.Schema.AnyNoContext>,
-  ) => Effect.Effect<unknown, unknown, unknown>
+  const executeRuntime = Fn.cast<
+    typeof toolSet.execute,
+    (
+      call: ToolCall<string, ToolSchema>,
+    ) => Effect.Effect<unknown, unknown, unknown>
+  >(toolSet.execute)
 
   const planWith = (
     messages: ReadonlyArray<UntrustedMessage>,
@@ -353,13 +357,14 @@ const defineCommandStage = <
   const instructions = definition.instructions.map(Instruction.make)
   // SAFETY: when omitted, Guards is its readonly [] default.
   const guards =
-    definition.guards ?? unsafeCoerce<readonly [], Guards>([])
+    definition.guards ?? Fn.cast<readonly [], Guards>([])
   const planner: ToolCallPlanner<readonly [Command]> = {
     models: [definition.command.model],
     // SAFETY: this command parses its literal name and exact input schema.
-    parseCall: definition.command.parseCall as ToolCallPlanner<
-      readonly [Command]
-    >["parseCall"],
+    parseCall: Fn.cast<
+      typeof definition.command.parseCall,
+      ToolCallPlanner<readonly [Command]>["parseCall"]
+    >(definition.command.parseCall),
   }
   const plan = (messages: ReadonlyArray<UntrustedMessage>) =>
     planToolCall({ instructions, messages, tools: planner, guards }).pipe(
@@ -369,13 +374,13 @@ const defineCommandStage = <
     )
   interface RuntimeCommand {
     readonly execute: (
-      input: Schema.Schema.Type<Schema.Schema.AnyNoContext>,
+      input: Schema.Schema.Type<ToolSchema>,
       context: CommandExecutionContext,
     ) => Effect.Effect<unknown, unknown, unknown>
   }
   // SAFETY: Command has the package-owned identity and command operation;
   // its parsed call and runtime execute input originate from one definition.
-  const runtimeCommand = unsafeCoerce<Command, RuntimeCommand>(
+  const runtimeCommand = Fn.cast<Command, RuntimeCommand>(
     definition.command,
   )
   const runRuntime = (
@@ -392,7 +397,10 @@ const defineCommandStage = <
     )
   // SAFETY: failures and requirements are not recovered; the command's
   // projections and result are preserved by its own execute operation.
-  const run = runRuntime as CommandStage<Name, Command, Guards>["run"]
+  const run = Fn.cast<
+    typeof runRuntime,
+    CommandStage<Name, Command, Guards>["run"]
+  >(runRuntime)
 
   return structuredDefinition("command_stage")({
     _tag: "CommandStage",

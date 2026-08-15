@@ -1,4 +1,4 @@
-import { Effect, Schema, unsafeCoerce } from "effect"
+import { Effect, Function as Fn, Schema } from "effect"
 import type {
   InvalidToolCall,
   InvalidToolProjection,
@@ -8,6 +8,7 @@ import type {
   ToolDefinitionContract,
   ToolExecution,
   ToolCall,
+  ToolSchema,
 } from "./tool.js"
 import {
   InvalidToolCall as InvalidToolCallError,
@@ -144,9 +145,9 @@ const IncomingToolCallSchema = Schema.Struct({
 interface RuntimeTool {
   readonly parseCall: (
     input: JsonValue,
-  ) => Effect.Effect<ToolCall<string, Schema.Schema.AnyNoContext>, InvalidToolCall>
+  ) => Effect.Effect<ToolCall<string, ToolSchema>, InvalidToolCall>
   readonly execute: (
-    input: Schema.Schema.Type<Schema.Schema.AnyNoContext>,
+    input: Schema.Schema.Type<ToolSchema>,
   ) => Effect.Effect<unknown, unknown, unknown>
 }
 
@@ -184,7 +185,7 @@ export const defineToolSet = <const Tools extends ToolTuple>(
     // public result, error, and requirement types.
     runtimeTools.set(
       tool.name,
-      unsafeCoerce<QueryToolDefinitionContract, RuntimeTool>(tool),
+      Fn.cast<QueryToolDefinitionContract, RuntimeTool>(tool),
     )
   }
 
@@ -199,7 +200,7 @@ export const defineToolSet = <const Tools extends ToolTuple>(
     return Effect.succeed(tool)
   }
   const parseCallRuntime = (input: JsonValue) =>
-    Schema.decodeUnknown(IncomingToolCallSchema)(input, {
+    Schema.decodeUnknownEffect(IncomingToolCallSchema)(input, {
       onExcessProperty: "error",
     }).pipe(
       Effect.mapError(() => invalidCall("invalid_envelope", null)),
@@ -214,7 +215,10 @@ export const defineToolSet = <const Tools extends ToolTuple>(
     )
   // SAFETY: the envelope parser establishes a registered name, then that
   // registered tool parses its own literal name and argument schema.
-  const parseCall = parseCallRuntime as ToolSet<Tools>["parseCall"]
+  const parseCall = Fn.cast<
+    typeof parseCallRuntime,
+    ToolSet<Tools>["parseCall"]
+  >(parseCallRuntime)
   const executeRuntime = (call: ToolSetCall<Tools>) =>
     selectTool(call.name).pipe(
       Effect.flatMap((tool) => tool.execute(call.arguments)),
@@ -225,7 +229,10 @@ export const defineToolSet = <const Tools extends ToolTuple>(
   // SAFETY: call is a parsed member of ToolSetCall<Tools>; dispatch selects
   // that member's registered runtime and passes its decoded arguments to the
   // corresponding Type-side execute operation.
-  const execute = executeRuntime as ToolSet<Tools>["execute"]
+  const execute = Fn.cast<
+    typeof executeRuntime,
+    ToolSet<Tools>["execute"]
+  >(executeRuntime)
   const executeCall = (input: JsonValue) =>
     parseCall(input).pipe(Effect.flatMap(execute))
 
@@ -237,6 +244,9 @@ export const defineToolSet = <const Tools extends ToolTuple>(
     // SAFETY: dispatch selects a member of Tools by its unique runtime name.
     // Each tool parses itself before executing, so the resulting union exactly
     // matches ToolSetExecution, ToolSetError, and ToolSetRequirements.
-    executeCall: executeCall as ToolSet<Tools>["executeCall"],
+    executeCall: Fn.cast<
+      typeof executeCall,
+      ToolSet<Tools>["executeCall"]
+    >(executeCall),
   }
 }

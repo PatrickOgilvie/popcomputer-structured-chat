@@ -1,5 +1,4 @@
-import { Effect, Schema, unsafeCoerce } from "effect"
-import type * as ParseResult from "effect/ParseResult"
+import { cast, Effect, Schema } from "effect"
 import type {
   AcceptedAnswer,
   CollectAnswers,
@@ -44,22 +43,23 @@ import {
 } from "./session.js"
 
 /** Stable machine-facing name for one structured chat definition. */
-export const ChatNameSchema = Schema.NonEmptyTrimmedString.pipe(
-  Schema.maxLength(100),
-  Schema.pattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+export const ChatNameSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(100),
+  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
 )
 
 /** Positive persisted-state version for one structured chat definition. */
-export const ChatVersionSchema = Schema.Number.pipe(
-  Schema.int(),
-  Schema.between(1, 2_147_483_647),
+export const ChatVersionSchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 1, maximum: 2_147_483_647 }),
 )
 
 /** Safe reason that a server-owned chat transition was rejected. */
-export const InvalidChatTransitionReasonSchema = Schema.Literal(
+export const InvalidChatTransitionReasonSchema = Schema.Literals([
   "already_complete",
   "invalid_state",
-)
+])
 
 /** A server-owned chat state cannot perform the requested transition. */
 export class InvalidChatTransition extends Schema.TaggedError<InvalidChatTransition>()(
@@ -151,7 +151,7 @@ type ChatToolExecution<Stage> = Stage extends ToolStage<
         infer _Command,
         infer _Guards
       >
-    ? Extract<Effect.Effect.Success<ReturnType<Stage["run"]>>, object>
+    ? Extract<Effect.Success<ReturnType<Stage["run"]>>, object>
     : never
 
 type StageEffect<Stage> = Stage extends CollectStage<
@@ -177,11 +177,11 @@ type StageEffect<Stage> = Stage extends CollectStage<
 /** Failure union produced by any stage in one chat. */
 export type ChatError<Stages extends ChatStageTuple> =
   | InvalidChatTransition
-  | Effect.Effect.Error<StageEffect<Stages[number]>>
+  | Effect.Error<StageEffect<Stages[number]>>
 
 /** Effect service union required by any stage in one chat. */
 export type ChatRequirements<Stages extends ChatStageTuple> =
-  Effect.Effect.Context<StageEffect<Stages[number]>>
+  Effect.Services<StageEffect<Stages[number]>>
 
 /** Question, ongoing tool result, or terminal result emitted by one turn. */
 export type ChatTurn<
@@ -255,11 +255,7 @@ export interface ChatDefinition<
   readonly version: Version
   readonly stages: Stages
   readonly repair: StandardRepair | undefined
-  readonly stateSchema: Schema.Schema<
-    ChatState<Name, Version, Stages>,
-    unknown,
-    never
-  >
+  readonly stateSchema: Schema.Codec<ChatState<Name, Version, Stages>, unknown>
   readonly initialState: ChatState<Name, Version, Stages>
 
   /** Read one accepted value together with its supporting transcript data. */
@@ -276,12 +272,12 @@ export interface ChatDefinition<
 
   /** Strictly parse persisted server-owned chat state. */
   readonly parseState: (
-    input: Schema.Schema.Encoded<
-      Schema.Schema<ChatState<Name, Version, Stages>, unknown, never>
+    input: Schema.Codec.Encoded<
+      Schema.Codec<ChatState<Name, Version, Stages>, unknown>
     >,
   ) => Effect.Effect<
     ChatState<Name, Version, Stages>,
-    ParseResult.ParseError
+    Schema.SchemaError
   >
 
   /** Run the active stage and any immediately reachable tool stage. */
@@ -391,7 +387,7 @@ export const defineChat = <
     )
   }
 
-  const stateFields: Record<string, Schema.Schema.AnyNoContext> = {}
+  const stateFields: Record<string, Schema.Codec<unknown, unknown>> = {}
   const initialStages: Record<
     string,
     CollectStageRuntime["initialState"]
@@ -434,10 +430,10 @@ export const defineChat = <
     const correctionSchema =
       remainingSchemas.length === 0
         ? firstSchema
-        : Schema.Union(firstSchema, ...remainingSchemas)
+        : Schema.Union([firstSchema, ...remainingSchemas])
     const input = Schema.Struct({
-      corrections: Schema.NonEmptyArray(correctionSchema).pipe(
-        Schema.maxItems(repair.maximumCorrections),
+      corrections: Schema.NonEmptyArray(correctionSchema).check(
+        Schema.isMaxLength(repair.maximumCorrections),
       ),
     })
     return defineTool({
@@ -530,11 +526,14 @@ export const defineChat = <
   const baseStateFields = {
     schemaVersion: Schema.Literal(definition.version),
     chat: Schema.Literal(definition.name),
-    stage: Schema.Number.pipe(
-      Schema.int(),
-      Schema.between(0, definition.stages.length - 1),
+    stage: Schema.Number.check(
+      Schema.isInt(),
+      Schema.isBetween({
+        minimum: 0,
+        maximum: definition.stages.length - 1,
+      }),
     ),
-    status: Schema.Literal("active", "complete"),
+    status: Schema.Literals(["active", "complete"]),
     stages: Schema.Struct(stateFields),
   }
   const rawStateSchema =
@@ -544,24 +543,27 @@ export const defineChat = <
           ...baseStateFields,
           repair: Schema.Struct({
             pendingStages: Schema.Array(
-              Schema.Number.pipe(
-                Schema.int(),
-                Schema.between(0, finalStageIndex - 1),
+              Schema.Number.check(
+                Schema.isInt(),
+                Schema.isBetween({
+                  minimum: 0,
+                  maximum: finalStageIndex - 1,
+                }),
               ),
-            ).pipe(Schema.maxItems(20)),
+            ).check(Schema.isMaxLength(20)),
           }),
         })
   // SAFETY: the conditional repair field is erased only for applying the
   // shared semantic predicate; stateSchema below restores the public type.
-  const runtimeStateSchema = unsafeCoerce<
+  const runtimeStateSchema = cast<
     typeof rawStateSchema,
-    Schema.Schema.AnyNoContext
+    Schema.Codec<unknown, unknown>
   >(rawStateSchema)
-  const refinedStateSchema = runtimeStateSchema.pipe(
-    Schema.filter(
+  const refinedStateSchema = runtimeStateSchema.check(
+    Schema.makeFilter<unknown>(
       (state) =>
         isValidRuntimeState(
-          unsafeCoerce<typeof state, RuntimeChatState>(state),
+          cast<typeof state, RuntimeChatState>(state),
         ),
       {
         description: "semantically valid structured-chat state",
@@ -570,9 +572,9 @@ export const defineChat = <
   )
   // SAFETY: stage state fields are taken directly from the concrete collect
   // stages, and the remaining envelope fields are exact literals or bounds.
-  const stateSchema = unsafeCoerce<
+  const stateSchema = cast<
     typeof refinedStateSchema,
-    Schema.Schema<ChatState<Name, Version, Stages>, unknown, never>
+    Schema.Codec<ChatState<Name, Version, Stages>, unknown>
   >(refinedStateSchema)
   const baseInitialState = {
     schemaVersion: definition.version,
@@ -585,7 +587,9 @@ export const defineChat = <
     repair === undefined
       ? baseInitialState
       : { ...baseInitialState, repair: { pendingStages: [] } }
-  const initialState = Schema.validateSync(stateSchema)(initialStateInput)
+  const initialState = Schema.decodeUnknownSync(Schema.toType(stateSchema))(
+    initialStateInput,
+  )
 
   const isGroundedInMessages = (
     state: RuntimeChatState,
@@ -728,7 +732,7 @@ export const defineChat = <
             }
             // SAFETY: planWith used the generated repair tool schema, and this
             // branch is selected by that tool's unique literal name.
-            const proposal = unsafeCoerce<
+            const proposal = cast<
               typeof call.arguments,
               RuntimeRepairProposal
             >(call.arguments)
@@ -851,7 +855,7 @@ export const defineChat = <
   const run: ChatDefinition<Name, Version, Stages>["run"] = (input) => {
     // SAFETY: ChatState is generated from the same stage tuple as the sealed
     // runtime state contract; only generic correlations are erased here.
-    const runtimeState = unsafeCoerce<
+    const runtimeState = cast<
       typeof input.state,
       RuntimeChatState
     >(input.state)
@@ -862,7 +866,7 @@ export const defineChat = <
 
     // SAFETY: runtime dispatch follows the exact Stages tuple and each stage
     // retains its own parsing, errors, dependencies, and output constructor.
-    return unsafeCoerce<
+    return cast<
       typeof runtime,
       Effect.Effect<
         ChatTurn<Name, Version, Stages>,
@@ -874,7 +878,7 @@ export const defineChat = <
 
   const reply: ChatDefinition<Name, Version, Stages>["reply"] = (input) =>
     Effect.gen(function* () {
-      const parsedInput = yield* Schema.decodeUnknown(
+      const parsedInput = yield* Schema.decodeUnknownEffect(
         ChatReplyBoundaryInputSchema,
       )(input, { onExcessProperty: "error" }).pipe(
         Effect.mapError(() => invalidSession("invalid_input")),
@@ -900,7 +904,7 @@ export const defineChat = <
       const snapshot =
         loaded === null
           ? null
-          : yield* Schema.decodeUnknown(ChatSessionSnapshotSchema)(
+          : yield* Schema.decodeUnknownEffect(ChatSessionSnapshotSchema)(
               loaded,
               { onExcessProperty: "error" },
             ).pipe(
@@ -923,7 +927,7 @@ export const defineChat = <
       const state =
         snapshot === null
           ? initialState
-          : yield* Schema.decodeUnknown(stateSchema)(snapshot.state, {
+          : yield* Schema.decodeUnknownEffect(stateSchema)(snapshot.state, {
               onExcessProperty: "error",
             }).pipe(
               Effect.mapError(() =>
@@ -932,7 +936,7 @@ export const defineChat = <
             )
       const previousMessages = snapshot?.messages ?? []
       // SAFETY: stateSchema decoded this definition's exact state envelope.
-      const runtimeState = unsafeCoerce<typeof state, RuntimeChatState>(state)
+      const runtimeState = cast<typeof state, RuntimeChatState>(state)
       if (
         !isGroundedInMessages(
           runtimeState,
@@ -947,7 +951,7 @@ export const defineChat = <
       ) {
         return yield* Effect.fail(invalidSession("history_limit"))
       }
-      const userMessage = yield* Schema.decodeUnknown(
+      const userMessage = yield* Schema.decodeUnknownEffect(
         UntrustedMessageSchema,
       )(
         { role: "user", content: parsedInput.message },
@@ -981,7 +985,7 @@ export const defineChat = <
           state.status === "active" &&
           state.stage === finalStageIndex,
       )
-      const turn = yield* unsafeCoerce<
+      const turn = yield* cast<
         typeof trustedTurn,
         Effect.Effect<
           ChatTurn<Name, Version, Stages>,
@@ -1014,7 +1018,7 @@ export const defineChat = <
       if (persistedMessages.length > maximumPersistedMessages) {
         return yield* Effect.fail(invalidSession("history_limit"))
       }
-      const encodedState = yield* Schema.encodeUnknown(stateSchema)(
+      const encodedState = yield* Schema.encodeUnknownEffect(stateSchema)(
         turn.state,
         { onExcessProperty: "error" },
       ).pipe(
@@ -1045,7 +1049,7 @@ export const defineChat = <
             },
           ),
         )
-      const replacement = yield* Schema.decodeUnknown(
+      const replacement = yield* Schema.decodeUnknownEffect(
         ChatSessionReplacementSchema,
       )(replaced, { onExcessProperty: "error" }).pipe(
         Effect.mapError(() => invalidSession("invalid_replacement")),
@@ -1074,9 +1078,9 @@ export const defineChat = <
       }
       // SAFETY: Stage is restricted to this chat's concrete collect stages,
       // Field is restricted to its field keys, and state uses the same tuple.
-      const runtimeState = unsafeCoerce<typeof state, RuntimeChatState>(state)
+      const runtimeState = cast<typeof state, RuntimeChatState>(state)
       const accepted = runtimeState.stages[stage.name]?.accepted[field]
-      return unsafeCoerce<
+      return cast<
         typeof accepted,
         | AcceptedAnswer<
             CollectAnswers<CollectFields<typeof stage>>[typeof field]
@@ -1085,7 +1089,7 @@ export const defineChat = <
       >(accepted)
     },
     parseState: (input) =>
-      Schema.decodeUnknown(stateSchema)(input, {
+      Schema.decodeUnknownEffect(stateSchema)(input, {
         onExcessProperty: "error",
       }),
     run,

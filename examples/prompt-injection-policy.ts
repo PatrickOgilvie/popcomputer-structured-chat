@@ -21,9 +21,7 @@ export class UnsafeConversation extends Schema.TaggedError<UnsafeConversation>()
  * Application-owned classifier; production may use any local or remote
  * policy.
  */
-export class ConversationSafety extends Context.Tag(
-  "ConversationSafety",
-)<
+export class ConversationSafety extends Context.Service<
   ConversationSafety,
   {
     readonly checkConversation: (
@@ -33,27 +31,29 @@ export class ConversationSafety extends Context.Tag(
       context: ModelGuardCallContext,
     ) => Effect.Effect<void, UnsafeConversation>
   }
->() {}
+>()("ConversationSafety") {}
 
 /** Effect-native guard composed into any model-backed stage. */
 export const PromptInjectionPolicy = defineModelGuard({
   name: "prompt_injection_policy",
   check: (context) =>
-    ConversationSafety.pipe(
-      Effect.flatMap((safety) =>
-        safety.checkConversation(context),
-      ),
-    ),
+    Effect.gen(function* () {
+      const safety = yield* ConversationSafety
+      return yield* safety.checkConversation(context)
+    }),
   checkCall: (context) =>
-    ConversationSafety.pipe(
-      Effect.flatMap((safety) => safety.checkCall(context)),
-    ),
+    Effect.gen(function* () {
+      const safety = yield* ConversationSafety
+      return yield* safety.checkCall(context)
+    }),
 })
 
 const FindResources = defineTool({
   name: "find_resources",
   description: "Find resources relevant to the request.",
-  input: Schema.Struct({ query: Schema.NonEmptyTrimmedString }),
+  input: Schema.Struct({
+    query: Schema.Trimmed.check(Schema.isNonEmpty()),
+  }),
   execute: ({ query }) => Effect.succeed({ query }),
 })
 

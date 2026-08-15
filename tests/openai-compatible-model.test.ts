@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import {
   Effect,
-  Either,
   Fiber,
+  Layer,
+  Result,
   Schema,
-  TestClock,
-  TestContext,
 } from "effect"
+import { TestClock, TestConsole } from "effect/testing"
 import {
   Answer,
   ChatModelUnavailable,
@@ -89,15 +89,15 @@ describe("structuredChatModelLayer", () => {
         tool_choice: Schema.String,
         parallel_tool_calls: Schema.Boolean,
         stream: Schema.Boolean,
-        tools: Schema.Tuple(
+        tools: Schema.Tuple([
           Schema.Struct({
             function: Schema.Struct({ name: Schema.String }),
           }),
-        ),
-        messages: Schema.Tuple(
+        ]),
+        messages: Schema.Tuple([
           Schema.Struct({ role: Schema.String, content: Schema.String }),
           Schema.Struct({ role: Schema.String, content: Schema.String }),
-        ),
+        ]),
       }),
     )(captured[0]?.input)
 
@@ -160,11 +160,11 @@ describe("structuredChatModelLayer", () => {
     )
     const request = Schema.decodeUnknownSync(
       Schema.Struct({
-        tools: Schema.Tuple(
+        tools: Schema.Tuple([
           Schema.Struct({
             function: Schema.Struct({ strict: Schema.Boolean }),
           }),
-        ),
+        ]),
       }),
     )(captured[0])
 
@@ -233,7 +233,7 @@ describe("structuredChatModelLayer", () => {
     })
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runToolStep({
           instructions: [Instruction.make("Call optional_search once.")],
           messages: [Message.user("Find work")],
@@ -242,11 +242,11 @@ describe("structuredChatModelLayer", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(UnsupportedModelToolSchema)
-      if (result.left instanceof UnsupportedModelToolSchema) {
-        expect(result.left).toMatchObject({
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(UnsupportedModelToolSchema)
+      if (result.failure instanceof UnsupportedModelToolSchema) {
+        expect(result.failure).toMatchObject({
           tool: "optional_search",
           path: "#/properties/query",
           reason: "optional_property",
@@ -276,7 +276,7 @@ describe("structuredChatModelLayer", () => {
     })
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runToolStep({
           instructions: [Instruction.make("Call primitive_search once.")],
           messages: [Message.user("Find work")],
@@ -285,11 +285,11 @@ describe("structuredChatModelLayer", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(UnsupportedModelToolSchema)
-      if (result.left instanceof UnsupportedModelToolSchema) {
-        expect(result.left).toMatchObject({
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(UnsupportedModelToolSchema)
+      if (result.failure instanceof UnsupportedModelToolSchema) {
+        expect(result.failure).toMatchObject({
           tool: "primitive_search",
           path: "#",
           reason: "root_not_object",
@@ -304,10 +304,7 @@ describe("structuredChatModelLayer", () => {
     const DynamicSearch = defineTool({
       name: "dynamic_search",
       description: "Search with dynamic string fields.",
-      input: Schema.Record({
-        key: Schema.String,
-        value: Schema.String,
-      }),
+      input: Schema.Record(Schema.String, Schema.String),
       execute: (query) => Effect.succeed({ query }),
     })
     const layer = structuredChatModelLayer({
@@ -322,7 +319,7 @@ describe("structuredChatModelLayer", () => {
     })
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runToolStep({
           instructions: [Instruction.make("Call dynamic_search once.")],
           messages: [Message.user("Find work")],
@@ -331,11 +328,11 @@ describe("structuredChatModelLayer", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(UnsupportedModelToolSchema)
-      if (result.left instanceof UnsupportedModelToolSchema) {
-        expect(result.left).toMatchObject({
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(UnsupportedModelToolSchema)
+      if (result.failure instanceof UnsupportedModelToolSchema) {
+        expect(result.failure).toMatchObject({
           tool: "dynamic_search",
           path: "#",
           reason: "additional_properties_allowed",
@@ -431,7 +428,7 @@ describe("structuredChatModelLayer", () => {
       }),
     })
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runToolStep({
           instructions: [Instruction.make("Call search once.")],
           messages: [Message.user("Find work")],
@@ -440,10 +437,10 @@ describe("structuredChatModelLayer", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(ChatModelUnavailable)
-      expect(result.left.reason).toBe("invalid_response")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(ChatModelUnavailable)
+      expect(result.failure.reason).toBe("invalid_response")
     }
   })
 
@@ -534,7 +531,7 @@ describe("structuredChatModelLayer", () => {
     })
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runToolStep({
           instructions: [Instruction.make("Call cardinality_search once.")],
           messages: [Message.user("Find work")],
@@ -543,10 +540,10 @@ describe("structuredChatModelLayer", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(ChatModelUnavailable)
-      expect(result.left.reason).toBe("invalid_response")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(ChatModelUnavailable)
+      expect(result.failure.reason).toBe("invalid_response")
     }
     expect(providerCalls).toBe(2)
     expect(toolExecutions).toBe(0)
@@ -567,7 +564,7 @@ describe("structuredChatModelLayer", () => {
       }),
     })
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runToolStep({
           instructions: [Instruction.make("Call search once.")],
           messages: [Message.user("Find work")],
@@ -576,11 +573,11 @@ describe("structuredChatModelLayer", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(ChatModelUnavailable)
-      expect(result.left.reason).toBe("request_failed")
-      expect(JSON.stringify(result.left)).not.toContain(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(ChatModelUnavailable)
+      expect(result.failure.reason).toBe("request_failed")
+      expect(JSON.stringify(result.failure)).not.toContain(
         "sensitive provider diagnostic",
       )
     }
@@ -612,8 +609,8 @@ describe("structuredChatModelLayer", () => {
     })
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const fiber = yield* Effect.fork(
-          Effect.either(
+        const fiber = yield* Effect.forkChild(
+          Effect.result(
             runToolStep({
               instructions: [Instruction.make("Call search once.")],
               messages: [Message.user("Find work")],
@@ -624,13 +621,17 @@ describe("structuredChatModelLayer", () => {
         yield* Effect.promise(() => providerStarted)
         yield* TestClock.adjust(1_000)
         return yield* Fiber.join(fiber)
-      }).pipe(Effect.provide(TestContext.TestContext)),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(TestConsole.layer, TestClock.layer()),
+        ),
+      ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(ChatModelUnavailable)
-      expect(result.left.reason).toBe("timed_out")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(ChatModelUnavailable)
+      expect(result.failure.reason).toBe("timed_out")
     }
     expect(providerSignal?.aborted).toBe(true)
   })
@@ -646,7 +647,7 @@ describe("structuredChatModelLayer", () => {
       classifyError: () => "response_blocked",
     })
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runToolStep({
           instructions: [Instruction.make("Call search once.")],
           messages: [Message.user("Find work")],
@@ -655,10 +656,10 @@ describe("structuredChatModelLayer", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(ChatModelUnavailable)
-      expect(result.left.reason).toBe("response_blocked")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(ChatModelUnavailable)
+      expect(result.failure.reason).toBe("response_blocked")
     }
   })
 })

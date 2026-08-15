@@ -1,15 +1,23 @@
-import { Schema, unsafeCoerce } from "effect"
+import { Schema } from "effect"
 
-const QuestionTextSchema = Schema.NonEmptyTrimmedString.pipe(
-  Schema.maxLength(500),
+const QuestionTextSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(500),
 )
 
-const QuestionGoalSchema = Schema.NonEmptyTrimmedString.pipe(
-  Schema.maxLength(1_000),
+const QuestionGoalSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(1_000),
 )
 
-const ChoiceLabelSchema = Schema.NonEmptyTrimmedString.pipe(
-  Schema.maxLength(100),
+const ChoiceLabelSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(100),
+)
+
+const ChoiceCountSchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 1, maximum: 20 }),
 )
 
 /** One application-authored question whose wording never changes. */
@@ -88,12 +96,12 @@ const adaptiveChoice = (
     readonly fallbackOptions?: ReadonlyArray<string>
   },
 ): AdaptiveChoiceQuestion => {
-  const minimumOptions = Schema.decodeSync(
-    Schema.Number.pipe(Schema.int(), Schema.between(1, 20)),
-  )(options.minimumOptions)
-  const maximumOptions = Schema.decodeSync(
-    Schema.Number.pipe(Schema.int(), Schema.between(1, 20)),
-  )(options.maximumOptions)
+  const minimumOptions = Schema.decodeSync(ChoiceCountSchema)(
+    options.minimumOptions,
+  )
+  const maximumOptions = Schema.decodeSync(ChoiceCountSchema)(
+    options.maximumOptions,
+  )
   if (minimumOptions > maximumOptions) {
     throw new Error(
       "Adaptive choice minimumOptions cannot exceed maximumOptions",
@@ -136,30 +144,25 @@ const choice = <
   text: string,
   options: Options,
 ): ChoiceQuestion<Options[number]["value"]> => {
-  const labels = options.map(({ label }) =>
-    Schema.decodeSync(ChoiceLabelSchema)(label),
+  const firstOption = {
+    ...options[0],
+    label: Schema.decodeSync(ChoiceLabelSchema)(options[0].label),
+  }
+  const remainingOptions = options.slice(1).map((option) => ({
+    ...option,
+    label: Schema.decodeSync(ChoiceLabelSchema)(option.label),
+  }))
+  const normalized = [firstOption, ...remainingOptions].map(({ label }) =>
+    label.toLocaleLowerCase("en"),
   )
-  const normalized = labels.map((label) => label.toLocaleLowerCase("en"))
   if (new Set(normalized).size !== normalized.length) {
     throw new Error("Choice question labels must be unique")
   }
 
-  const parsedOptions = options.map((option, index) => ({
-    ...option,
-    label: labels[index] ?? option.label,
-  }))
-
-  // SAFETY: map preserves the non-empty tuple length and each option's value;
-  // every replacement label was parsed at the same array index.
   return {
     _tag: "ChoiceQuestion",
     text: Schema.decodeSync(QuestionTextSchema)(text),
-    options: unsafeCoerce<
-      typeof parsedOptions,
-      ChoiceQuestion<
-      Options[number]["value"]
-      >["options"]
-    >(parsedOptions),
+    options: [firstOption, ...remainingOptions],
   }
 }
 

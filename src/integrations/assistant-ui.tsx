@@ -1,7 +1,7 @@
 import {
   makeAssistantDataUI,
 } from "@assistant-ui/core/react"
-import { Either, Schema } from "effect"
+import { Exit, Result, Schema } from "effect"
 import { createElement, type ComponentType, type FC } from "react"
 import type {
   ViewData,
@@ -14,6 +14,7 @@ import {
   StructuredChatTurnRequestSchema,
   StructuredChatTurnResponseSchema,
 } from "../core/protocol.js"
+import { JsonValueSchema } from "../core/json-value.js"
 
 /** Runtime status supplied by assistant-ui to a data-part renderer. */
 export type AssistantViewPartStatus =
@@ -70,15 +71,19 @@ export const makeAssistantView = <View extends ViewDefinitionContract>(
   config: AssistantViewConfig<View>,
 ): AssistantDataUI => {
   const Renderer = (props: AssistantDataMessagePartProps) => {
-    const decoded = Schema.decodeUnknownEither(view.partSchema)(
-      {
-        type: "data",
-        name: view.name,
-        data: props.data,
-      },
-      { onExcessProperty: "error" },
-    )
-    if (Either.isLeft(decoded)) {
+    const data = Schema.decodeUnknownResult(JsonValueSchema)(props.data)
+    if (Result.isFailure(data)) {
+      return config.fallback === undefined
+        ? null
+        : createElement(config.fallback, props)
+    }
+
+    const decoded = view.decodeResult({
+      type: "data",
+      name: view.name,
+      data: data.success,
+    })
+    if (Result.isFailure(decoded)) {
       return config.fallback === undefined
         ? null
         : createElement(config.fallback, props)
@@ -86,7 +91,7 @@ export const makeAssistantView = <View extends ViewDefinitionContract>(
 
     return createElement(config.render, {
       ...props,
-      data: decoded.right.data,
+      data: decoded.success.data,
     })
   }
 
@@ -166,11 +171,11 @@ const readLatestSession = (
     if (message?.role !== "assistant") {
       continue
     }
-    const session = Schema.decodeUnknownEither(
+    const session = Schema.decodeUnknownExit(
       StructuredChatSessionReferenceSchema,
     )(message.metadata.custom[assistantChatSessionMetadataKey])
-    if (Either.isRight(session)) {
-      return session.right
+    if (Exit.isSuccess(session)) {
+      return session.value
     }
   }
 
@@ -232,22 +237,22 @@ export const makeAssistantChatModelAdapter = (
       } catch {
         throw new Error("Structured chat returned an invalid response")
       }
-      const decoded = Schema.decodeUnknownEither(
+      const decoded = Schema.decodeUnknownExit(
         StructuredChatTurnResponseSchema,
       )(body, { onExcessProperty: "error" })
-      if (Either.isLeft(decoded)) {
+      if (Exit.isFailure(decoded)) {
         throw new Error("Structured chat returned an invalid response")
       }
 
       return {
-        content: decoded.right.message.content,
+        content: decoded.value.message.content,
         metadata: {
           custom:
-            decoded.right.session === undefined
+            decoded.value.session === undefined
               ? {}
               : {
                   [assistantChatSessionMetadataKey]:
-                    decoded.right.session,
+                    decoded.value.session,
                 },
         },
       }

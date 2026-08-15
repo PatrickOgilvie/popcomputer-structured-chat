@@ -1,5 +1,4 @@
-import { Data, Effect, Either, Schema, unsafeCoerce } from "effect"
-import type * as ParseResult from "effect/ParseResult"
+import { cast, Data, Effect, Result, Schema, Struct } from "effect"
 import type {
   AnswerDefinition,
   AnswerDefinitionContract,
@@ -36,10 +35,10 @@ import {
 } from "./definition.js"
 
 /** Safe reason that a collect-stage model proposal was rejected. */
-export const InvalidCollectStageResponseReasonSchema = Schema.Literal(
+export const InvalidCollectStageResponseReasonSchema = Schema.Literals([
   "invalid_evidence",
   "invalid_repair",
-)
+])
 
 /** A collect-stage proposal was not grounded in a user message. */
 export class InvalidCollectStageResponse extends Schema.TaggedError<InvalidCollectStageResponse>()(
@@ -187,7 +186,9 @@ export interface CollectStageTurn<Fields extends AnswerFields> {
   readonly question: CollectStagePrompt<Fields> | undefined
 }
 
-type RuntimeAnswerValue = Schema.Schema.Type<Schema.Schema.AnyNoContext>
+type RuntimeAnswerValue = Schema.Schema.Type<
+  Schema.Codec<unknown, unknown>
+>
 
 type RuntimeAcceptedAnswer = AcceptedAnswer<RuntimeAnswerValue>
 
@@ -231,7 +232,7 @@ interface RuntimeCollectRepairResult {
 /** @internal Erased collect-stage behavior consumed by the chat runtime. */
 export interface CollectStageRuntime {
   readonly initialState: RuntimeCollectStageState
-  readonly stateSchema: Schema.Schema.AnyNoContext
+  readonly stateSchema: Schema.Codec<unknown, unknown>
   readonly isInitial: (state: RuntimeCollectStageState) => boolean
   readonly isValid: (state: RuntimeCollectStageState) => boolean
   readonly isGroundedInMessages: (
@@ -239,7 +240,7 @@ export interface CollectStageRuntime {
     messages: ReadonlyArray<UntrustedMessage>,
   ) => boolean
   readonly isComplete: (state: RuntimeCollectStageState) => boolean
-  readonly repairSchema: Schema.Schema.AnyNoContext
+  readonly repairSchema: Schema.Codec<unknown, unknown>
   readonly applyRepairs: (
     state: RuntimeCollectStageState,
     messages: ReadonlyArray<UntrustedMessage>,
@@ -303,17 +304,17 @@ export interface CollectStage<
   readonly name: Name
   readonly fields: Fields
   readonly questions: CollectQuestionPolicy
-  readonly answersSchema: Schema.Schema<CollectAnswers<Fields>, unknown, never>
-  readonly stateSchema: Schema.Schema<CollectStageState<Fields>, unknown, never>
+  readonly answersSchema: Schema.Codec<CollectAnswers<Fields>, unknown>
+  readonly stateSchema: Schema.Codec<CollectStageState<Fields>, unknown>
   readonly initialState: CollectStageState<Fields>
   readonly guards: Guards
 
   /** Strictly parse persisted or client-returned stage state. */
   readonly parseState: (
-    input: Schema.Schema.Encoded<
-      Schema.Schema<CollectStageState<Fields>, unknown, never>
+    input: Schema.Codec.Encoded<
+      Schema.Codec<CollectStageState<Fields>, unknown>
     >,
-  ) => Effect.Effect<CollectStageState<Fields>, ParseResult.ParseError>
+  ) => Effect.Effect<CollectStageState<Fields>, Schema.SchemaError>
 
   /** Test whether every schema-defined answer has been populated. */
   readonly isComplete: (state: CollectStageState<Fields>) => boolean
@@ -369,11 +370,13 @@ export const defineCollectStage = <
   definition: DefineCollectStageInput<Name, Fields, Guards>,
 ): CollectStage<Name, Fields, Guards> => {
   Schema.decodeSync(StageNameSchema)(definition.name)
-  const questionGuidanceSchema = Schema.NonEmptyTrimmedString.pipe(
-    Schema.maxLength(2_000),
+  const questionGuidanceSchema = Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(2_000),
   )
-  const questionEscapeSchema = Schema.NonEmptyTrimmedString.pipe(
-    Schema.maxLength(100),
+  const questionEscapeSchema = Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(100),
   )
   const questionPolicyBuilder: MutableCollectQuestionPolicy = {}
   if (definition.questions?.guidance !== undefined) {
@@ -389,7 +392,7 @@ export const defineCollectStage = <
   const questions: CollectQuestionPolicy = questionPolicyBuilder
   // SAFETY: definition.fields is the exact Fields mapping; Object.keys returns
   // only its enumerable string keys.
-  const fieldNames = unsafeCoerce<
+  const fieldNames = cast<
     Array<string>,
     ReadonlyArray<keyof Fields & string>
   >(Object.keys(definition.fields))
@@ -413,10 +416,10 @@ export const defineCollectStage = <
   if (firstField === undefined) {
     throw new Error("Collect stages require at least one answer field")
   }
-  const fieldSchema = Schema.Literal(firstField, ...remainingFields)
-  const messageIndexSchema = Schema.Number.pipe(
-    Schema.int(),
-    Schema.between(0, 1_000_000),
+  const fieldSchema = Schema.Literals([firstField, ...remainingFields])
+  const messageIndexSchema = Schema.Number.check(
+    Schema.isInt(),
+    Schema.isBetween({ minimum: 0, maximum: 1_000_000 }),
   )
   const getAnswer = (field: keyof Fields & string) => {
     const answer = definition.fields[field]
@@ -464,16 +467,18 @@ export const defineCollectStage = <
     (field) => [field, getAnswer(field).schema] as const,
   )
   // SAFETY: every entry uses one exact Fields key and its corresponding schema.
-  const answerSchemas = unsafeCoerce<
+  const answerSchemas = cast<
     ReturnType<typeof Object.fromEntries>,
     AnswerSchemas<Fields>
   >(Object.fromEntries(answerSchemaEntries))
   const rawAnswersSchema = Schema.Struct(answerSchemas)
-  const evidenceQuoteSchema = Schema.NonEmptyTrimmedString.pipe(
-    Schema.maxLength(2_000),
+  const evidenceQuoteSchema = Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(2_000),
   )
-  const questionTextSchema = Schema.NonEmptyTrimmedString.pipe(
-    Schema.maxLength(500),
+  const questionTextSchema = Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(500),
   )
   const acceptedEvidenceSchema = Schema.Struct({
     messageIndex: messageIndexSchema,
@@ -507,10 +512,13 @@ export const defineCollectStage = <
   const rawRepairSchema =
     remainingRepairSchemas.length === 0
       ? firstRepairSchema
-      : Schema.Union(firstRepairSchema, ...remainingRepairSchemas)
+      : Schema.Union([firstRepairSchema, ...remainingRepairSchemas])
   // SAFETY: every dynamically generated member uses only AnyNoContext field
   // schemas and exact stage, field, and transition literals.
-  const repairSchema = rawRepairSchema as Schema.Schema.AnyNoContext
+  const repairSchema = cast<
+    typeof rawRepairSchema,
+    Schema.Codec<unknown, unknown>
+  >(rawRepairSchema)
   const acceptedFields = Object.fromEntries(
     fieldNames.map((field) => [
       field,
@@ -522,7 +530,7 @@ export const defineCollectStage = <
   )
   const askedFields: Record<
     string,
-    Schema.Schema.AnyNoContext
+    Schema.Codec<unknown, unknown>
   > = Object.fromEntries(
     fieldNames.map((field) => [
       field,
@@ -533,10 +541,17 @@ export const defineCollectStage = <
     ]),
   )
   const rawStateSchema = Schema.Struct({
-    accepted: Schema.partial(Schema.Struct(acceptedFields)),
-    asked: Schema.partial(Schema.Struct(askedFields)),
+    accepted: Schema.Struct(acceptedFields).mapFields(
+      Struct.map(Schema.optional),
+    ),
+    asked: Schema.Struct(askedFields).mapFields(
+      Struct.map(Schema.optional),
+    ),
   })
-  const isValidState = (state: RuntimeCollectStageState): boolean => {
+  const isValidState = (state: {
+    readonly accepted: object
+    readonly asked: object
+  }): boolean => {
     return fieldNames.every((field) => {
       const answer = getAnswer(field)
       return (
@@ -546,30 +561,33 @@ export const defineCollectStage = <
       )
     })
   }
-  const refinedStateSchema = rawStateSchema.pipe(
-    Schema.filter(isValidState, {
-      description: "semantically valid collect-stage state",
-    }),
+  const refinedStateSchema = rawStateSchema.check(
+    Schema.makeFilter<Schema.Schema.Type<typeof rawStateSchema>>(
+      isValidState,
+      {
+        description: "semantically valid collect-stage state",
+      },
+    ),
   )
   // SAFETY: rawAnswersSchema is created from every field's exact schema.
-  const answersSchema = unsafeCoerce<
+  const answersSchema = cast<
     typeof rawAnswersSchema,
-    Schema.Schema<CollectAnswers<Fields>, unknown, never>
+    Schema.Codec<CollectAnswers<Fields>, unknown>
   >(rawAnswersSchema)
   // SAFETY: partial preserves the mapped accepted-answer types, while asked is
   // a record whose keys are restricted to the exact field literal union.
-  const stateSchema = unsafeCoerce<
+  const stateSchema = cast<
     typeof refinedStateSchema,
-    Schema.Schema<CollectStageState<Fields>, unknown, never>
+    Schema.Codec<CollectStageState<Fields>, unknown>
   >(refinedStateSchema)
-  const initialState = Schema.validateSync(stateSchema)({
+  const initialState = Schema.decodeSync(Schema.toType(stateSchema))({
     accepted: {},
     asked: {},
   })
   // SAFETY: when guards are omitted, Guards uses its readonly [] default; an
   // explicitly supplied tuple is returned unchanged.
   const guards =
-    definition.guards ?? unsafeCoerce<readonly [], Guards>([])
+    definition.guards ?? cast<readonly [], Guards>([])
   // SAFETY: every entry is built from one registered AnyNoContext answer
   // schema and adds only the model-wire null representation for absence.
   const proposalAnswerSchemaEntries =
@@ -577,15 +595,15 @@ export const defineCollectStage = <
       const answer = getAnswer(field)
       return [
         field,
-        Schema.NullOr(answer.schema).annotations({
+        Schema.NullOr(answer.schema).annotate({
           description: `${answer.mode}: ${answer.description}`,
         }),
       ]
     })
   // SAFETY: each entry contains one registered field and its no-context schema.
-  const proposalAnswerSchemas = unsafeCoerce<
+  const proposalAnswerSchemas = cast<
     ReturnType<typeof Object.fromEntries>,
-    Record<string, Schema.Schema.AnyNoContext>
+    Record<string, Schema.Codec<unknown, unknown>>
   >(Object.fromEntries(proposalAnswerSchemaEntries))
   const rawProposalSchema = Schema.Struct({
     answers: Schema.Struct(proposalAnswerSchemas),
@@ -594,21 +612,26 @@ export const defineCollectStage = <
         field: fieldSchema,
         quote: evidenceQuoteSchema,
       }),
-    ).pipe(Schema.maxItems(fieldNames.length)),
+    ).check(Schema.isMaxLength(fieldNames.length)),
     nextQuestion: Schema.NullOr(
       Schema.Struct({
         field: fieldSchema,
         text: questionTextSchema,
         options: Schema.Array(
-          Schema.NonEmptyTrimmedString.pipe(Schema.maxLength(100)),
-        ).pipe(Schema.maxItems(20)),
+          Schema.Trimmed.check(
+            Schema.isNonEmpty(),
+            Schema.isMaxLength(100),
+          ),
+        ).check(Schema.isMaxLength(20)),
       }),
     ),
   })
   // SAFETY: every answer field schema is constrained to AnyNoContext; the
   // generic mapped Struct cannot prove that fact after Object.fromEntries.
-  const ProposalSchema = rawProposalSchema as typeof rawProposalSchema &
-    Schema.Schema.AnyNoContext
+  const ProposalSchema = cast<
+    typeof rawProposalSchema,
+    typeof rawProposalSchema & Schema.Codec<unknown, unknown>
+  >(rawProposalSchema)
   const submitAnswers = defineTool({
     name: "submit_answers",
     description:
@@ -764,14 +787,14 @@ export const defineCollectStage = <
       // A selected label is later submitted as this answer's wire value,
       // so model-authored labels that cannot decode would dead-end the
       // user; fall back to the application-authored options instead.
-      const decodeLabel = Schema.decodeUnknownEither(
+      const decodeLabel = Schema.decodeUnknownResult(
         getAnswer(pending.field).schema,
       )
       const validOptions =
         supplied.length < question.minimumOptions ||
         supplied.length > question.maximumOptions ||
         new Set(normalized).size !== normalized.length ||
-        supplied.some(({ label }) => Either.isLeft(decodeLabel(label)))
+        supplied.some(({ label }) => Result.isFailure(decodeLabel(label)))
           ? undefined
           : supplied
       const selectedOptions =
@@ -794,8 +817,8 @@ export const defineCollectStage = <
       options,
     }
     return questions.escape === undefined
-      ? unsafeCoerce<typeof prompt, CollectStagePrompt<Fields>>(prompt)
-      : unsafeCoerce<
+      ? cast<typeof prompt, CollectStagePrompt<Fields>>(prompt)
+      : cast<
           typeof prompt & { readonly escape: { readonly label: string } },
           CollectStagePrompt<Fields>
         >({ ...prompt, escape: { label: questions.escape } })
@@ -862,8 +885,8 @@ export const defineCollectStage = <
         question._tag === "ChoiceQuestion" ? question.options : [],
     }
     return questions.escape === undefined
-      ? unsafeCoerce<typeof prompt, CollectStagePrompt<Fields>>(prompt)
-      : unsafeCoerce<
+      ? cast<typeof prompt, CollectStagePrompt<Fields>>(prompt)
+      : cast<
           typeof prompt & { readonly escape: { readonly label: string } },
           CollectStagePrompt<Fields>
         >({ ...prompt, escape: { label: questions.escape } })
@@ -879,7 +902,7 @@ export const defineCollectStage = <
     }
     // SAFETY: field selects the same answer definition whose schema parsed
     // value before validation, preserving that field's validator input.
-    const validation = unsafeCoerce<
+    const validation = cast<
       typeof answer.validate,
       (
         candidate: RuntimeAnswerValue,
@@ -914,7 +937,7 @@ export const defineCollectStage = <
       for (const repair of repairs) {
         // SAFETY: the field lookup below rejects names outside Fields before
         // any field-indexed operation runs.
-        const field = unsafeCoerce<
+        const field = cast<
           string,
           keyof Fields & string
         >(repair.field)
@@ -1095,7 +1118,7 @@ export const defineCollectStage = <
       }
       // SAFETY: accepted keys come only from fieldNames and every value was
       // decoded by that field's schema before insertion.
-      const merged = unsafeCoerce<
+      const merged = cast<
         typeof runtimeMerged,
         CollectStageState<Fields>
       >(runtimeMerged)
@@ -1132,12 +1155,15 @@ export const defineCollectStage = <
     // at the first failure. This keeps application Effects and the selected
     // retry question deterministic. Each validator came from the same
     // concrete Fields mapping used by the public conditional unions.
-    return execution as Effect.Effect<
+    return cast<
+      typeof execution,
+      Effect.Effect<
       CollectStageTurn<Fields>,
       | InvalidCollectStageResponse
       | CollectAnswerValidationError<Fields>,
       CollectAnswerValidationRequirements<Fields>
-    >
+      >
+    >(execution)
   }
 
   const run: CollectStage<Name, Fields, Guards>["run"] = ({
@@ -1178,6 +1204,7 @@ export const defineCollectStage = <
             }),
             Effect.as(askPendingQuestion(state, messages, null)),
           ),
+        (error) => Effect.fail(error),
       ),
     )
   }
@@ -1188,7 +1215,7 @@ export const defineCollectStage = <
   const assumeParsedState = (
     state: RuntimeCollectStageState,
   ): CollectStageState<Fields> =>
-    unsafeCoerce<RuntimeCollectStageState, CollectStageState<Fields>>(
+    cast<RuntimeCollectStageState, CollectStageState<Fields>>(
       state,
     )
 
@@ -1202,7 +1229,7 @@ export const defineCollectStage = <
     initialState,
     guards,
     parseState: (input) =>
-      Schema.decodeUnknown(stateSchema)(input, {
+      Schema.decodeUnknownEffect(stateSchema)(input, {
         onExcessProperty: "error",
       }),
     isComplete,

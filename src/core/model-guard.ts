@@ -1,15 +1,15 @@
-import { Effect, Schema, unsafeCoerce } from "effect"
+import { Effect, Function as Fn, Schema } from "effect"
 import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
 import type { UntrustedMessage } from "./model.js"
-import type { JsonValue } from "./json-value.js"
 
 /** Stable machine-facing name for one model-boundary policy guard. */
-export const ModelGuardNameSchema = Schema.NonEmptyTrimmedString.pipe(
-  Schema.maxLength(100),
-  Schema.pattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+export const ModelGuardNameSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(100),
+  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
 )
 
 /** Safe context supplied before a structured model request begins. */
@@ -21,7 +21,7 @@ export interface ModelGuardContext {
 /** Strictly parsed model proposal supplied before application execution. */
 export interface ModelGuardCall {
   readonly name: string
-  readonly arguments: JsonValue
+  readonly arguments: unknown
 }
 
 /** Safe context supplied after parsing and before a tool executes. */
@@ -128,7 +128,7 @@ const runtimeModelGuard = (
 ): RuntimeModelGuard => {
   // SAFETY: ModelGuardDefinitionContract carries the package-owned nominal
   // identity and can only be constructed by defineModelGuard.
-  return unsafeCoerce<ModelGuardDefinitionContract, RuntimeModelGuard>(guard)
+  return Fn.cast<ModelGuardDefinitionContract, RuntimeModelGuard>(guard)
 }
 
 const runGuardPhase = <Guards extends ModelGuardTuple>(
@@ -158,11 +158,11 @@ const runGuardPhase = <Guards extends ModelGuardTuple>(
 
   // SAFETY: guards run sequentially without recovering failures, so the
   // erased Effect has exactly the conditional error and requirement unions.
-  return execution as Effect.Effect<
+  return Fn.cast<typeof execution, Effect.Effect<
     void,
     ModelGuardError<Guards>,
     ModelGuardRequirements<Guards>
-  >
+  >>(execution)
 }
 
 /** @internal */

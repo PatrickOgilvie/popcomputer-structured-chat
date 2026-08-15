@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import {
   InvalidChatPresentation,
   presentAnswerValidationRejection,
@@ -11,7 +11,7 @@ import {
 describe("presentChatReply", () => {
   test("classifies dynamic text construction failures in the Effect channel", async () => {
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         Effect.suspend(() =>
           presentChatReply(
             {
@@ -31,24 +31,24 @@ describe("presentChatReply", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidChatPresentation)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidChatPresentation)
     }
   })
 
   test("classifies invalid notice text in the Effect channel", async () => {
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         Effect.suspend(() =>
           presentChatNotice({ text: "Trailing whitespace " }),
         ),
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidChatPresentation)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidChatPresentation)
     }
   })
 
@@ -174,7 +174,7 @@ describe("presentChatReply", () => {
 
   test("rejects an empty tool result instead of emitting an invalid message", async () => {
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         presentChatReply({
           sessionId: "chat:01",
           revision: "2",
@@ -187,9 +187,9 @@ describe("presentChatReply", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidChatPresentation)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidChatPresentation)
     }
   })
 

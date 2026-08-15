@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import {
   Effect,
-  Either,
   Layer,
   Ref,
+  Result,
   Schema,
 } from "effect"
 import {
@@ -108,30 +108,36 @@ const ConfirmedMatchmaker = defineChat({
 const RequiredBrief = Stage.collect({
   name: "required_brief",
   fields: {
-    priority: Answer.confirmed(Schema.NonEmptyTrimmedString, {
-      description: "Where the client most needs outside help",
-      ask: Question.adaptiveChoice(
-        "Where could an agency make the biggest difference?",
-        {
-          minimumOptions: 2,
-          maximumOptions: 3,
-          fallbackOptions: [
-            "Launch or grow a product",
-            "Build the brand long term",
-            "Fix a performance problem",
-          ],
-        },
-      ),
-    }),
-    location: Answer.confirmed(Schema.NonEmptyTrimmedString, {
-      description: "Where the client is based",
-      ask: Question.adaptive(
-        "Ask where the client is based and whether location matters",
-        {
-          fallback: "Where are you based, and does location matter?",
-        },
-      ),
-    }),
+    priority: Answer.confirmed(
+      Schema.Trimmed.check(Schema.isNonEmpty()),
+      {
+        description: "Where the client most needs outside help",
+        ask: Question.adaptiveChoice(
+          "Where could an agency make the biggest difference?",
+          {
+            minimumOptions: 2,
+            maximumOptions: 3,
+            fallbackOptions: [
+              "Launch or grow a product",
+              "Build the brand long term",
+              "Fix a performance problem",
+            ],
+          },
+        ),
+      },
+    ),
+    location: Answer.confirmed(
+      Schema.Trimmed.check(Schema.isNonEmpty()),
+      {
+        description: "Where the client is based",
+        ask: Question.adaptive(
+          "Ask where the client is based and whether location matters",
+          {
+            fallback: "Where are you based, and does location matter?",
+          },
+        ),
+      },
+    ),
   },
 })
 
@@ -379,7 +385,7 @@ describe("defineChat", () => {
           load: store.load,
           replace: (input: ReplaceChatSessionInput) =>
             Ref.update(replacementCalls, (count) => count + 1).pipe(
-              Effect.zipRight(store.replace(input)),
+              Effect.andThen(store.replace(input)),
             ),
         })),
       ),
@@ -444,7 +450,7 @@ describe("defineChat", () => {
         const beforeRejection = yield* store.load(scope)
         const beforeRejectionJson = JSON.stringify(beforeRejection)
         const callsBeforeRejection = yield* Ref.get(replacementCalls)
-        const rejected = yield* Effect.either(
+        const rejected = yield* Effect.result(
           ValidatedBudgetChat.reply({
             sessionId: scope.sessionId,
             expectedRevision: opening.revision,
@@ -482,15 +488,15 @@ describe("defineChat", () => {
 
     expect(result.opening.revision).toBe("1")
     expect(result.opening.turn._tag).toBe("Question")
-    expect(Either.isLeft(result.rejected)).toBe(true)
-    if (Either.isLeft(result.rejected)) {
-      expect(result.rejected.left).toBeInstanceOf(
+    expect(Result.isFailure(result.rejected)).toBe(true)
+    if (Result.isFailure(result.rejected)) {
+      expect(result.rejected.failure).toBeInstanceOf(
         AnswerValidationRejected,
       )
       if (
-        result.rejected.left instanceof AnswerValidationRejected
+        result.rejected.failure instanceof AnswerValidationRejected
       ) {
-        expect(result.rejected.left).toMatchObject({
+        expect(result.rejected.failure).toMatchObject({
           stage: "validated_budget",
           field: "budget",
           question: {
@@ -498,7 +504,7 @@ describe("defineChat", () => {
             text: "Our minimum is £5,000. Could you revise the budget?",
           },
         })
-        expect(result.rejected.left.error).toBeInstanceOf(
+        expect(result.rejected.failure.error).toBeInstanceOf(
           BudgetBelowMinimum,
         )
       }
@@ -589,7 +595,7 @@ describe("defineChat", () => {
       })
 
       const result = await Effect.runPromise(
-        Effect.either(
+        Effect.result(
           Matchmaker.reply({
             sessionId: "invalid-evidence",
             expectedRevision: "1",
@@ -598,10 +604,10 @@ describe("defineChat", () => {
         ),
       )
 
-      expect(Either.isLeft(result)).toBe(true)
-      if (Either.isLeft(result)) {
-        expect(result.left).toBeInstanceOf(InvalidChatSession)
-        expect(result.left.reason).toBe("invalid_state")
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toBeInstanceOf(InvalidChatSession)
+        expect(result.failure.reason).toBe("invalid_state")
       }
       expect(modelCalls).toBe(0)
       expect(replacements).toBe(0)
@@ -642,7 +648,7 @@ describe("defineChat", () => {
     })
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         ConfirmedMatchmaker.reply({
           sessionId: "invalid-confirmation-evidence",
           expectedRevision: "1",
@@ -651,10 +657,10 @@ describe("defineChat", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidChatSession)
-      expect(result.left.reason).toBe("invalid_state")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidChatSession)
+      expect(result.failure.reason).toBe("invalid_state")
     }
   })
 
@@ -719,7 +725,7 @@ describe("defineChat", () => {
           }),
       })
 
-      return Effect.either(
+      return Effect.result(
         CountingChat.reply({
           sessionId: "history-session",
           expectedRevision: "1",
@@ -739,17 +745,17 @@ describe("defineChat", () => {
     const at199 = await Effect.runPromise(runAt(199))
     const at200 = await Effect.runPromise(runAt(200))
 
-    expect(Either.isRight(at198.result)).toBe(true)
+    expect(Result.isSuccess(at198.result)).toBe(true)
     expect(at198).toMatchObject({
       modelCalls: 1,
       toolCalls: 1,
       replacements: 1,
     })
     for (const rejected of [at199, at200]) {
-      expect(Either.isLeft(rejected.result)).toBe(true)
-      if (Either.isLeft(rejected.result)) {
-        expect(rejected.result.left).toBeInstanceOf(InvalidChatSession)
-        expect(rejected.result.left.reason).toBe("history_limit")
+      expect(Result.isFailure(rejected.result)).toBe(true)
+      if (Result.isFailure(rejected.result)) {
+        expect(rejected.result.failure).toBeInstanceOf(InvalidChatSession)
+        expect(rejected.result.failure.reason).toBe("history_limit")
       }
       expect(rejected).toMatchObject({
         modelCalls: 0,
@@ -1202,7 +1208,7 @@ describe("defineChat", () => {
       },
     }
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         TerminalMatchmaker.run({
           state: completeState,
           messages: [Message.user("Run it again")],
@@ -1216,9 +1222,9 @@ describe("defineChat", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidChatTransition)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidChatTransition)
     }
   })
 
@@ -1235,7 +1241,7 @@ describe("defineChat", () => {
         }),
     })
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         Matchmaker.run({
           state: {
             ...Matchmaker.initialState,
@@ -1258,10 +1264,10 @@ describe("defineChat", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidChatTransition)
-      expect(result.left.reason).toBe("invalid_state")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidChatTransition)
+      expect(result.failure.reason).toBe("invalid_state")
     }
     expect(modelCalls).toBe(0)
   })
@@ -1288,7 +1294,7 @@ describe("defineChat", () => {
           }),
       })
       const result = await Effect.runPromise(
-        Effect.either(
+        Effect.result(
           ConfirmedMatchmaker.run({
             state: {
               ...ConfirmedMatchmaker.initialState,
@@ -1316,10 +1322,10 @@ describe("defineChat", () => {
         ),
       )
 
-      expect(Either.isLeft(result)).toBe(true)
-      if (Either.isLeft(result)) {
-        expect(result.left).toBeInstanceOf(InvalidChatTransition)
-        expect(result.left.reason).toBe("invalid_state")
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toBeInstanceOf(InvalidChatTransition)
+        expect(result.failure.reason).toBe("invalid_state")
       }
       expect(modelCalls).toBe(0)
     }
@@ -1327,7 +1333,7 @@ describe("defineChat", () => {
 
   test("strictly parses versioned server state", async () => {
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         Matchmaker.parseState({
           ...Matchmaker.initialState,
           schemaVersion: 2,
@@ -1336,14 +1342,14 @@ describe("defineChat", () => {
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
+    expect(Result.isFailure(result)).toBe(true)
   })
 
   test("rejects persisted states that legal transitions cannot produce", async () => {
     const isRejected = <A, E, R>(
       effect: Effect.Effect<A, E, R>,
     ): Effect.Effect<boolean, never, R> =>
-      effect.pipe(Effect.either, Effect.map(Either.isLeft))
+      effect.pipe(Effect.result, Effect.map(Result.isFailure))
     const impossibleStates = [
       isRejected(Matchmaker.parseState({
         ...Matchmaker.initialState,
@@ -1499,7 +1505,7 @@ describe("defineChat", () => {
           expectedRevision: first.revision,
           message: "We need a public service website.",
         })
-        const stale = yield* Effect.either(
+        const stale = yield* Effect.result(
           Matchmaker.reply({
             sessionId: "actor:123",
             expectedRevision: first.revision,
@@ -1516,9 +1522,9 @@ describe("defineChat", () => {
     expect(result.first.turn._tag).toBe("Question")
     expect(result.second.revision).toBe("2")
     expect(result.second.turn._tag).toBe("ToolResult")
-    expect(Either.isLeft(result.stale)).toBe(true)
-    if (Either.isLeft(result.stale)) {
-      expect(result.stale.left).toBeInstanceOf(ChatSessionConflict)
+    expect(Result.isFailure(result.stale)).toBe(true)
+    if (Result.isFailure(result.stale)) {
+      expect(result.stale.failure).toBeInstanceOf(ChatSessionConflict)
     }
     expect(calls).toBe(3)
   })

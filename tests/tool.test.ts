@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test"
 import {
   Context,
   Effect,
-  Either,
   Layer,
+  Result,
   Schema,
 } from "effect"
 import {
@@ -27,7 +27,7 @@ class SearchUnavailable extends Schema.TaggedError<SearchUnavailable>()(
   { reason: Schema.Literal("unavailable") },
 ) {}
 
-class AgencyCatalog extends Context.Tag("AgencyCatalog")<
+class AgencyCatalog extends Context.Service<
   AgencyCatalog,
   {
     readonly search: (
@@ -35,12 +35,12 @@ class AgencyCatalog extends Context.Tag("AgencyCatalog")<
       query: string,
     ) => Effect.Effect<ReadonlyArray<AgencyMatch>, SearchUnavailable>
   }
->() {}
+>()("AgencyCatalog") {}
 
-class RequestContext extends Context.Tag("RequestContext")<
+class RequestContext extends Context.Service<
   RequestContext,
   { readonly tenantId: string }
->() {}
+>()("RequestContext") {}
 
 const AgencyCards = defineView({
   name: "agency_cards",
@@ -67,7 +67,9 @@ const ModelEvidence = Schema.Struct({
 const SearchAgencies = defineTool({
   name: "search_agencies",
   description: "Find agencies relevant to the project.",
-  input: Schema.Struct({ query: Schema.NonEmptyTrimmedString }),
+  input: Schema.Struct({
+    query: Schema.Trimmed.check(Schema.isNonEmpty()),
+  }),
   execute: ({ query }) =>
     Effect.all({ catalog: AgencyCatalog, request: RequestContext }).pipe(
       Effect.flatMap(({ catalog, request }) =>
@@ -138,7 +140,7 @@ describe("defineTool", () => {
 
   test("rejects the wrong tool and excess model-authored arguments", async () => {
     const wrongName = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         SearchAgencies.parseCall({
           name: "delete_agencies",
           arguments: { query: "public sector" },
@@ -146,7 +148,7 @@ describe("defineTool", () => {
       ),
     )
     const excessArguments = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         SearchAgencies.parseCall({
           name: "search_agencies",
           arguments: {
@@ -157,11 +159,14 @@ describe("defineTool", () => {
       ),
     )
 
-    expect(Either.isLeft(wrongName)).toBe(true)
-    expect(Either.isLeft(excessArguments)).toBe(true)
-    if (Either.isLeft(wrongName) && Either.isLeft(excessArguments)) {
-      expect(wrongName.left).toBeInstanceOf(InvalidToolCall)
-      expect(excessArguments.left).toBeInstanceOf(InvalidToolCall)
+    expect(Result.isFailure(wrongName)).toBe(true)
+    expect(Result.isFailure(excessArguments)).toBe(true)
+    if (
+      Result.isFailure(wrongName) &&
+      Result.isFailure(excessArguments)
+    ) {
+      expect(wrongName.failure).toBeInstanceOf(InvalidToolCall)
+      expect(excessArguments.failure).toBeInstanceOf(InvalidToolCall)
     }
   })
 
@@ -207,16 +212,16 @@ describe("defineTool", () => {
       }),
     )
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         SearchAgencies.execute({ query: "public sector" }).pipe(
           Effect.provide(unavailable),
         ),
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(SearchUnavailable)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(SearchUnavailable)
     }
   })
 
@@ -235,12 +240,12 @@ describe("defineTool", () => {
       ),
     )
     const result = await Effect.runPromise(
-      Effect.either(InvalidProjection.execute({ query: "test" })),
+      Effect.result(InvalidProjection.execute({ query: "test" })),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidToolProjection)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidToolProjection)
     }
   })
 
@@ -260,13 +265,13 @@ describe("defineTool", () => {
     )
 
     const result = await Effect.runPromise(
-      Effect.either(InvalidView.execute({})),
+      Effect.result(InvalidView.execute({})),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidToolProjection)
-      expect(result.left).toMatchObject({
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidToolProjection)
+      expect(result.failure).toMatchObject({
         tool: "invalid_view",
         target: "agency_cards",
         reason: "invalid_view_data",
@@ -287,17 +292,17 @@ describe("defineTool", () => {
     )
 
     const result = await Effect.runPromise(
-      Effect.either(ThrowingView.execute({})),
+      Effect.result(ThrowingView.execute({})),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toMatchObject({
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
         tool: "throwing_view",
         target: "agency_cards",
         reason: "invalid_view_data",
       })
-      expect(JSON.stringify(result.left)).not.toContain("secret")
+      expect(JSON.stringify(result.failure)).not.toContain("secret")
     }
   })
 
@@ -330,13 +335,13 @@ describe("defineTool", () => {
       ),
     )
     const result = await Effect.runPromise(
-      Effect.either(OversizedModelResult.execute({})),
+      Effect.result(OversizedModelResult.execute({})),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidToolProjection)
-      expect(result.left).toMatchObject({
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidToolProjection)
+      expect(result.failure).toMatchObject({
         tool: "oversized_model_result",
         target: "model_context",
         reason: "invalid_model_result",

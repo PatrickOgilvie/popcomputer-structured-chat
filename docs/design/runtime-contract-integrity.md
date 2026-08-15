@@ -84,10 +84,10 @@ not part of the normal test command.
 
 ## Invariants
 
-1. `Schema.decodeUnknown(schema)` is used only for Encoded or unknown boundary
+1. `Schema.decodeUnknownEffect(schema)` is used only for Encoded or unknown boundary
    input.
-2. `Schema.validate(schema)` is used for values promised as `Schema.Type`.
-3. `Schema.encodeUnknown(schema)` projects Type-side state or results to a
+2. `Schema.decodeEffect(Schema.toType(schema))` is used for values promised as `Schema.Type`.
+3. `Schema.encodeUnknownEffect(schema)` projects Type-side state or results to a
    persistence/model boundary.
 4. A model-authored tool call is parsed exactly once before execution.
 5. `ToolSet.execute` accepts only the parsed `ToolSetCall` union; `executeCall`
@@ -382,13 +382,13 @@ export type ToolSetError<Tools extends ToolTuple> =
 Directional internal operations:
 
 ```ts
-const parseEncodedCall = Schema.decodeUnknown(callSchema)
-const validateModelResult = Schema.validate(modelResultSchema)
-const encodeModelResult = Schema.encodeUnknown(modelResultSchema)
-const validateViewInput = Schema.validate(view.inputSchema)
-const decodeSerializedView = Schema.decodeUnknown(view.partSchema)
-const encodePersistedState = Schema.encodeUnknown(chat.stateSchema)
-const decodePersistedState = Schema.decodeUnknown(chat.stateSchema)
+const parseEncodedCall = Schema.decodeUnknownEffect(callSchema)
+const validateModelResult = Schema.decodeEffect(Schema.toType(modelResultSchema))
+const encodeModelResult = Schema.encodeUnknownEffect(modelResultSchema)
+const validateViewInput = Schema.decodeEffect(Schema.toType(view.inputSchema))
+const decodeSerializedView = Schema.decodeUnknownEffect(view.partSchema)
+const encodePersistedState = Schema.encodeUnknownEffect(chat.stateSchema)
+const decodePersistedState = Schema.decodeUnknownEffect(chat.stateSchema)
 ```
 
 Presentation uses one private Effect boundary:
@@ -721,7 +721,7 @@ state, or raw causes.
      `nextQuestion.field`.
    - Refactor: group adaptive text/options under one proposal object.
 7. **Typed presentation**
-   - Red: dynamic invalid text escapes `Effect.either` for reply and notice.
+   - Red: dynamic invalid text escapes `Effect.result` for reply and notice.
    - Green: evaluate builders and callbacks inside `Effect.try`.
    - Refactor: share one response parser and invalid-presentation constructor.
 8. **Session namespace**

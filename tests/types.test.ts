@@ -33,30 +33,30 @@ import {
 } from "../src/index.js"
 import { Scenario } from "../src/testing.js"
 
-class Dependency extends Context.Tag("Dependency")<
+class Dependency extends Context.Service<
   Dependency,
   { readonly value: string }
->() {}
+>()("Dependency") {}
 
 class DomainError extends Schema.TaggedError<DomainError>()(
   "DomainError",
   { message: Schema.String },
 ) {}
 
-class SafetyPolicy extends Context.Tag("SafetyPolicy")<
+class SafetyPolicy extends Context.Service<
   SafetyPolicy,
   { readonly check: (text: string) => Effect.Effect<void, DomainError> }
->() {}
+>()("SafetyPolicy") {}
 
 class InvalidQuery extends Schema.TaggedError<InvalidQuery>()(
   "InvalidQuery",
   { reason: Schema.String },
 ) {}
 
-class QueryPolicy extends Context.Tag("QueryPolicy")<
+class QueryPolicy extends Context.Service<
   QueryPolicy,
   { readonly validate: (query: string) => Effect.Effect<void, InvalidQuery> }
->() {}
+>()("QueryPolicy") {}
 
 const Card = defineView({
   name: "card",
@@ -375,14 +375,14 @@ type ExpectedValidationError =
 
 type _ValidationErrorIsExact = Expect<
   Equal<
-    Effect.Effect.Error<typeof validatedExecution>,
+    Effect.Error<typeof validatedExecution>,
     ExpectedValidationError
   >
 >
 
 type _ValidationRequirementsAreExact = Expect<
   Equal<
-    Effect.Effect.Context<typeof validatedExecution>,
+    Effect.Services<typeof validatedExecution>,
     StructuredChatModel | QueryPolicy
   >
 >
@@ -395,12 +395,12 @@ type ExpectedCommandError =
   | DomainError
 
 type _CommandErrorIsExact = Expect<
-  Equal<Effect.Effect.Error<typeof commandExecution>, ExpectedCommandError>
+  Equal<Effect.Error<typeof commandExecution>, ExpectedCommandError>
 >
 
 type _CommandRequirementsAreExact = Expect<
   Equal<
-    Effect.Effect.Context<typeof commandExecution>,
+    Effect.Services<typeof commandExecution>,
     StructuredChatModel | Dependency
   >
 >
@@ -411,24 +411,24 @@ type ExpectedToolSetError =
   | InvalidToolProjection
 
 type _ToolSetErrorIsExact = Expect<
-  Equal<Effect.Effect.Error<typeof setExecution>, ExpectedToolSetError>
+  Equal<Effect.Error<typeof setExecution>, ExpectedToolSetError>
 >
 
 const _setEffect: Effect.Effect<
-  Effect.Effect.Success<typeof execution>,
+  Effect.Success<typeof execution>,
   ExpectedToolSetError,
-  Effect.Effect.Context<typeof execution>
+  Effect.Services<typeof execution>
 > = setExecution
 
 const _parsedSetEffect: typeof _setEffect = parsedSetExecution
 
 const _guardedEffect: Effect.Effect<
-  Effect.Effect.Success<typeof setExecution>,
-  | Effect.Effect.Error<typeof setExecution>
+  Effect.Success<typeof setExecution>,
+  | Effect.Error<typeof setExecution>
   | ChatModelUnavailable
   | UnsupportedModelToolSchema
   | DomainError,
-  | Effect.Effect.Context<typeof setExecution>
+  | Effect.Services<typeof setExecution>
   | StructuredChatModel
   | SafetyPolicy
 > = guardedExecution

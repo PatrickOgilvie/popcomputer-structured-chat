@@ -2,30 +2,33 @@ import { Context, Effect, Schema } from "effect"
 import { UntrustedMessageSchema, type UntrustedMessage } from "./model.js"
 
 /** Stable application-owned identifier for one chat session. */
-export const ChatSessionIdSchema = Schema.NonEmptyTrimmedString.pipe(
-  Schema.maxLength(200),
-  Schema.pattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+export const ChatSessionIdSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
 )
 
 /** Optional application-owned partition for otherwise public session IDs. */
 export const ChatSessionNamespaceSchema =
-  Schema.NonEmptyTrimmedString.pipe(
-    Schema.maxLength(200),
-    Schema.pattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  Schema.Trimmed.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(200),
+    Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
   )
 
 /** Opaque optimistic revision emitted by a session store adapter. */
-export const ChatSessionRevisionSchema = Schema.NonEmptyTrimmedString.pipe(
-  Schema.maxLength(200),
-  Schema.pattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+export const ChatSessionRevisionSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
 )
 
 /** Persisted session snapshot revalidated by the chat runtime after loading. */
 export const ChatSessionSnapshotSchema = Schema.Struct({
   revision: ChatSessionRevisionSchema,
   state: Schema.Unknown,
-  messages: Schema.Array(UntrustedMessageSchema).pipe(
-    Schema.maxItems(200),
+  messages: Schema.Array(UntrustedMessageSchema).check(
+    Schema.isMaxLength(200),
   ),
 })
 
@@ -45,10 +48,10 @@ export type ChatSessionReplacement = Schema.Schema.Type<
 >
 
 /** Safe reason that a session store dependency was unavailable. */
-export const ChatSessionStoreUnavailableReasonSchema = Schema.Literal(
+export const ChatSessionStoreUnavailableReasonSchema = Schema.Literals([
   "load_failed",
   "write_failed",
-)
+])
 
 /** A session store adapter could not load or replace state. */
 export class ChatSessionStoreUnavailable extends Schema.TaggedError<ChatSessionStoreUnavailable>()(
@@ -63,13 +66,13 @@ export class ChatSessionConflict extends Schema.TaggedError<ChatSessionConflict>
 ) {}
 
 /** Safe reason that session input or persisted data was rejected. */
-export const InvalidChatSessionReasonSchema = Schema.Literal(
+export const InvalidChatSessionReasonSchema = Schema.Literals([
   "invalid_input",
   "invalid_snapshot",
   "invalid_state",
   "invalid_replacement",
   "history_limit",
-)
+])
 
 /** Session input or persisted state failed runtime validation. */
 export class InvalidChatSession extends Schema.TaggedError<InvalidChatSession>()(
@@ -109,6 +112,9 @@ export interface ChatSessionStoreService {
 }
 
 /** Effect service for the configured server-owned chat session store. */
-export class ChatSessionStore extends Context.Tag(
+export class ChatSessionStore extends Context.Service<
+  ChatSessionStore,
+  ChatSessionStoreService
+>()(
   "@popcomputer/structured-chat/ChatSessionStore",
-)<ChatSessionStore, ChatSessionStoreService>() {}
+) {}

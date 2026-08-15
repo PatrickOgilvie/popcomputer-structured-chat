@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Either, Layer, Ref, Schema } from "effect"
+import { Effect, Layer, Ref, Result, Schema } from "effect"
 import {
   Answer,
   AnswerValidationRejected,
@@ -110,7 +110,7 @@ describe("Repair.standard", () => {
     const model = Layer.succeed(StructuredChatModel, {
       requestTool: (request) =>
         Ref.update(requests, (current) => [...current, request]).pipe(
-          Effect.zipRight(Ref.updateAndGet(calls, (count) => count + 1)),
+          Effect.andThen(Ref.updateAndGet(calls, (count) => count + 1)),
           Effect.map((count) =>
             count === 1
               ? initialAnswers
@@ -212,7 +212,7 @@ describe("Repair.standard", () => {
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
-        return yield* Effect.either(
+        return yield* Effect.result(
           BoundedRepairChat.reply({
             sessionId: "bounded-repair",
             expectedRevision: initial.revision,
@@ -223,11 +223,11 @@ describe("Repair.standard", () => {
       }).pipe(Effect.provide(live)),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidToolCall)
-      if (result.left instanceof InvalidToolCall) {
-        expect(result.left).toMatchObject({
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidToolCall)
+      if (result.failure instanceof InvalidToolCall) {
+        expect(result.failure).toMatchObject({
           tool: "apply_conversation_repairs",
           reason: "invalid_arguments",
         })
@@ -244,7 +244,7 @@ describe("Repair.standard", () => {
     const model = Layer.succeed(StructuredChatModel, {
       requestTool: (request) =>
         Ref.update(requests, (current) => [...current, request]).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             Ref.updateAndGet(calls, (count) => count + 1),
           ),
           Effect.map((count) => {
@@ -704,7 +704,7 @@ describe("Repair.standard", () => {
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
-        return yield* Effect.either(
+        return yield* Effect.result(
           RepairableChat.reply({
             sessionId: "invalid-repair",
             expectedRevision: initial.revision,
@@ -714,11 +714,11 @@ describe("Repair.standard", () => {
       }).pipe(Effect.provide(live)),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidCollectStageResponse)
-      if (result.left instanceof InvalidCollectStageResponse) {
-        expect(result.left.reason).toBe("invalid_repair")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidCollectStageResponse)
+      if (result.failure instanceof InvalidCollectStageResponse) {
+        expect(result.failure.reason).toBe("invalid_repair")
       }
     }
   })
@@ -786,7 +786,7 @@ describe("Repair.standard", () => {
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
-        return yield* Effect.either(
+        return yield* Effect.result(
           RepairableChat.reply({
             sessionId: "duplicate-repair",
             expectedRevision: initial.revision,
@@ -796,11 +796,11 @@ describe("Repair.standard", () => {
       }).pipe(Effect.provide(live)),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(InvalidCollectStageResponse)
-      if (result.left instanceof InvalidCollectStageResponse) {
-        expect(result.left.reason).toBe("invalid_repair")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(InvalidCollectStageResponse)
+      if (result.failure instanceof InvalidCollectStageResponse) {
+        expect(result.failure.reason).toBe("invalid_repair")
       }
     }
   })
@@ -879,7 +879,7 @@ describe("Repair.standard", () => {
           sessionId: "budget-repair",
           message: "The budget is £6,000.",
         })
-        return yield* Effect.either(
+        return yield* Effect.result(
           BudgetChat.reply({
             sessionId: "budget-repair",
             expectedRevision: initial.revision,
@@ -889,11 +889,11 @@ describe("Repair.standard", () => {
       }).pipe(Effect.provide(live)),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(AnswerValidationRejected)
-      if (result.left instanceof AnswerValidationRejected) {
-        expect(result.left.error).toBeInstanceOf(BudgetTooLow)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(AnswerValidationRejected)
+      if (result.failure instanceof AnswerValidationRejected) {
+        expect(result.failure.error).toBeInstanceOf(BudgetTooLow)
       }
     }
     expect(await Effect.runPromise(Ref.get(calls))).toBe(3)
