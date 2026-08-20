@@ -14,6 +14,10 @@ import {
   makeAssistantChatModelAdapter,
   makeAssistantView,
 } from "@popcomputer/structured-chat/assistant-ui"
+import {
+  createStructuredChatDebugStore,
+  StructuredChatDebugPanel,
+} from "@popcomputer/structured-chat/assistant-ui/debug"
 import { Effect, Schema } from "effect"
 
 const ResultView = defineView({
@@ -83,6 +87,12 @@ const ResultUI = makeAssistantView(ResultView, {
 
 if (ResultUI.unstable_data.name !== "result") {
   throw new Error("Assistant view smoke test failed")
+}
+
+const debugStore = createStructuredChatDebugStore()
+void StructuredChatDebugPanel
+if (debugStore.getSnapshot() !== null) {
+  throw new Error("Assistant debug inspector smoke test failed")
 }
 
 let requestedEndpoint

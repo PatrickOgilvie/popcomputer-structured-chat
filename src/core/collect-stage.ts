@@ -27,6 +27,7 @@ import { defineToolSet } from "./tool-set.js"
 import type {
   AdaptiveChoiceQuestion,
   ChoiceQuestion,
+  QuestionDefinitionContract,
   QuestionChoice,
 } from "./question.js"
 import {
@@ -252,8 +253,28 @@ export interface CollectStageRuntime {
   }) => Effect.Effect<RuntimeCollectStageTurn, unknown, unknown>
 }
 
+/** @internal One definition-ordered field exposed to trusted projections. */
+export interface CollectStageInspectionField {
+  readonly field: string
+  readonly mode: AnswerMode
+  readonly description: string
+  readonly question: QuestionDefinitionContract
+  readonly encodeValue: (
+    value: RuntimeAnswerValue,
+  ) => Effect.Effect<unknown, Schema.SchemaError>
+}
+
+/** @internal Read-only collect-stage metadata used by trusted projections. */
+export interface CollectStageInspection {
+  readonly fields: ReadonlyArray<CollectStageInspectionField>
+}
+
 const collectStageRuntime = Symbol(
   "@popcomputer/structured-chat/CollectStageRuntime",
+)
+
+const collectStageInspection = Symbol(
+  "@popcomputer/structured-chat/CollectStageInspection",
 )
 
 /** Minimum sealed collect-stage shape accepted by a chat definition. */
@@ -262,12 +283,18 @@ export interface CollectStageDefinitionContract
   readonly _tag: "CollectStage"
   readonly name: string
   readonly [collectStageRuntime]: CollectStageRuntime
+  readonly [collectStageInspection]: CollectStageInspection
 }
 
 /** @internal Read the erased runtime from an authentic collect stage. */
 export const readCollectStageRuntime = (
   stage: CollectStageDefinitionContract,
 ): CollectStageRuntime => stage[collectStageRuntime]
+
+/** @internal Read trusted definition metadata from an authentic collect stage. */
+export const readCollectStageInspection = (
+  stage: CollectStageDefinitionContract,
+): CollectStageInspection => stage[collectStageInspection]
 
 /** Shared conversational policy for questions in one collect stage. */
 export interface CollectQuestionPolicy {
@@ -584,6 +611,21 @@ export const defineCollectStage = <
     accepted: {},
     asked: {},
   })
+  const inspectionFields: ReadonlyArray<CollectStageInspectionField> =
+    fieldNames.map((field) => {
+      const answer = getAnswer(field)
+
+      return {
+        field,
+        mode: answer.mode,
+        description: answer.description,
+        question: answer.question,
+        encodeValue: (value) =>
+          Schema.encodeUnknownEffect(answer.schema)(value, {
+            onExcessProperty: "error",
+          }),
+      }
+    })
   // SAFETY: when guards are omitted, Guards uses its readonly [] default; an
   // explicitly supplied tuple is returned unchanged.
   const guards =
@@ -1249,6 +1291,9 @@ export const defineCollectStage = <
           },
     }),
     run,
+    [collectStageInspection]: {
+      fields: inspectionFields,
+    },
     [collectStageRuntime]: {
       initialState,
       stateSchema,

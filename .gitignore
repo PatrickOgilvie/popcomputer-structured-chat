@@ -2,3 +2,6 @@ node_modules
 dist
 *.tgz
 .repos
+.agents
+.claude
+skills-lock.json

@@ -3,6 +3,7 @@ import {
 } from "@assistant-ui/core/react"
 import { Exit, Result, Schema } from "effect"
 import { createElement, type ComponentType, type FC } from "react"
+import type { StructuredChatDebugSnapshot } from "../core/debug.js"
 import type {
   ViewData,
   ViewDefinitionContract,
@@ -10,6 +11,7 @@ import type {
 import {
   type StructuredChatSessionReference,
   type StructuredChatAssistantMessage,
+  type StructuredChatTurnResponse,
   StructuredChatSessionReferenceSchema,
   StructuredChatTurnRequestSchema,
   StructuredChatTurnResponseSchema,
@@ -115,6 +117,28 @@ export type AssistantChatFetch = (
 export interface AssistantChatModelAdapterOptions {
   readonly endpoint: string
   readonly fetch?: AssistantChatFetch
+  /**
+   * Select the explicit debug response contract and receive its safe state
+   * projection after every successful turn. Observer failures are ignored so
+   * they cannot change the outcome of an already-persisted chat turn.
+   */
+  readonly onDebugSnapshot?: (
+    snapshot: StructuredChatDebugSnapshot,
+  ) => void | Promise<void>
+}
+
+const notifyDebugSnapshot = (
+  callback: NonNullable<
+    AssistantChatModelAdapterOptions["onDebugSnapshot"]
+  >,
+  snapshot: StructuredChatDebugSnapshot,
+): void => {
+  try {
+    const notified = callback(snapshot)
+    void Promise.resolve(notified).catch(() => undefined)
+  } catch {
+    // Debug observers are deliberately isolated from the persisted turn.
+  }
 }
 
 /** Minimum assistant message shape consumed by the browser adapter. */
@@ -202,9 +226,9 @@ const readTurnRequest = (
 /**
  * Adapt assistant-ui to one server-owned structured chat endpoint.
  *
- * Only the latest text and opaque prior revision cross the browser boundary.
- * Tools, instructions, history, answer state, and stage position stay server
- * owned.
+ * By default, only the latest text and opaque prior revision cross the browser
+ * boundary. Supplying `onDebugSnapshot` explicitly selects the separate debug
+ * response contract and receives its safe answer-and-stage projection.
  */
 export const makeAssistantChatModelAdapter = (
   options: AssistantChatModelAdapterOptions,
@@ -213,6 +237,7 @@ export const makeAssistantChatModelAdapter = (
     options.fetch ??
     ((input: string, init: RequestInit) =>
       globalThis.fetch(input, init))
+  const onDebugSnapshot = options.onDebugSnapshot
 
   return {
     run: async ({ messages, abortSignal }) => {
@@ -237,22 +262,38 @@ export const makeAssistantChatModelAdapter = (
       } catch {
         throw new Error("Structured chat returned an invalid response")
       }
-      const decoded = Schema.decodeUnknownExit(
-        StructuredChatTurnResponseSchema,
-      )(body, { onExcessProperty: "error" })
-      if (Exit.isFailure(decoded)) {
-        throw new Error("Structured chat returned an invalid response")
+      let value: StructuredChatTurnResponse
+      if (onDebugSnapshot === undefined) {
+        const decoded = Schema.decodeUnknownExit(
+          StructuredChatTurnResponseSchema,
+        )(body, { onExcessProperty: "error" })
+        if (Exit.isFailure(decoded)) {
+          throw new Error("Structured chat returned an invalid response")
+        }
+        value = decoded.value
+      } else {
+        const { StructuredChatDebugTurnResponseSchema } = await import(
+          "../core/debug-protocol.js"
+        )
+        const decoded = Schema.decodeUnknownExit(
+          StructuredChatDebugTurnResponseSchema,
+        )(body, { onExcessProperty: "error" })
+        if (Exit.isFailure(decoded)) {
+          throw new Error("Structured chat returned an invalid response")
+        }
+        notifyDebugSnapshot(onDebugSnapshot, decoded.value.debug)
+        value = decoded.value
       }
 
       return {
-        content: decoded.value.message.content,
+        content: value.message.content,
         metadata: {
           custom:
-            decoded.value.session === undefined
+            value.session === undefined
               ? {}
               : {
                   [assistantChatSessionMetadataKey]:
-                    decoded.value.session,
+                    value.session,
                 },
         },
       }

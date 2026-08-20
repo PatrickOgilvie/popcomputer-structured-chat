@@ -21,6 +21,21 @@ export {
 } from "./core/protocol.js"
 
 export {
+  inspectChatState,
+  InvalidChatDebugProjection,
+  StructuredChatDebugSnapshotSchema,
+  type InspectChatStateOptions,
+  type StructuredChatDebugSnapshot,
+} from "./core/debug.js"
+
+export {
+  presentChatDebugReply,
+  StructuredChatDebugTurnResponseSchema,
+  type PresentChatDebugReplyOptions,
+  type StructuredChatDebugTurnResponse,
+} from "./core/debug-protocol.js"
+
+export {
   makeStructuredChatModel,
   ModelProvider,
   structuredChatModelLayer,

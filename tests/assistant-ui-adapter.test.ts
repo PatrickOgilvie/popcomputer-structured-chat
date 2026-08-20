@@ -6,7 +6,10 @@ import type {
   ThreadMessage,
 } from "@assistant-ui/react"
 import { Schema } from "effect"
-import { StructuredChatTurnRequestSchema } from "../src/index.js"
+import {
+  StructuredChatTurnRequestSchema,
+  type StructuredChatDebugSnapshot,
+} from "../src/index.js"
 import {
   assistantChatSessionMetadataKey,
   makeAssistantChatModelAdapter,
@@ -71,6 +74,43 @@ const successfulResponseBody = {
   message: {
     role: "assistant",
     content: [{ type: "text", text: "Continue" }],
+  },
+} as const
+
+const successfulDebugResponseBody = {
+  ...successfulResponseBody,
+  debug: {
+    schemaVersion: 1,
+    chat: { name: "debug_chat", version: 1 },
+    status: "active",
+    currentStage: {
+      index: 0,
+      name: "debug_brief",
+      kind: "collect",
+    },
+    stages: [
+      {
+        _tag: "CollectStage",
+        index: 0,
+        name: "debug_brief",
+        status: "current",
+        repairPending: false,
+        satisfiedFields: 0,
+        totalFields: 1,
+        fields: [
+          {
+            field: "topic",
+            mode: "semantic",
+            description: "The topic the user wants to explore",
+            question: {
+              _tag: "FixedQuestion",
+              text: "What should we explore?",
+            },
+            state: { _tag: "Missing" },
+          },
+        ],
+      },
+    ],
   },
 } as const
 
@@ -275,6 +315,7 @@ describe("makeAssistantChatModelAdapter", () => {
         unexpected: true,
       },
     ],
+    ["an unsolicited debug projection", successfulDebugResponseBody],
   ] as const)("rejects %s", async (_name, responseBody) => {
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat",
@@ -309,5 +350,114 @@ describe("makeAssistantChatModelAdapter", () => {
       content: successfulResponseBody.message.content,
       metadata: { custom: {} },
     })
+  })
+
+  test("delivers an explicitly requested debug snapshot outside message metadata", async () => {
+    const snapshots: Array<StructuredChatDebugSnapshot> = []
+    const adapter = makeAssistantChatModelAdapter({
+      endpoint: "/api/chat/debug",
+      fetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify(successfulDebugResponseBody), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      onDebugSnapshot: (snapshot) => {
+        snapshots.push(snapshot)
+      },
+    })
+
+    const result = await runAdapter(
+      adapter.run(runOptions([userMessage("Continue")])),
+    )
+
+    expect(snapshots).toEqual([successfulDebugResponseBody.debug])
+    expect(result.content).toEqual(successfulResponseBody.message.content)
+    expect(result.metadata?.custom).toEqual({})
+    expect(result.metadata?.custom).not.toHaveProperty("debug")
+  })
+
+  test("requires the debug response contract when a callback is configured", async () => {
+    const adapter = makeAssistantChatModelAdapter({
+      endpoint: "/api/chat/debug",
+      fetch: () => Promise.resolve(successfulResponse()),
+      onDebugSnapshot: () => undefined,
+    })
+
+    await expect(
+      adapter.run(runOptions([userMessage("Continue")])),
+    ).rejects.toHaveProperty(
+      "message",
+      "Structured chat returned an invalid response",
+    )
+  })
+
+  test("rejects nested excess debug data before notifying the observer", async () => {
+    let notified = false
+    const adapter = makeAssistantChatModelAdapter({
+      endpoint: "/api/chat/debug",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ...successfulDebugResponseBody,
+              debug: {
+                ...successfulDebugResponseBody.debug,
+                currentStage: {
+                  ...successfulDebugResponseBody.debug.currentStage,
+                  unexpected: true,
+                },
+              },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+        ),
+      onDebugSnapshot: () => {
+        notified = true
+      },
+    })
+
+    await expect(
+      adapter.run(runOptions([userMessage("Continue")])),
+    ).rejects.toHaveProperty(
+      "message",
+      "Structured chat returned an invalid response",
+    )
+    expect(notified).toBe(false)
+  })
+
+  test.each([
+    [
+      "synchronous",
+      () => {
+        throw new Error("debug observer failed")
+      },
+    ],
+    [
+      "asynchronous",
+      () => Promise.reject(new Error("debug observer failed")),
+    ],
+  ] as const)("isolates %s debug observer failures", async (_name, observe) => {
+    const adapter = makeAssistantChatModelAdapter({
+      endpoint: "/api/chat/debug",
+      fetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify(successfulDebugResponseBody), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      onDebugSnapshot: observe,
+    })
+
+    const result = await runAdapter(
+      adapter.run(runOptions([userMessage("Continue")])),
+    )
+
+    expect(result.content).toEqual(successfulResponseBody.message.content)
   })
 })

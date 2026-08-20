@@ -600,6 +600,59 @@ that expose message editing, regeneration, or persistent branching should pair
 it with an application-owned branch/session policy rather than treating browser
 history as authoritative.
 
+## Inspect development state
+
+The optional debug inspector shows the current stage, stage progress, required
+fields, accepted values, issued questions, and supporting evidence. It uses a
+small package-owned panel inspired by DialKit, without adding DialKit or another
+runtime dependency.
+
+Debug data uses a separate, explicit response contract. Select it on an
+authenticated development endpoint:
+
+```ts
+import {
+  presentChatDebugReply,
+  presentChatReply,
+} from "@popcomputer/structured-chat"
+
+const response = debugAccessGranted
+  ? yield* presentChatDebugReply(
+      ResourceFinder,
+      { ...reply, sessionId: publicSessionId },
+      { inspection: { evidence: "include" } },
+    )
+  : yield* presentChatReply({ ...reply, sessionId: publicSessionId })
+```
+
+Connect that endpoint to the inspector store:
+
+```tsx
+import { makeAssistantChatModelAdapter } from "@popcomputer/structured-chat/assistant-ui"
+import {
+  createStructuredChatDebugStore,
+  StructuredChatDebugPanel,
+} from "@popcomputer/structured-chat/assistant-ui/debug"
+
+const debugStore = createStructuredChatDebugStore()
+const model = makeAssistantChatModelAdapter({
+  endpoint: "/api/resource-finder/debug/turn",
+  onDebugSnapshot: debugStore.receive,
+})
+
+export function ResourceFinderDebugPanel() {
+  return <StructuredChatDebugPanel store={debugStore} />
+}
+```
+
+Without `onDebugSnapshot`, the normal adapter continues to reject a response
+containing debug data. Hiding or unmounting the panel is not an authorization
+boundary: the server must decide whether to emit the debug response. Use
+`evidence: "omit"` when transcript quotes should not cross that boundary.
+Create one store per chat runtime; it reflects the most recently completed
+debug response. Observer failures are isolated and never change the outcome of
+the persisted chat turn.
+
 ## Plan without executing
 
 The default remains one call:
