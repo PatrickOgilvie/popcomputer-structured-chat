@@ -49,6 +49,7 @@
     "dist",
     "examples",
     "migrations/d1",
+    "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],
