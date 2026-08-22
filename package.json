@@ -1,6 +1,6 @@
 {
   "name": "@popcomputer/structured-chat",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Schema-defined structured chats with typed tools, stages, and UI views",
   "type": "module",
   "packageManager": "bun@1.3.1",
