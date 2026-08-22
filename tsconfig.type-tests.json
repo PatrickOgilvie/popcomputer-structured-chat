@@ -15,5 +15,6 @@
     "tests/**/*.tsx",
     "examples/**/*.ts",
     "examples/**/*.tsx"
-  ]
+  ],
+  "exclude": ["dist", "node_modules", "tests/cloudflare"]
 }

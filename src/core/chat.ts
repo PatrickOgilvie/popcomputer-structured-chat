@@ -26,7 +26,6 @@ import type {
   ToolSetExecution,
 } from "./tool-set.js"
 import { readToolExecutionModelContext } from "./tool.js"
-import type { CommandExecutionContext } from "./tool.js"
 import { deriveCommandId } from "./command.js"
 import { defineTool, type QueryToolDefinitionContract } from "./tool.js"
 import type { StandardRepair } from "./repair.js"
@@ -41,6 +40,11 @@ import {
   InvalidChatSession,
   type ChatSessionStoreUnavailable,
 } from "./session.js"
+import {
+  make as makeChatProcess,
+  type RuntimeChatState,
+  type RuntimeRepairCorrection,
+} from "../internal/chat/process.js"
 
 /** Stable machine-facing name for one structured chat definition. */
 export const ChatNameSchema = Schema.Trimmed.check(
@@ -222,6 +226,7 @@ export interface ChatReply<
   Version extends number,
   Stages extends ChatStageTuple,
 > {
+  readonly sessionId: string
   readonly revision: string
   readonly turn: ChatTurn<Name, Version, Stages>
 }
@@ -298,21 +303,6 @@ export interface ChatDefinition<
     ChatReplyError<Stages>,
     ChatSessionStore | ChatRequirements<Stages>
   >
-}
-
-interface RuntimeChatState {
-  readonly schemaVersion: number
-  readonly chat: string
-  readonly stage: number
-  readonly status: "active" | "complete"
-  readonly stages: Readonly<
-    Partial<
-      Record<string, CollectStageRuntime["initialState"]>
-    >
-  >
-  readonly repair?: {
-    readonly pendingStages: ReadonlyArray<number>
-  }
 }
 
 const invalidTransition = (
@@ -609,20 +599,6 @@ export const defineChat = <
       )
     })
 
-  interface RuntimeRepairCorrection {
-    readonly _tag: "ReplaceAcceptedAnswer" | "ReconfirmAnswer"
-    readonly stage: string
-    readonly field: string
-    readonly value?: unknown
-    readonly evidence: {
-      readonly quote: string
-    }
-  }
-
-  interface RuntimeRepairProposal {
-    readonly corrections: ReadonlyArray<RuntimeRepairCorrection>
-  }
-
   const applyConversationRepairs = (
     state: RuntimeChatState,
     messages: ReadonlyArray<UntrustedMessage>,
@@ -674,183 +650,18 @@ export const defineChat = <
       }
     })
 
-  /** Dispatch only values already checked against this exact transcript. */
-  const runTrustedRuntime = (
-    state: RuntimeChatState,
-    messages: ReadonlyArray<UntrustedMessage>,
-    commandContext?: CommandExecutionContext,
-    allowRepair = false,
-  ): Effect.Effect<unknown, unknown, unknown> => {
-    if (state.status === "complete") {
-      return Effect.fail(
-        invalidTransition(definition.name, "already_complete"),
-      )
-    }
-    const stage = definition.stages[state.stage]
-    if (stage === undefined) {
-      return Effect.fail(
-        invalidTransition(definition.name, "invalid_state"),
-      )
-    }
-
-    if (stage._tag === "CommandStage") {
-      if (commandContext === undefined) {
-        return Effect.fail(
-          invalidTransition(definition.name, "invalid_state"),
-        )
-      }
-      return readCommandStageRuntime(stage)
-        .run(messages, commandContext)
-        .pipe(
-          Effect.map((result) => ({
-            _tag: "Complete" as const,
-            stage: stage.name,
-            state: {
-              ...state,
-              status: "complete" as const,
-            },
-            result,
-          })),
-        )
-    }
-
-    if (stage._tag === "ToolStage") {
-      const runtime = readToolStageRuntime(stage)
-      if (allowRepair && repairTool !== undefined) {
-        return runtime.planWith(messages, repairTool).pipe(
-          Effect.flatMap((planned) => {
-            const call = planned
-            if (call.name !== repairToolName) {
-              return runtime.execute(call).pipe(
-                Effect.map((result) => ({
-                  _tag: "ToolResult" as const,
-                  stage: stage.name,
-                  state,
-                  result,
-                })),
-              )
-            }
-            // SAFETY: planWith used the generated repair tool schema, and this
-            // branch is selected by that tool's unique literal name.
-            const proposal = cast<
-              typeof call.arguments,
-              RuntimeRepairProposal
-            >(call.arguments)
-            return applyConversationRepairs(
-              state,
-              messages,
-              proposal.corrections,
-            ).pipe(
-              Effect.flatMap((repairedState) =>
-                Effect.suspend(() =>
-                  runTrustedRuntime(
-                    repairedState,
-                    messages,
-                    commandContext,
-                    false,
-                  ),
-                ),
-              ),
-            )
-          }),
-        )
-      }
-      return runtime.run(messages).pipe(
-        Effect.map((result) =>
-          runtime.afterExecution === "complete"
-            ? {
-                _tag: "Complete" as const,
-                stage: stage.name,
-                state: {
-                  ...state,
-                  status: "complete" as const,
-                },
-                result,
-              }
-            : {
-                _tag: "ToolResult" as const,
-                stage: stage.name,
-                state,
-                result,
-              },
-        ),
-      )
-    }
-
-    const runtime = readCollectStageRuntime(stage)
-    const collectState = state.stages[stage.name]
-    if (collectState === undefined) {
-      return Effect.fail(
-        invalidTransition(definition.name, "invalid_state"),
-      )
-    }
-    return runtime
-      .run({ state: collectState, messages })
-      .pipe(
-        Effect.flatMap((turn) => {
-          const nextState: RuntimeChatState = {
-            ...state,
-            stages: {
-              ...state.stages,
-              [stage.name]: turn.state,
-            },
-          }
-          if (turn.complete) {
-            const pendingStages = state.repair?.pendingStages ?? []
-            const remainingPending =
-              pendingStages[0] === state.stage
-                ? pendingStages.slice(1)
-                : pendingStages
-            const nextStage =
-              pendingStages.length > 0
-                ? (remainingPending[0] ?? finalStageIndex)
-                : state.stage + 1
-            const advancedState =
-              state.repair === undefined
-                ? { ...nextState, stage: nextStage }
-                : {
-                    ...nextState,
-                    stage: nextStage,
-                    repair: { pendingStages: remainingPending },
-                  }
-            return Effect.suspend(() =>
-              runTrustedRuntime(
-                advancedState,
-                messages,
-                commandContext,
-                false,
-              ),
-            )
-          }
-
-          return Effect.succeed({
-            _tag: "Question" as const,
-            stage: stage.name,
-            state: nextState,
-            question: turn.question,
-          })
-        }),
-      )
-  }
-
-  /** Validate a public runtime entry before entering trusted transitions. */
-  const runCheckedRuntime = (
-    state: RuntimeChatState,
-    messages: ReadonlyArray<UntrustedMessage>,
-    commandContext?: CommandExecutionContext,
-    allowRepair = false,
-  ): Effect.Effect<unknown, unknown, unknown> =>
-    !isValidRuntimeState(state) ||
-    !isGroundedInMessages(state, messages)
-      ? Effect.fail(
-          invalidTransition(definition.name, "invalid_state"),
-        )
-      : runTrustedRuntime(
-          state,
-          messages,
-          commandContext,
-          allowRepair,
-        )
+  const process = makeChatProcess({
+    chat: definition.name,
+    stages: definition.stages,
+    finalStageIndex,
+    repairTool,
+    repairToolName,
+    invalidTransition: (reason) =>
+      invalidTransition(definition.name, reason),
+    isValidState: isValidRuntimeState,
+    isGroundedInMessages,
+    applyRepairs: applyConversationRepairs,
+  })
 
   const run: ChatDefinition<Name, Version, Stages>["run"] = (input) => {
     // SAFETY: ChatState is generated from the same stage tuple as the sealed
@@ -859,7 +670,7 @@ export const defineChat = <
       typeof input.state,
       RuntimeChatState
     >(input.state)
-    const runtime = runCheckedRuntime(
+    const runtime = process.runChecked(
       runtimeState,
       input.messages,
     )
@@ -976,7 +787,7 @@ export const defineChat = <
       // SAFETY: stateSchema has parsed the definition-owned state and the
       // explicit check above grounded it against these exact messages.
       // Reply supplies command identity only to the active terminal command.
-      const trustedTurn = runTrustedRuntime(
+      const trustedTurn = process.runTrusted(
         runtimeState,
         messages,
         commandContext,
@@ -1056,6 +867,7 @@ export const defineChat = <
       )
 
       return {
+        sessionId: scope.sessionId,
         revision: replacement.revision,
         turn,
       }

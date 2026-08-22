@@ -1,19 +1,13 @@
+import { Chat, View } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
-import { Effect, Result } from "effect"
-import {
-  InvalidChatPresentation,
-  presentAnswerValidationRejection,
-  presentChatNotice,
-  presentChatReply,
-  Text,
-} from "../src/index.js"
+import { cast, Effect, Result, Schema } from "effect"
 
-describe("presentChatReply", () => {
+describe("Chat.presentReply", () => {
   test("classifies dynamic text construction failures in the Effect channel", async () => {
     const result = await Effect.runPromise(
       Effect.result(
         Effect.suspend(() =>
-          presentChatReply(
+          Chat.presentReply(
             {
               sessionId: "chat:01",
               revision: "2",
@@ -24,7 +18,7 @@ describe("presentChatReply", () => {
               },
             },
             {
-              result: () => [Text.make("Trailing whitespace ")],
+              result: () => [Chat.Text.make("Trailing whitespace ")],
             },
           ),
         ),
@@ -33,7 +27,7 @@ describe("presentChatReply", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidChatPresentation)
+      expect(result.failure).toBeInstanceOf(Chat.InvalidPresentation)
     }
   })
 
@@ -41,20 +35,20 @@ describe("presentChatReply", () => {
     const result = await Effect.runPromise(
       Effect.result(
         Effect.suspend(() =>
-          presentChatNotice({ text: "Trailing whitespace " }),
+          Chat.notice({ text: "Trailing whitespace " }),
         ),
       ),
     )
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidChatPresentation)
+      expect(result.failure).toBeInstanceOf(Chat.InvalidPresentation)
     }
   })
 
   test("projects choices and uncertainty without exposing option values", async () => {
     const response = await Effect.runPromise(
-      presentChatReply({
+      Chat.presentReply({
         sessionId: "chat:01",
         revision: "1",
         turn: {
@@ -101,7 +95,7 @@ describe("presentChatReply", () => {
 
   test("presents a non-progressing validation retry without option values", async () => {
     const response = await Effect.runPromise(
-      presentAnswerValidationRejection({
+      Chat.presentValidationRejection({
         rejection: {
           stage: "brief",
           question: {
@@ -135,7 +129,7 @@ describe("presentChatReply", () => {
 
   test("composes deterministic text with validated tool views", async () => {
     const response = await Effect.runPromise(
-      presentChatReply(
+      Chat.presentReply(
         {
           sessionId: "chat:01",
           revision: "2",
@@ -155,7 +149,7 @@ describe("presentChatReply", () => {
         },
         {
           result: ({ result }) => [
-            Text.make("I found one strong match."),
+            Chat.Text.make("I found one strong match."),
             ...result.views,
           ],
         },
@@ -175,7 +169,7 @@ describe("presentChatReply", () => {
   test("rejects an empty tool result instead of emitting an invalid message", async () => {
     const result = await Effect.runPromise(
       Effect.result(
-        presentChatReply({
+        Chat.presentReply({
           sessionId: "chat:01",
           revision: "2",
           turn: {
@@ -189,19 +183,19 @@ describe("presentChatReply", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidChatPresentation)
+      expect(result.failure).toBeInstanceOf(Chat.InvalidPresentation)
     }
   })
 
   test("presents a non-progressing safety notice with optional prior state", async () => {
     const initial = await Effect.runPromise(
-      presentChatNotice({
+      Chat.notice({
         text: "That request could not be processed safely.",
         session: undefined,
       }),
     )
     const retryable = await Effect.runPromise(
-      presentChatNotice({
+      Chat.notice({
         text: "That request could not be processed safely.",
         session: { id: "chat:01", revision: "2" },
       }),
@@ -212,5 +206,179 @@ describe("presentChatReply", () => {
       id: "chat:01",
       revision: "2",
     })
+  })
+})
+
+describe("Chat.turnRequestSchema", () => {
+  const decode = Schema.decodeUnknownResult(
+    Chat.TurnRequestSchema,
+  )
+
+  test("accepts the documented browser payload", () => {
+    const decoded = decode({
+      session: { id: "chat:01", revision: "1" },
+      message: "Hello there",
+    })
+
+    expect(Result.isSuccess(decoded)).toBe(true)
+    if (Result.isSuccess(decoded)) {
+      expect(decoded.success).toEqual({
+        session: { id: "chat:01", revision: "1" },
+        message: "Hello there",
+      })
+    }
+  })
+
+  test.each([
+    ["an empty message", { message: "" }],
+    ["a whitespace-only message", { message: "   " }],
+    ["an oversized message", { message: "a".repeat(50_001) }],
+    ["a non-string message", { message: 42 }],
+  ])("default instance rejects %s", (_name, input) => {
+    expect(Result.isFailure(decode(input))).toBe(true)
+  })
+
+  test("factory without options accepts exactly the default instance", () => {
+    const inputs: ReadonlyArray<unknown> = [
+      { message: "Hello there" },
+      { session: { id: "chat:01", revision: "1" }, message: "Hi" },
+      {},
+      { message: "" },
+      { message: "   " },
+      { message: 42 },
+      { message: "a".repeat(50_000) },
+      { message: "a".repeat(50_001) },
+      { session: { id: "bad id", revision: "1" }, message: "Hi" },
+    ]
+
+    for (const input of inputs) {
+      expect(Schema.is(Chat.turnRequestSchema())(input)).toBe(
+        Schema.is(Chat.TurnRequestSchema)(input),
+      )
+    }
+  })
+
+  test("factory applies maximumMessageLength to trimmed non-empty text", () => {
+    const schema = Chat.turnRequestSchema({
+      maximumMessageLength: 10,
+    })
+
+    expect(Result.isSuccess(Schema.decodeUnknownResult(schema)({ message: "short" }))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(schema)({ message: "" }))).toBe(true)
+    expect(
+      Result.isFailure(Schema.decodeUnknownResult(schema)({ message: "          " })),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        Schema.decodeUnknownResult(schema)({ message: "longer than ten" }),
+      ),
+    ).toBe(true)
+  })
+
+  test.each([
+    [0],
+    [-5],
+    [1.5],
+    [Number.NaN],
+  ])("factory rejects the invalid bound %p", (maximumMessageLength) => {
+    expect(() =>
+      Chat.turnRequestSchema({ maximumMessageLength }),
+    ).toThrow()
+  })
+})
+
+describe("Chat.findTurnParts", () => {
+  const Card = View.define({
+    name: "card",
+    version: 1,
+    schema: Schema.Struct({ value: Schema.String }),
+  })
+  const ForeignCard = View.define({
+    name: "foreign_card",
+    version: 1,
+    schema: Schema.Struct({ value: Schema.String }),
+  })
+
+  test("returns only strictly decoded parts for the requested view", async () => {
+    const response = await Effect.runPromise(
+      Chat.presentReply({
+        sessionId: "chat:01",
+        revision: "1",
+        turn: {
+          _tag: "ToolResult",
+          stage: "matching",
+          result: { views: [] },
+        },
+      }, {
+        result: () => [
+          ForeignCard.make({ value: "other view" }),
+          Card.make({ value: "safe" }),
+          // Same view name but an incompatible schemaVersion.
+          {
+            type: "data" as const,
+            name: "card",
+            data: { schemaVersion: 999, value: "stale" },
+          },
+          // Same view name and version but corrupt data.
+          {
+            type: "data" as const,
+            name: "card",
+            data: { schemaVersion: 1, value: 42 },
+          },
+        ],
+      }),
+    )
+    const parts = Chat.findTurnParts(response, Card)
+
+    expect(parts).toEqual([{ schemaVersion: 1, value: "safe" }])
+  })
+
+  test("round-trips the built-in collect question view", async () => {
+    const response = await Effect.runPromise(
+      Chat.presentReply({
+        sessionId: "chat:01",
+        revision: "3",
+        turn: {
+          _tag: "Question",
+          stage: "brief",
+          question: {
+            field: "localOnly",
+            text: "Only show local firms?",
+            options: [{ label: "Yes", value: true }],
+            escape: { label: "Not sure yet" },
+          },
+        },
+      }),
+    )
+
+    expect(Chat.findTurnParts(response, Chat.CollectQuestionView)).toEqual([
+      {
+        schemaVersion: 1,
+        stage: "brief",
+        field: "localOnly",
+        text: "Only show local firms?",
+        options: [{ label: "Yes" }, { label: "Not sure yet" }],
+      },
+    ])
+  })
+
+  test("returns an empty array for empty transcript content", () => {
+    // SAFETY: this exercises the finder beyond the non-empty transcript
+    // contract, where it must fail closed with no matches.
+    const emptyResponse = cast<unknown, Chat.TurnResponse>({
+      schemaVersion: 1,
+      session: { id: "chat:01", revision: "1" },
+      message: { role: "assistant", content: [] },
+    })
+
+    expect(Chat.findTurnParts(emptyResponse, Card)).toEqual([])
+  })
+
+  test("ignores text parts entirely", async () => {
+    const response = await Effect.runPromise(
+      Chat.notice({ text: "Nothing to decode here." }),
+    )
+
+    expect(Chat.findTurnParts(response, Card)).toEqual([])
   })
 })

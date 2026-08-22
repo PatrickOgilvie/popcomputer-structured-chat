@@ -1,19 +1,8 @@
+import { Answer, Chat, Question, Repair, Stage, Tool } from "../src/index.js"
+import { Chat as ChatTest } from "../src/testing.js"
+import * as Debug from "../src/debug.js"
 import { describe, expect, test } from "bun:test"
 import { cast, Effect, Result, Schema } from "effect"
-import {
-  Answer,
-  defineChat,
-  defineCommand,
-  defineTool,
-  Question,
-  Repair,
-  Stage,
-} from "../src/index.js"
-import {
-  inspectChatState,
-  InvalidChatDebugProjection,
-  type InspectChatStateOptions,
-} from "../src/core/debug.js"
 
 const LaunchDetails = Stage.collect({
   name: "launch_details",
@@ -45,7 +34,7 @@ const Approval = Stage.collect({
   },
 })
 
-const FinishDebug = defineTool({
+const FinishDebug = Tool.define({
   name: "finish_debug",
   description: "Finish the debug workflow.",
   input: Schema.Struct({}),
@@ -59,13 +48,13 @@ const Finish = Stage.tools({
   afterExecution: "complete",
 })
 
-const DebugChat = defineChat({
+const DebugChat = Chat.define({
   name: "debug_chat",
   version: 1,
   stages: [LaunchDetails, Approval, Finish],
 })
 
-type DebugChatState = Schema.Schema.Type<typeof DebugChat.stateSchema>
+type DebugChatState = Chat.State<typeof DebugChat>
 
 const accepted = <Value>(
   value: Value,
@@ -79,7 +68,7 @@ const accepted = <Value>(
 const launchDate = new Date("2026-08-17T12:00:00.000Z")
 
 const dateAcceptedState: DebugChatState = {
-  ...DebugChat.initialState,
+  ...ChatTest.initialState(DebugChat),
   stages: {
     launch_details: {
       accepted: {
@@ -96,12 +85,12 @@ const dateAcceptedState: DebugChatState = {
         },
       },
     },
-    approval: DebugChat.initialState.stages.approval,
+    approval: ChatTest.initialState(DebugChat).stages.approval,
   },
 }
 
 const launchDetailsCompleteState: DebugChatState = {
-  ...DebugChat.initialState,
+  ...ChatTest.initialState(DebugChat),
   stage: 1,
   stages: {
     launch_details: {
@@ -111,7 +100,7 @@ const launchDetailsCompleteState: DebugChatState = {
       },
       asked: {},
     },
-    approval: DebugChat.initialState.stages.approval,
+    approval: ChatTest.initialState(DebugChat).stages.approval,
   },
 }
 
@@ -135,10 +124,10 @@ const completeState: DebugChatState = {
   },
 }
 
-describe("inspectChatState", () => {
+describe("Debug.inspect", () => {
   test("projects initial stage, missing fields, labels, and tool metadata", async () => {
     const snapshot = await Effect.runPromise(
-      inspectChatState(DebugChat, DebugChat.initialState),
+      Debug.inspect(DebugChat, ChatTest.initialState(DebugChat)),
     )
 
     expect(snapshot).toMatchObject({
@@ -192,9 +181,9 @@ describe("inspectChatState", () => {
 
   test("distinguishes asked and accepted fields and encodes DateFromString", async () => {
     const askedState: DebugChatState = {
-      ...DebugChat.initialState,
+      ...ChatTest.initialState(DebugChat),
       stages: {
-        ...DebugChat.initialState.stages,
+        ...ChatTest.initialState(DebugChat).stages,
         launch_details: {
           accepted: {},
           asked: {
@@ -207,7 +196,7 @@ describe("inspectChatState", () => {
       },
     }
     const askedSnapshot = await Effect.runPromise(
-      inspectChatState(DebugChat, askedState),
+      Debug.inspect(DebugChat, askedState),
     )
     const askedStage = askedSnapshot.stages[0]
     if (askedStage?._tag !== "CollectStage") {
@@ -222,7 +211,7 @@ describe("inspectChatState", () => {
     })
 
     const acceptedSnapshot = await Effect.runPromise(
-      inspectChatState(DebugChat, dateAcceptedState),
+      Debug.inspect(DebugChat, dateAcceptedState),
     )
     const acceptedStage = acceptedSnapshot.stages[0]
     if (acceptedStage?._tag !== "CollectStage") {
@@ -245,7 +234,7 @@ describe("inspectChatState", () => {
 
   test("omits evidence while retaining accepted values and issued questions", async () => {
     const snapshot = await Effect.runPromise(
-      inspectChatState(DebugChat, dateAcceptedState, {
+      Debug.inspect(DebugChat, dateAcceptedState, {
         evidence: "omit",
       }),
     )
@@ -266,7 +255,7 @@ describe("inspectChatState", () => {
 
   test("projects current and completed stages positionally", async () => {
     const current = await Effect.runPromise(
-      inspectChatState(DebugChat, launchDetailsCompleteState),
+      Debug.inspect(DebugChat, launchDetailsCompleteState),
     )
     expect(current.currentStage).toEqual({
       index: 1,
@@ -280,7 +269,7 @@ describe("inspectChatState", () => {
     ])
 
     const complete = await Effect.runPromise(
-      inspectChatState(DebugChat, completeState),
+      Debug.inspect(DebugChat, completeState),
     )
     expect(complete.status).toBe("complete")
     expect(complete.currentStage).toEqual({
@@ -319,19 +308,17 @@ describe("inspectChatState", () => {
       instructions: ["Repeat safely."],
       tools: [FinishDebug],
     })
-    const RepairChat = defineChat({
+    const RepairChat = Chat.define({
       name: "repair_debug_chat",
       version: 1,
       stages: [RepairFirst, RepairSecond, Repeat],
       repair: Repair.standard(),
     })
-    type RepairChatState = Schema.Schema.Type<
-      typeof RepairChat.stateSchema
-    >
+    type RepairChatState = Chat.State<typeof RepairChat>
     const repairState: RepairChatState = {
-      ...RepairChat.initialState,
+      ...ChatTest.initialState(RepairChat),
       stages: {
-        repair_first: RepairChat.initialState.stages.repair_first,
+        repair_first: ChatTest.initialState(RepairChat).stages.repair_first,
         repair_second: {
           accepted: {
             second: accepted("already known"),
@@ -343,7 +330,7 @@ describe("inspectChatState", () => {
     }
 
     const snapshot = await Effect.runPromise(
-      inspectChatState(RepairChat, repairState),
+      Debug.inspect(RepairChat, repairState),
     )
     expect(snapshot.stages).toMatchObject([
       {
@@ -366,7 +353,7 @@ describe("inspectChatState", () => {
   })
 
   test("projects terminal command metadata", async () => {
-    const Submit = defineCommand({
+    const Submit = Tool.command({
       name: "submit_debug",
       description: "Submit the debug request once.",
       input: Schema.Struct({}),
@@ -377,14 +364,14 @@ describe("inspectChatState", () => {
       instructions: ["Submit once."],
       command: Submit,
     })
-    const CommandChat = defineChat({
+    const CommandChat = Chat.define({
       name: "command_debug_chat",
       version: 1,
       stages: [Submission],
     })
 
     const snapshot = await Effect.runPromise(
-      inspectChatState(CommandChat, CommandChat.initialState),
+      Debug.inspect(CommandChat, ChatTest.initialState(CommandChat)),
     )
     expect(snapshot.currentStage.kind).toBe("command")
     expect(snapshot.stages).toEqual([
@@ -409,16 +396,14 @@ describe("inspectChatState", () => {
         }),
       },
     })
-    const BigIntChat = defineChat({
+    const BigIntChat = Chat.define({
       name: "bigint_debug_chat",
       version: 1,
       stages: [BigIntDetails, Finish],
     })
-    type BigIntChatState = Schema.Schema.Type<
-      typeof BigIntChat.stateSchema
-    >
+    type BigIntChatState = Chat.State<typeof BigIntChat>
     const bigintState: BigIntChatState = {
-      ...BigIntChat.initialState,
+      ...ChatTest.initialState(BigIntChat),
       stage: 1,
       stages: {
         bigint_details: {
@@ -428,12 +413,12 @@ describe("inspectChatState", () => {
       },
     }
     const invalidValue = await Effect.runPromise(
-      Effect.result(inspectChatState(BigIntChat, bigintState)),
+      Effect.result(Debug.inspect(BigIntChat, bigintState)),
     )
     expect(Result.isFailure(invalidValue)).toBe(true)
     if (Result.isFailure(invalidValue)) {
       expect(invalidValue.failure).toBeInstanceOf(
-        InvalidChatDebugProjection,
+        Debug.InvalidProjection,
       )
       expect(invalidValue.failure.reason).toBe("invalid_answer_value")
     }
@@ -442,13 +427,13 @@ describe("inspectChatState", () => {
     // prove the runtime schema rejects excess properties.
     const invalidOptions = cast<
       { readonly evidence: "include"; readonly extra: boolean },
-      InspectChatStateOptions
+      Debug.InspectOptions
     >({ evidence: "include", extra: true })
     const invalidOptionResult = await Effect.runPromise(
       Effect.result(
-        inspectChatState(
+        Debug.inspect(
           DebugChat,
-          DebugChat.initialState,
+          ChatTest.initialState(DebugChat),
           invalidOptions,
         ),
       ),

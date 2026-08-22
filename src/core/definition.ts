@@ -1,5 +1,6 @@
 /** Package-owned kinds for executable structured-chat definitions. */
 export type StructuredDefinitionKind =
+  | "chat"
   | "tool"
   | "collect_stage"
   | "tool_stage"

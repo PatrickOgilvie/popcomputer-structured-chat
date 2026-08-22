@@ -1,13 +1,7 @@
+import { Answer, Chat, Question, Stage, Tool } from "@popcomputer/structured-chat"
 import { Effect, Schema } from "effect"
-import {
-  Answer,
-  defineChat,
-  defineTool,
-  Question,
-  Stage,
-} from "@popcomputer/structured-chat"
 
-const SearchCatalog = defineTool({
+const SearchCatalog = Tool.define({
   name: "search_catalog",
   description: "Search the catalog for relevant resources.",
   input: Schema.Struct({
@@ -63,7 +57,7 @@ const RequestDetails = Stage.collect({
 })
 
 /** A required ask-then-answer workflow before catalog search. */
-export const GuidedResourceFinder = defineChat({
+export const GuidedResourceFinder = Chat.define({
   name: "guided_resource_finder",
   version: 1,
   stages: [RequestDetails, Search],
@@ -89,14 +83,14 @@ const RequestUnderstanding = Stage.collect({
 })
 
 /** A chat that can infer a searchable intent from the opening request. */
-export const FreeformResourceFinder = defineChat({
+export const FreeformResourceFinder = Chat.define({
   name: "freeform_resource_finder",
   version: 1,
   stages: [RequestUnderstanding, Search],
 })
 
 /** A chat whose catalog search tool is available on the opening turn. */
-export const OpenResourceSearch = defineChat({
+export const OpenResourceSearch = Chat.define({
   name: "open_resource_search",
   version: 1,
   stages: [Search],

@@ -1,13 +1,8 @@
+import { Answer, Chat, Question, Stage, Tool } from "../src/index.js"
+import * as Debug from "../src/debug.js"
+import { Chat as ChatTest } from "../src/testing.js"
 import { describe, expect, test } from "bun:test"
 import { Effect, Schema } from "effect"
-import {
-  Answer,
-  defineChat,
-  defineTool,
-  presentChatDebugReply,
-  Question,
-  Stage,
-} from "../src/index.js"
 
 const DebugBrief = Stage.collect({
   name: "debug_brief",
@@ -19,7 +14,7 @@ const DebugBrief = Stage.collect({
   },
 })
 
-const DebugSearch = defineTool({
+const DebugSearch = Tool.define({
   name: "debug_search",
   description: "Search using the completed debug brief.",
   input: Schema.Struct({ topic: Schema.String }),
@@ -32,22 +27,22 @@ const DebugResult = Stage.tools({
   tools: [DebugSearch],
 })
 
-const DebugChat = defineChat({
+const DebugChat = Chat.define({
   name: "debug_chat",
   version: 1,
   stages: [DebugBrief, DebugResult],
 })
 
-describe("presentChatDebugReply", () => {
+describe("Debug.present", () => {
   test("adds the safe state projection to an ordinary presented reply", async () => {
     const response = await Effect.runPromise(
-      presentChatDebugReply(DebugChat, {
+      Debug.present(DebugChat, {
         sessionId: "debug:01",
         revision: "1",
         turn: {
           _tag: "Question",
           stage: "debug_brief",
-          state: DebugChat.initialState,
+          state: ChatTest.initialState(DebugChat),
           question: {
             field: "topic",
             mode: "semantic",

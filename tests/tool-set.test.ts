@@ -1,30 +1,24 @@
+import { Tool } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
 import { Effect, Result, Schema } from "effect"
-import {
-  defineTool,
-  defineToolSet,
-  InvalidToolCall,
-  InvalidToolProjection,
-  Tool,
-} from "../src/index.js"
 
-const Search = defineTool({
+const Search = Tool.define({
   name: "search",
   description: "Search the catalogue.",
   input: Schema.Struct({ query: Schema.String }),
   execute: ({ query }) => Effect.succeed({ query }),
 })
 
-const Delete = defineTool({
+const Delete = Tool.define({
   name: "delete",
   description: "Delete a catalogue item.",
   input: Schema.Struct({ id: Schema.String }),
   execute: ({ id }) => Effect.succeed({ id }),
 })
 
-describe("defineToolSet", () => {
+describe("Tool.set", () => {
   test("classifies envelope, name, and argument failures without sentinels", async () => {
-    const tools = defineToolSet(Search)
+    const tools = Tool.set(Search)
     const [envelope, name, arguments_] = await Effect.runPromise(
       Effect.all([
         Effect.result(tools.parseCall({ arguments: {} })),
@@ -64,7 +58,7 @@ describe("defineToolSet", () => {
   })
 
   test("preserves projection failures in its runtime contract", async () => {
-    const InvalidProjection = defineTool({
+    const InvalidProjection = Tool.define({
       name: "invalid_projection",
       description: "Return one invalid projection.",
       input: Schema.Struct({}),
@@ -73,13 +67,13 @@ describe("defineToolSet", () => {
       Tool.modelResult(
         Schema.Struct({ value: Schema.String }),
         // SAFETY: Deliberately violate the projector type to prove the public
-        // ToolSet error channel retains InvalidToolProjection.
+        // ToolSet error channel retains Tool.InvalidProjection.
         () => ({ value: 42 }) as never,
       ),
     )
     const result = await Effect.runPromise(
       Effect.result(
-        defineToolSet(InvalidProjection).executeCall({
+        Tool.set(InvalidProjection).executeCall({
           name: "invalid_projection",
           arguments: {},
         }),
@@ -88,12 +82,12 @@ describe("defineToolSet", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidToolProjection)
+      expect(result.failure).toBeInstanceOf(Tool.InvalidProjection)
     }
   })
 
   test("advertises and executes only registered tools", async () => {
-    const tools = defineToolSet(Search)
+    const tools = Tool.set(Search)
     const execution = await Effect.runPromise(
       tools.executeCall({
         name: "search",
@@ -107,7 +101,7 @@ describe("defineToolSet", () => {
   })
 
   test("rejects a valid tool that is outside the current set", async () => {
-    const tools = defineToolSet(Search)
+    const tools = Tool.set(Search)
     const result = await Effect.runPromise(
       Effect.result(
         tools.executeCall({
@@ -119,12 +113,12 @@ describe("defineToolSet", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidToolCall)
+      expect(result.failure).toBeInstanceOf(Tool.InvalidCall)
     }
   })
 
   test("rejects duplicate names at definition time", () => {
-    expect(() => defineToolSet(Search, Search)).toThrow(
+    expect(() => Tool.set(Search, Search)).toThrow(
       "Duplicate structured chat tool name: search",
     )
   })

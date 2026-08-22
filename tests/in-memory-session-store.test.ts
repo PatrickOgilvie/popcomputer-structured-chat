@@ -1,11 +1,6 @@
+import { Session } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
 import { Effect, Result, Schema } from "effect"
-import {
-  ChatSessionConflict,
-  ChatSessionSnapshotSchema,
-  ChatSessionStore,
-  type ReplaceChatSessionInput,
-} from "../src/index.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"
 
 const scope = {
@@ -18,7 +13,7 @@ const scope = {
 const replacement = (
   expectedRevision: string | null,
   writer: string,
-): ReplaceChatSessionInput => ({
+): Session.ReplaceInput => ({
   ...scope,
   expectedRevision,
   state: { writer },
@@ -29,7 +24,7 @@ describe("inMemoryChatSessionStore", () => {
   test("atomically accepts one of two competing replacements", async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const store = yield* ChatSessionStore
+        const store = yield* Session.Store
         yield* store.replace(replacement(null, "initial"))
 
         const attempts = yield* Effect.all(
@@ -51,10 +46,10 @@ describe("inMemoryChatSessionStore", () => {
     const conflicts = result.attempts.filter(Result.isFailure)
     expect(winners).toHaveLength(1)
     expect(conflicts).toHaveLength(1)
-    expect(conflicts[0]?.failure).toBeInstanceOf(ChatSessionConflict)
+    expect(conflicts[0]?.failure).toBeInstanceOf(Session.Conflict)
 
     const snapshot = Schema.decodeUnknownSync(
-      ChatSessionSnapshotSchema,
+      Session.SnapshotSchema,
     )(result.loaded)
     expect(snapshot.revision).toBe("2")
     expect(snapshot.state).toEqual({ writer: winners[0]?.success })

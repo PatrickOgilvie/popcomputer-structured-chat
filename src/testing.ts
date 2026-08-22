@@ -12,6 +12,9 @@ export type {
 
 export { inMemoryChatSessionStore } from "./testing/in-memory-session-store.js"
 
+/** Specialist checked chat runtime for tests. */
+export * as Chat from "./testing/chat.js"
+
 export {
   Scenario,
   type ScenarioQuote,

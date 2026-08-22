@@ -1,36 +1,7 @@
+import { Answer, Chat, Model, Question, Repair, Stage, Tool, View } from "../src/index.js"
+import * as OpenAI from "../src/model/openai-compatible.js"
+import { Chat as ChatTest } from "../src/testing.js"
 import { Context, Effect, Schema } from "effect"
-import {
-  Answer,
-  AnswerValidationRejected,
-  defineChat,
-  defineCommand,
-  defineTool,
-  defineModelGuard,
-  defineToolSet,
-  ChatModelUnavailable,
-  CommandIdSchema,
-  InvalidToolCall,
-  InvalidToolProjection,
-  Instruction,
-  Message,
-  ModelProvider,
-  presentAnswerValidationRejection,
-  Question,
-  Repair,
-  runToolStep,
-  Stage,
-  StructuredChatModel,
-  structuredChatModelLayer,
-  UnsupportedModelToolSchema,
-  defineView,
-  Tool,
-  type AcceptedAnswer,
-  type ToolExecution,
-  type CollectAnswers,
-  type CollectStagePrompt,
-  type StructuredChatSessionReference,
-  type ViewPart,
-} from "../src/index.js"
 import { Scenario } from "../src/testing.js"
 
 class Dependency extends Context.Service<
@@ -58,7 +29,7 @@ class QueryPolicy extends Context.Service<
   { readonly validate: (query: string) => Effect.Effect<void, InvalidQuery> }
 >()("QueryPolicy") {}
 
-const Card = defineView({
+const Card = View.define({
   name: "card",
   version: 1,
   schema: Schema.Struct({ value: Schema.String }),
@@ -117,7 +88,7 @@ const assertEscapeValueTypes = (): void => {
     escape: { value: 42 },
   })
 }
-const _answers: CollectAnswers<typeof typedBrief.fields> = {
+const _answers: Stage.Answers<typeof typedBrief.fields> = {
   query: "public sector",
 }
 const assertScenarioTypes = (): void => {
@@ -133,7 +104,7 @@ const assertScenarioTypes = (): void => {
   Scenario.reconfirm(typedBrief, "query", { quote: "changed" })
 }
 
-const tool = defineTool({
+const tool = Tool.define({
   name: "typed_tool",
   description: "Verify inferred types.",
   input: Schema.Struct({ query: Schema.String }),
@@ -154,7 +125,7 @@ const tool = defineTool({
 )
 
 const execution = tool.execute({ query: "test" })
-const toolSet = defineToolSet(tool)
+const toolSet = Tool.set(tool)
 const setExecution = toolSet.executeCall({
   name: "typed_tool",
   arguments: { query: "test" },
@@ -163,7 +134,7 @@ const parsedSetExecution = toolSet.execute({
   name: "typed_tool",
   arguments: { query: "test" },
 })
-const guard = defineModelGuard({
+const guard = Model.guard({
   name: "safety_policy",
   check: ({ messages }) =>
     SafetyPolicy.pipe(
@@ -176,9 +147,9 @@ const guard = defineModelGuard({
       Effect.flatMap((policy) => policy.check(call.name)),
     ),
 })
-const guardedExecution = runToolStep({
-  instructions: [Instruction.make("Use one tool.")],
-  messages: [Message.user("Find a match")],
+const guardedExecution = Model.runToolStep({
+  instructions: [Model.Instruction.make("Use one tool.")],
+  messages: [Model.Message.user("Find a match")],
   tools: toolSet,
   guards: [guard],
 })
@@ -188,7 +159,7 @@ const matching = Stage.tools({
   tools: [tool],
   guards: [guard],
 })
-const command = defineCommand({
+const command = Tool.command({
   name: "typed_command",
   description: "Perform one typed write.",
   input: Schema.Struct({ query: Schema.String }),
@@ -213,37 +184,39 @@ const assertCommandBoundaries = (): void => {
   command.execute({ query: "test" })
 }
 const commandExecution = commandStage.run(
-  [Message.user("Perform the write")],
+  [Model.Message.user("Perform the write")],
   {
-    commandId: Schema.decodeSync(CommandIdSchema)(
+    commandId: Schema.decodeSync(Tool.CommandIdSchema)(
       `cmd_${"a".repeat(64)}`,
     ),
   },
 )
-defineChat({
+Chat.define({
   name: "typed_command_chat",
   version: 1,
   stages: [typedBrief, commandStage],
 })
-const stageExecution = matching.run([Message.user("Find a match")])
+const stageExecution = matching.run([Model.Message.user("Find a match")])
 const validatedExecution = validatedBrief.run({
   state: validatedBrief.initialState,
-  messages: [Message.user("Find public services")],
+  messages: [Model.Message.user("Find public services")],
 })
-const typedChat = defineChat({
+const typedChat = Chat.define({
   name: "typed_chat",
   version: 1,
   stages: [typedBrief, matching],
 })
+// @ts-expect-error compiled runtime operations stay behind Chat.turn
+void typedChat.reply
 const _assertOptionalBoundaryInputs = (
-  session: StructuredChatSessionReference | undefined,
+  session: Chat.SessionReference | undefined,
 ): void => {
-  void typedChat.reply({
+  void Chat.turn(typedChat, {
     sessionId: "typed-session",
     expectedRevision: session?.revision,
     message: "Find a match",
   })
-  void presentAnswerValidationRejection({
+  void Chat.presentValidationRejection({
     rejection: {
       stage: "brief",
       question: {
@@ -255,13 +228,19 @@ const _assertOptionalBoundaryInputs = (
     session,
   })
 }
-const acceptedQuery = typedChat.getAcceptedAnswer(
-  typedChat.initialState,
+const acceptedQuery = Chat.acceptedAnswer(
+  typedChat,
+  ChatTest.initialState(typedChat),
   typedBrief,
   "query",
 )
-// @ts-expect-error fields are restricted to the selected collect stage
-typedChat.getAcceptedAnswer(typedChat.initialState, typedBrief, "missing")
+Chat.acceptedAnswer(
+  typedChat,
+  ChatTest.initialState(typedChat),
+  typedBrief,
+  // @ts-expect-error fields are restricted to the selected collect stage
+  "missing",
+)
 
 const assertDefinitionAuthenticity = (): void => {
   const forgedTool = {
@@ -271,8 +250,8 @@ const assertDefinitionAuthenticity = (): void => {
     inputSchema: Schema.String,
   } as const
 
-  // @ts-expect-error executable tools must be created by defineTool
-  defineToolSet(forgedTool)
+  // @ts-expect-error executable tools must be created by Tool.define
+  Tool.set(forgedTool)
 
   const forgedGuard = {
     _tag: "ModelGuard",
@@ -283,7 +262,7 @@ const assertDefinitionAuthenticity = (): void => {
     name: "forged_guard_stage",
     instructions: ["Use one tool."],
     tools: [tool],
-    // @ts-expect-error model guards must be created by defineModelGuard
+    // @ts-expect-error model guards must be created by Model.guard
     guards: [forgedGuard],
   })
 
@@ -292,14 +271,14 @@ const assertDefinitionAuthenticity = (): void => {
     name: "forged_stage",
   } as const
 
-  defineChat({
+  Chat.define({
     name: "forged_chat",
     version: 1,
     // @ts-expect-error chat stages must be created by Stage constructors
     stages: [forgedStage],
   })
 
-  defineChat({
+  Chat.define({
     name: "forged_repair_chat",
     version: 1,
     stages: [typedBrief, matching],
@@ -308,7 +287,7 @@ const assertDefinitionAuthenticity = (): void => {
   })
 }
 
-const cloudflareProvider = ModelProvider.cloudflareWorkersAI({
+const cloudflareProvider = OpenAI.Provider.cloudflareWorkersAI({
   model: "@cf/example/model",
   complete: () => Promise.resolve({}),
 })
@@ -319,8 +298,8 @@ const assertProviderAuthenticity = (): void => {
     model: cloudflareProvider.model,
   }
 
-  structuredChatModelLayer({
-    // @ts-expect-error provider policy must come from a ModelProvider constructor
+  OpenAI.layer({
+    // @ts-expect-error provider policy must come from a OpenAI.Provider constructor
     provider: forgedProvider,
     timeoutMilliseconds: 1_000,
   })
@@ -328,8 +307,16 @@ const assertProviderAuthenticity = (): void => {
 
 const typedRepair = Repair.standard({ maximumCorrections: 3 })
 
+type TypedChatReply = Chat.Reply<typeof typedChat>
+
+const _assertPresentChatReplyAcceptsReplyDirectly = (
+  reply: TypedChatReply,
+): void => {
+  void Chat.presentReply(reply)
+}
+
 const _effect: Effect.Effect<
-  ToolExecution<
+  Tool.Execution<
     { readonly value: string },
     Schema.Struct<{ readonly summary: typeof Schema.String }>,
     readonly [
@@ -341,7 +328,7 @@ const _effect: Effect.Effect<
       },
     ]
   >,
-  DomainError | import("../src/index.js").InvalidToolProjection,
+  DomainError | import("../src/index.js").Tool.InvalidProjection,
   Dependency
 > = execution
 
@@ -357,21 +344,21 @@ type Equal<Left, Right> =
 type Expect<Value extends true> = Value
 
 type _AcceptedAnswerIsExact = Expect<
-  Equal<typeof acceptedQuery, AcceptedAnswer<string> | undefined>
+  Equal<typeof acceptedQuery, Stage.AcceptedAnswer<string> | undefined>
 >
 
 type ValidatedPrompt = Extract<
-  CollectStagePrompt<typeof validatedBrief.fields>,
+  Stage.Prompt<typeof validatedBrief.fields>,
   { readonly field: "query" }
 >
 
 type ExpectedValidationError =
-  | ChatModelUnavailable
-  | UnsupportedModelToolSchema
-  | InvalidToolCall
-  | InvalidToolProjection
-  | import("../src/index.js").InvalidCollectStageResponse
-  | AnswerValidationRejected<InvalidQuery, ValidatedPrompt>
+  | Model.Unavailable
+  | Model.UnsupportedToolSchema
+  | Tool.InvalidCall
+  | Tool.InvalidProjection
+  | import("../src/index.js").Stage.InvalidResponse
+  | Stage.AnswerValidationRejected<InvalidQuery, ValidatedPrompt>
 
 type _ValidationErrorIsExact = Expect<
   Equal<
@@ -383,15 +370,15 @@ type _ValidationErrorIsExact = Expect<
 type _ValidationRequirementsAreExact = Expect<
   Equal<
     Effect.Services<typeof validatedExecution>,
-    StructuredChatModel | QueryPolicy
+    Model.Service | QueryPolicy
   >
 >
 
 type ExpectedCommandError =
-  | ChatModelUnavailable
-  | UnsupportedModelToolSchema
-  | InvalidToolCall
-  | InvalidToolProjection
+  | Model.Unavailable
+  | Model.UnsupportedToolSchema
+  | Tool.InvalidCall
+  | Tool.InvalidProjection
   | DomainError
 
 type _CommandErrorIsExact = Expect<
@@ -401,14 +388,14 @@ type _CommandErrorIsExact = Expect<
 type _CommandRequirementsAreExact = Expect<
   Equal<
     Effect.Services<typeof commandExecution>,
-    StructuredChatModel | Dependency
+    Model.Service | Dependency
   >
 >
 
 type ExpectedToolSetError =
   | DomainError
-  | InvalidToolCall
-  | InvalidToolProjection
+  | Tool.InvalidCall
+  | Tool.InvalidProjection
 
 type _ToolSetErrorIsExact = Expect<
   Equal<Effect.Error<typeof setExecution>, ExpectedToolSetError>
@@ -425,17 +412,17 @@ const _parsedSetEffect: typeof _setEffect = parsedSetExecution
 const _guardedEffect: Effect.Effect<
   Effect.Success<typeof setExecution>,
   | Effect.Error<typeof setExecution>
-  | ChatModelUnavailable
-  | UnsupportedModelToolSchema
+  | Model.Unavailable
+  | Model.UnsupportedToolSchema
   | DomainError,
   | Effect.Services<typeof setExecution>
-  | StructuredChatModel
+  | Model.Service
   | SafetyPolicy
 > = guardedExecution
 
 const _stageEffect: typeof guardedExecution = stageExecution
 
-const _part: ViewPart<typeof Card> = Card.make({ value: "safe" })
+const _part: View.Part<typeof Card> = Card.make({ value: "safe" })
 
 void _effect
 void _setEffect
@@ -453,3 +440,4 @@ void acceptedQuery
 void typedRepair
 void assertDefinitionAuthenticity
 void assertProviderAuthenticity
+void _assertPresentChatReplyAcceptsReplyDirectly

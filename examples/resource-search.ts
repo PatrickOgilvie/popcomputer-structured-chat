@@ -1,16 +1,10 @@
+import { Model, Stage, Tool, View } from "@popcomputer/structured-chat"
 import {
   Context,
   Effect,
   Layer,
   Schema,
 } from "effect"
-import {
-  defineTool,
-  defineView,
-  Message,
-  Stage,
-  Tool,
-} from "@popcomputer/structured-chat"
 
 interface ResourceMatch {
   readonly id: string
@@ -29,7 +23,7 @@ class ResourceCatalog extends Context.Service<
   }
 >()("ResourceCatalog") {}
 
-const ResultCards = defineView({
+const ResultCards = View.define({
   name: "result_cards",
   version: 1,
   schema: Schema.Struct({
@@ -52,7 +46,7 @@ const ResourceEvidence = Schema.Struct({
   ),
 })
 
-export const FindResources = defineTool({
+export const FindResources = Tool.define({
   name: "find_resources",
   description: "Find resources relevant to the request.",
   input: Schema.Struct({
@@ -100,5 +94,5 @@ export const example = FindResources.execute({
 }).pipe(Effect.provide(ResourceCatalogLive))
 
 export const stageExample = Lookup.run([
-  Message.user("We need a practical onboarding guide."),
+  Model.Message.user("We need a practical onboarding guide."),
 ])

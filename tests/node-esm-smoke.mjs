@@ -1,11 +1,4 @@
-import {
-  ChatSessionStore,
-  defineTool,
-  defineView,
-  Message,
-  Stage,
-  Tool,
-} from "@popcomputer/structured-chat"
+import { Model, Session, Stage, Tool, View } from "@popcomputer/structured-chat"
 import {
   inMemoryChatSessionStore,
   Scenario,
@@ -18,15 +11,19 @@ import {
   createStructuredChatDebugStore,
   StructuredChatDebugPanel,
 } from "@popcomputer/structured-chat/assistant-ui/debug"
+import {
+  cleanupExpiredD1ChatSessions,
+  makeD1ChatSessionStore,
+} from "@popcomputer/structured-chat/d1"
 import { Effect, Schema } from "effect"
 
-const ResultView = defineView({
+const ResultView = View.define({
   name: "result",
   version: 1,
   schema: Schema.Struct({ value: Schema.String }),
 })
 
-const tool = defineTool({
+const tool = Tool.define({
   name: "echo",
   description: "Echo one value.",
   input: Schema.Struct({ value: Schema.String }),
@@ -45,7 +42,7 @@ const EchoStage = Stage.tools({
   tools: [tool],
 })
 const planned = await Effect.runPromise(
-  EchoStage.plan([Message.user("Echo a scripted value.")]).pipe(
+  EchoStage.plan([Model.Message.user("Echo a scripted value.")]).pipe(
     Effect.provide(
       Scenario.model(Scenario.call(tool, { value: "scripted" })),
     ),
@@ -58,7 +55,7 @@ if (planned.arguments.value !== "scripted") {
 
 const stored = await Effect.runPromise(
   Effect.gen(function* () {
-    const store = yield* ChatSessionStore
+    const store = yield* Session.Store
     yield* store.replace({
       namespace: "node-smoke",
       sessionId: "session-1",
@@ -79,6 +76,91 @@ const stored = await Effect.runPromise(
 
 if (stored?.revision !== "1") {
   throw new Error("Testing session store smoke test failed")
+}
+
+if (!makeD1ChatSessionStore || !cleanupExpiredD1ChatSessions) {
+  throw new Error("./d1 entry point smoke test failed")
+}
+
+// node:sqlite is available unflagged from Node 23.4; exercise the built D1
+// adapter against a real SQL engine when the runtime provides it.
+try {
+  const { DatabaseSync } = await import("node:sqlite")
+  const sqlite = new DatabaseSync(":memory:")
+  sqlite.exec(`
+    CREATE TABLE structured_chat_sessions (
+      namespace TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      chat TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      state TEXT NOT NULL,
+      messages TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (namespace, session_id, chat, version)
+    )
+  `)
+  const d1Store = makeD1ChatSessionStore({
+    prepare: (query) => {
+      const statement = sqlite.prepare(query)
+      let values = []
+      const bind = (...next) => {
+        values = next
+        return { bind, first: async () => statement.get(...values) ?? null, run: async () => ({ meta: { changes: statement.run(...values).changes } }) }
+      }
+      return bind()
+    },
+  })
+  const d1Stored = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* d1Store.replace({
+        namespace: "node-smoke",
+        sessionId: "session-1",
+        chat: "node_smoke",
+        version: 1,
+        expectedRevision: null,
+        state: { status: "ready" },
+        messages: [],
+      })
+      return yield* d1Store.load({
+        namespace: "node-smoke",
+        sessionId: "session-1",
+        chat: "node_smoke",
+        version: 1,
+      })
+    }),
+  )
+  if (d1Stored?.revision !== "1") {
+    throw new Error("./d1 entry point smoke test failed")
+  }
+  const removed = await Effect.runPromise(
+    cleanupExpiredD1ChatSessions(
+      {
+        prepare: (query) => {
+          const statement = sqlite.prepare(query)
+          let values = []
+          const bind = (...next) => {
+            values = next
+            return { bind, first: async () => statement.get(...values) ?? null, run: async () => ({ meta: { changes: statement.run(...values).changes } }) }
+          }
+          return bind()
+        },
+      },
+      { expiringNamespacePrefixes: ["other:"], retentionMillis: 60_000 },
+    ),
+  )
+  if (removed !== 0) {
+    throw new Error("./d1 entry point smoke test failed")
+  }
+} catch (error) {
+  if (
+    error?.code === "ERR_UNKNOWN_FILE_EXTENSION" ||
+    String(error).includes("node:sqlite")
+  ) {
+    // Runtime without a usable node:sqlite; the type checks above still ran.
+  } else {
+    throw error
+  }
 }
 
 const ResultUI = makeAssistantView(ResultView, {

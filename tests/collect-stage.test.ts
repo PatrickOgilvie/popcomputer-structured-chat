@@ -1,3 +1,4 @@
+import { Answer, Model, Question, Stage } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
 import {
   Context,
@@ -7,16 +8,6 @@ import {
   Result,
   Schema,
 } from "effect"
-import {
-  Answer,
-  AnswerValidationRejected,
-  InvalidCollectStageResponse,
-  Message,
-  Question,
-  Stage,
-  StructuredChatModel,
-  type CollectAnswers,
-} from "../src/index.js"
 
 const accepted = <Value>(
   value: Value,
@@ -215,7 +206,7 @@ describe("Stage.collect", () => {
         }),
       },
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -234,7 +225,7 @@ describe("Stage.collect", () => {
       Effect.result(
         Ordered.run({
           state: Ordered.initialState,
-          messages: [Message.user("one then two")],
+          messages: [Model.Message.user("one then two")],
         }).pipe(Effect.provide(model)),
       ),
     )
@@ -242,15 +233,15 @@ describe("Stage.collect", () => {
     expect(Result.isFailure(result)).toBe(true)
     expect(order).toEqual(["first"])
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(AnswerValidationRejected)
-      if (result.failure instanceof AnswerValidationRejected) {
+      expect(result.failure).toBeInstanceOf(Stage.AnswerValidationRejected)
+      if (result.failure instanceof Stage.AnswerValidationRejected) {
         expect(result.failure.field).toBe("first")
       }
     }
   })
 
   test("returns a typed domain rejection with a deterministic retry question", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -272,15 +263,15 @@ describe("Stage.collect", () => {
       Effect.result(
         BudgetBrief.run({
           state: BudgetBrief.initialState,
-          messages: [Message.user("We can spend £2,000.")],
+          messages: [Model.Message.user("We can spend £2,000.")],
         }).pipe(Effect.provide(Layer.merge(model, policy))),
       ),
     )
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(AnswerValidationRejected)
-      if (result.failure instanceof AnswerValidationRejected) {
+      expect(result.failure).toBeInstanceOf(Stage.AnswerValidationRejected)
+      if (result.failure instanceof Stage.AnswerValidationRejected) {
         expect(result.failure.stage).toBe("budget_brief")
         expect(result.failure.field).toBe("budget")
         expect(result.failure.error).toBeInstanceOf(BudgetTooLow)
@@ -295,7 +286,7 @@ describe("Stage.collect", () => {
   })
 
   test("persists provenance only after domain validation succeeds", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -316,7 +307,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       BudgetBrief.run({
         state: BudgetBrief.initialState,
-        messages: [Message.user("We can spend £6,000.")],
+        messages: [Model.Message.user("We can spend £6,000.")],
       }).pipe(Effect.provide(Layer.merge(model, policy))),
     )
 
@@ -340,7 +331,7 @@ describe("Stage.collect", () => {
         localOnly: { messageIndex: 1, text: "Only show local firms?" },
       },
     }
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -364,11 +355,11 @@ describe("Stage.collect", () => {
       Brief.run({
         state,
         messages: [
-          Message.user(
+          Model.Message.user(
             "We need a public service website in Leeds. No, search anywhere.",
           ),
-          Message.assistant("Only show local firms?"),
-          Message.user("What are my options?"),
+          Model.Message.assistant("Only show local firms?"),
+          Model.Message.user("What are my options?"),
         ],
       }).pipe(Effect.provide(model)),
     )
@@ -383,7 +374,7 @@ describe("Stage.collect", () => {
   })
 
   test("routes adaptive wording to the server-owned pending field", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -401,7 +392,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       MultiAdaptiveBrief.run({
         state: MultiAdaptiveBrief.initialState,
-        messages: [Message.user("I need some help.")],
+        messages: [Model.Message.user("I need some help.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -414,7 +405,7 @@ describe("Stage.collect", () => {
   })
 
   test("discards adaptive wording attributed to the wrong field", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -434,7 +425,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       MultiAdaptiveBrief.run({
         state: MultiAdaptiveBrief.initialState,
-        messages: [Message.user("We need a public service website.")],
+        messages: [Model.Message.user("We need a public service website.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -454,7 +445,7 @@ describe("Stage.collect", () => {
   })
 
   test("presents the authored fallback text when the model omits adaptive wording", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -468,7 +459,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       MultiAdaptiveBrief.run({
         state: MultiAdaptiveBrief.initialState,
-        messages: [Message.user("I need some help.")],
+        messages: [Model.Message.user("I need some help.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -481,7 +472,7 @@ describe("Stage.collect", () => {
   })
 
   test("derives complete typed answers from one field definition", () => {
-    const answers: CollectAnswers<typeof Brief.fields> = {
+    const answers: Stage.Answers<typeof Brief.fields> = {
       project: "A public service website",
       location: "Leeds",
       localOnly: false,
@@ -607,7 +598,7 @@ describe("Stage.collect", () => {
 
   test("rejects an issued question that is not grounded in assistant history", async () => {
     let modelCalls = 0
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.sync(() => {
           modelCalls += 1
@@ -633,14 +624,14 @@ describe("Stage.collect", () => {
               },
             },
           },
-          messages: [Message.user("We need an agency partner.")],
+          messages: [Model.Message.user("We need an agency partner.")],
         }).pipe(Effect.provide(model)),
       ),
     )
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidCollectStageResponse)
+      expect(result.failure).toBeInstanceOf(Stage.InvalidResponse)
     }
     expect(modelCalls).toBe(0)
   })
@@ -675,7 +666,7 @@ describe("Stage.collect", () => {
         ),
       },
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -696,7 +687,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       BoundedBrief.run({
         state: BoundedBrief.initialState,
-        messages: [Message.user("We need an agency partner.")],
+        messages: [Model.Message.user("We need an agency partner.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -725,7 +716,7 @@ describe("Stage.collect", () => {
   })
 
   test("accepts grounded facts but cannot skip an unasked confirmation", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: (request) => {
         expect(request.tools.map(({ name }) => name)).toEqual([
           "submit_answers",
@@ -762,7 +753,7 @@ describe("Stage.collect", () => {
       Brief.run({
         state: Brief.initialState,
         messages: [
-          Message.user(
+          Model.Message.user(
             "We are in Leeds and need a public service website.",
           ),
         ],
@@ -793,7 +784,7 @@ describe("Stage.collect", () => {
   })
 
   test("completes only after the issued confirmation is grounded", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -832,11 +823,11 @@ describe("Stage.collect", () => {
           },
         },
         messages: [
-          Message.user(
+          Model.Message.user(
             "We are in Leeds and need a public service website.",
           ),
-          Message.assistant("Only show local firms?"),
-          Message.user("No, search anywhere."),
+          Model.Message.assistant("Only show local firms?"),
+          Model.Message.user("No, search anywhere."),
         ],
       }).pipe(Effect.provide(model)),
     )
@@ -849,7 +840,7 @@ describe("Stage.collect", () => {
   })
 
   test("re-asks the trusted question when evidence is not an exact user-message quote", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -872,7 +863,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       Brief.run({
         state: Brief.initialState,
-        messages: [Message.user("We need a public service website.")],
+        messages: [Model.Message.user("We need a public service website.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -882,7 +873,7 @@ describe("Stage.collect", () => {
   })
 
   test("uses model wording only for an adaptive question", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -904,7 +895,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       Brief.run({
         state: Brief.initialState,
-        messages: [Message.user("We would like some help.")],
+        messages: [Model.Message.user("We would like some help.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -915,7 +906,7 @@ describe("Stage.collect", () => {
   })
 
   test("accepts simple adaptive question text from a guided provider", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -938,7 +929,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       Brief.run({
         state: Brief.initialState,
-        messages: [Message.user("We need some help")],
+        messages: [Model.Message.user("We need some help")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -950,7 +941,7 @@ describe("Stage.collect", () => {
   })
 
   test("accepts a bounded unique set of contextual adaptive choices", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -972,7 +963,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       AdaptiveBrief.run({
         state: AdaptiveBrief.initialState,
-        messages: [Message.user("We need an agency partner.")],
+        messages: [Model.Message.user("We need an agency partner.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -990,7 +981,7 @@ describe("Stage.collect", () => {
 
   test("applies stage question guidance and exposes one uncertainty escape", async () => {
     let instructions = ""
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: (request) => {
         instructions = request.instructions.join(" ")
         return Effect.succeed({
@@ -1014,7 +1005,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       ExploratoryBrief.run({
         state: ExploratoryBrief.initialState,
-        messages: [Message.user("We may need an agency.")],
+        messages: [Model.Message.user("We may need an agency.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -1052,7 +1043,7 @@ describe("Stage.collect", () => {
         }),
       },
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -1075,9 +1066,9 @@ describe("Stage.collect", () => {
           },
         },
         messages: [
-          Message.user("We may need an agency."),
-          Message.assistant("Where would outside help matter most?"),
-          Message.user("Not sure yet"),
+          Model.Message.user("We may need an agency."),
+          Model.Message.assistant("Where would outside help matter most?"),
+          Model.Message.user("Not sure yet"),
         ],
       }).pipe(Effect.provide(model)),
     )
@@ -1104,7 +1095,7 @@ describe("Stage.collect", () => {
   })
 
   test("keeps an uncertainty response unresolved despite a model proposal", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -1137,9 +1128,9 @@ describe("Stage.collect", () => {
           },
         },
         messages: [
-          Message.user("We may need an agency."),
-          Message.assistant("What would you most like to improve?"),
-          Message.user("Not sure yet"),
+          Model.Message.user("We may need an agency."),
+          Model.Message.assistant("What would you most like to improve?"),
+          Model.Message.user("Not sure yet"),
         ],
       }).pipe(Effect.provide(model)),
     )
@@ -1154,7 +1145,7 @@ describe("Stage.collect", () => {
   })
 
   test("uses schema fallbacks for invalid adaptive choices", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -1176,7 +1167,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       AdaptiveBrief.run({
         state: AdaptiveBrief.initialState,
-        messages: [Message.user("We need an agency partner.")],
+        messages: [Model.Message.user("We need an agency partner.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -1193,7 +1184,7 @@ describe("Stage.collect", () => {
   })
 
   test("uses schema fallbacks when the model omits an adaptive choice", async () => {
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "submit_answers",
@@ -1207,7 +1198,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       AdaptiveBrief.run({
         state: AdaptiveBrief.initialState,
-        messages: [Message.user("We need an agency partner.")],
+        messages: [Model.Message.user("We need an agency partner.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -1225,7 +1216,7 @@ describe("Stage.collect", () => {
 
   test("falls back to the trusted question after model repair is exhausted", async () => {
     const requests = await Effect.runPromise(Ref.make(0))
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.update(requests, (count) => count + 1).pipe(
           Effect.as({
@@ -1238,7 +1229,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       AdaptiveBrief.run({
         state: AdaptiveBrief.initialState,
-        messages: [Message.user("We need an agency partner.")],
+        messages: [Model.Message.user("We need an agency partner.")],
       }).pipe(Effect.provide(model)),
     )
 

@@ -1,11 +1,8 @@
-import {
-  defineTool,
-  defineView,
-  presentChatDebugReply,
-  Tool,
-  type StructuredChatDebugSnapshot,
-  type StructuredChatTurnResponse,
-} from "@popcomputer/structured-chat"
+import { Chat, Tool, View } from "@popcomputer/structured-chat"
+import * as Root from "@popcomputer/structured-chat"
+import * as Debug from "@popcomputer/structured-chat/debug"
+import * as CloudflareAI from "@popcomputer/structured-chat/model/cloudflare-workers-ai"
+import * as OpenAI from "@popcomputer/structured-chat/model/openai-compatible"
 import {
   inMemoryChatSessionStore,
   Scenario,
@@ -21,13 +18,13 @@ import {
 } from "@popcomputer/structured-chat/assistant-ui/debug"
 import { Effect, Schema } from "effect"
 
-const PackageView = defineView({
+const PackageView = View.define({
   name: "package_view",
   version: 1,
   schema: Schema.Struct({ value: Schema.String }),
 })
 
-const PackageTool = defineTool({
+const PackageTool = Tool.define({
   name: "package_tool",
   description: "Exercise the built package declarations.",
   input: Schema.Struct({ value: Schema.String }),
@@ -36,8 +33,8 @@ const PackageTool = defineTool({
 
 const packageAdapter: AssistantChatModelAdapter =
   makeAssistantChatModelAdapter({ endpoint: "/chat" })
-const packageResponse: StructuredChatTurnResponse | undefined = undefined
-const packageDebugSnapshot: StructuredChatDebugSnapshot | undefined =
+const packageResponse: Chat.TurnResponse | undefined = undefined
+const packageDebugSnapshot: Debug.Snapshot | undefined =
   undefined
 const packageDebugStore = createStructuredChatDebugStore()
 const packageDebugAdapter: AssistantChatModelAdapter =
@@ -55,5 +52,10 @@ void packageDebugAdapter
 void packageDebugSnapshot
 void packageDebugStore
 void packageResponse
-void presentChatDebugReply
+void Debug.present
+void CloudflareAI.classifyError
+void OpenAI.layer
 void StructuredChatDebugPanel
+
+// @ts-expect-error flat constructors are intentionally absent from the root
+void Root.defineChat

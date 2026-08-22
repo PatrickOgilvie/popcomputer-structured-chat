@@ -79,14 +79,15 @@ export class ChatModelUnavailable extends Schema.TaggedError<ChatModelUnavailabl
   { reason: ChatModelUnavailableReasonSchema },
 ) {}
 
-/** Safe reason that a tool schema cannot use strict provider decoding. */
+/** Safe reason that a tool schema cannot guide or constrain a provider call. */
 export const UnsupportedModelToolSchemaReasonSchema = Schema.Literals([
   "root_not_object",
   "additional_properties_allowed",
   "optional_property",
+  "invalid_guidance_override",
 ])
 
-/** A model tool schema is incompatible with strict provider decoding. */
+/** A model tool schema is incompatible with provider schema guidance. */
 export class UnsupportedModelToolSchema extends Schema.TaggedError<UnsupportedModelToolSchema>()(
   "UnsupportedModelToolSchema",
   {

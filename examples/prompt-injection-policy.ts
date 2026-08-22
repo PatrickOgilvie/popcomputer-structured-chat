@@ -1,15 +1,9 @@
+import { Model, Stage, Tool } from "@popcomputer/structured-chat"
 import {
   Context,
   Effect,
   Schema,
 } from "effect"
-import {
-  defineModelGuard,
-  defineTool,
-  Stage,
-  type ModelGuardCallContext,
-  type ModelGuardContext,
-} from "@popcomputer/structured-chat"
 
 /** Application policy rejection retained in the Effect error channel. */
 export class UnsafeConversation extends Schema.TaggedError<UnsafeConversation>()(
@@ -25,16 +19,16 @@ export class ConversationSafety extends Context.Service<
   ConversationSafety,
   {
     readonly checkConversation: (
-      context: ModelGuardContext,
+      context: Model.GuardContext,
     ) => Effect.Effect<void, UnsafeConversation>
     readonly checkCall: (
-      context: ModelGuardCallContext,
+      context: Model.GuardCallContext,
     ) => Effect.Effect<void, UnsafeConversation>
   }
 >()("ConversationSafety") {}
 
 /** Effect-native guard composed into any model-backed stage. */
-export const PromptInjectionPolicy = defineModelGuard({
+export const PromptInjectionPolicy = Model.guard({
   name: "prompt_injection_policy",
   check: (context) =>
     Effect.gen(function* () {
@@ -48,7 +42,7 @@ export const PromptInjectionPolicy = defineModelGuard({
     }),
 })
 
-const FindResources = defineTool({
+const FindResources = Tool.define({
   name: "find_resources",
   description: "Find resources relevant to the request.",
   input: Schema.Struct({

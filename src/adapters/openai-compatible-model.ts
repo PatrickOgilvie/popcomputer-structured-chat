@@ -1,4 +1,11 @@
-import { Effect, Exit, Layer, Schema } from "effect"
+import {
+  Effect,
+  Exit,
+  JsonSchema,
+  Layer,
+  Result,
+  Schema,
+} from "effect"
 import {
   ChatModelUnavailable,
   StructuredChatModel,
@@ -70,6 +77,33 @@ export interface StructuredChatProviderRequest {
   readonly input: OpenAICompatibleInput
 }
 
+/**
+ * One provider-facing view of an outgoing tool, built from the tool's derived
+ * JSON Schema at request-serialization time.
+ *
+ * `derivedSchema` is the same document the adapter would send without an
+ * override, including the synthesized collect-stage answer tool. Overrides are
+ * guidance-only: responses keep being validated against the original Effect
+ * Schemas.
+ */
+export interface ProviderToolSchemaView {
+  readonly name: string
+  readonly description: string
+  readonly derivedSchema: JsonSchema.JsonSchema
+}
+
+/**
+ * Optional per-tool guidance schema hook applied before transport.
+ *
+ * Returning `undefined` keeps the derived schema. A returned schema replaces
+ * the derived one in the outgoing envelope after preflight validation: its
+ * root must be an object schema, otherwise the request fails before transport
+ * with `UnsupportedModelToolSchema` reason `invalid_guidance_override`.
+ */
+export type GuidanceSchemaOverride = (
+  tool: ProviderToolSchemaView,
+) => JsonSchema.JsonSchema | undefined
+
 interface OpenAICompatibleProviderConfig {
   readonly model: string
   readonly complete: (
@@ -77,6 +111,16 @@ interface OpenAICompatibleProviderConfig {
     signal: AbortSignal,
   ) => Promise<JsonValue>
   readonly requestOptions?: Readonly<Record<string, JsonValue>>
+  /**
+   * Optional per-tool guidance schema hook applied to every outgoing tool,
+   * including the synthesized collect-stage answer tool.
+   *
+   * Returning `undefined` keeps the derived schema. A returned schema replaces
+   * the derived one in the outgoing envelope after preflight validation.
+   * Overrides are guidance-only: responses keep being validated against the
+   * original Effect Schemas.
+   */
+  readonly guidanceSchemaOverride?: GuidanceSchemaOverride
 }
 
 /** Configuration for the built-in Cloudflare Workers AI provider. */
@@ -105,6 +149,7 @@ interface StructuredChatProviderRuntime {
     signal: AbortSignal,
   ) => Promise<JsonValue>
   readonly requestOptions: Readonly<Record<string, JsonValue>>
+  readonly guidanceSchemaOverride: GuidanceSchemaOverride | undefined
 }
 
 const StructuredChatProviderRuntime = Symbol(
@@ -118,13 +163,41 @@ export interface StructuredChatProvider {
   readonly [StructuredChatProviderRuntime]: StructuredChatProviderRuntime
 }
 
+/** Safe reason that a configured chat model could not complete a step. */
+type ChatModelUnavailableReason = Schema.Schema.Type<
+  typeof ChatModelUnavailableReasonSchema
+>
+
+/** Bounded retry policy applied to provider transport attempts. */
+export interface StructuredChatModelRetryPolicy {
+  /** Maximum total attempts including the first. */
+  readonly maximumAttempts: 1 | 2 | 3
+  /** Transport failure reasons eligible for retry. */
+  readonly retryableReasons: ReadonlyArray<
+    Exclude<
+      ChatModelUnavailableReason,
+      "invalid_response" | "response_blocked"
+    >
+  >
+  /** Fixed delay between attempts, bounded 0..1000 ms. */
+  readonly delayMilliseconds?: number
+}
+
+const RetryMaximumAttemptsSchema = Schema.Literals([1, 2, 3])
+
+const RetryDelaySchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 0, maximum: 1_000 }),
+)
+
 /** Configuration for one provider-backed structured chat model. */
 export interface StructuredChatModelConfig {
   readonly provider: StructuredChatProvider
   readonly timeoutMilliseconds: number
   readonly classifyError?: (
     cause: unknown,
-  ) => Schema.Schema.Type<typeof ChatModelUnavailableReasonSchema>
+  ) => ChatModelUnavailableReason
+  readonly retry?: StructuredChatModelRetryPolicy
 }
 
 const openAIModelSupportsStrictToolArguments = (
@@ -149,6 +222,7 @@ const makeProvider = (
     [StructuredChatProviderRuntime]: {
       toolArguments,
       requestOptions: config.requestOptions ?? {},
+      guidanceSchemaOverride: config.guidanceSchemaOverride,
       complete: (input, signal) =>
         config.complete({ model, input }, signal),
     },
@@ -363,13 +437,29 @@ const findStrictSchemaIssue = (
   return findStrictObjectIssue(schema, "#")
 }
 
+const parseSchemaDocument = Schema.decodeUnknownExit(
+  JsonSchemaObjectSchema,
+  { onExcessProperty: "error" },
+)
+
+const strictDocumentIssue = (
+  toolName: string,
+  document: JsonSchemaObject,
+): UnsupportedModelToolSchema | undefined => {
+  const issue = findStrictSchemaIssue(document)
+  return issue === undefined
+    ? undefined
+    : new UnsupportedModelToolSchema({
+        tool: toolName,
+        path: issue.path,
+        reason: issue.reason,
+      })
+}
+
 const strictToolIssue = (
   tool: ModelToolDefinition,
 ): UnsupportedModelToolSchema | undefined => {
-  const parsedSchema = Schema.decodeUnknownExit(JsonSchemaObjectSchema)(
-    tool.inputSchema,
-    { onExcessProperty: "error" },
-  )
+  const parsedSchema = parseSchemaDocument(tool.inputSchema)
   if (Exit.isFailure(parsedSchema)) {
     return new UnsupportedModelToolSchema({
       tool: tool.name,
@@ -378,18 +468,39 @@ const strictToolIssue = (
     })
   }
 
-  const issue = findStrictSchemaIssue(parsedSchema.value)
-  return issue === undefined
-    ? undefined
-    : new UnsupportedModelToolSchema({
-        tool: tool.name,
-        path: issue.path,
-        reason: issue.reason,
-      })
+  return strictDocumentIssue(tool.name, parsedSchema.value)
+}
+
+/**
+ * Validate one application-supplied guidance override before transport.
+ *
+ * An override must be an object-rooted JSON Schema document, mirroring the
+ * root requirement for derived constrained-provider schemas. Any other shape
+ * fails with reason `invalid_guidance_override` before any transport call.
+ */
+const parseGuidanceOverride = (
+  toolName: string,
+  overridden: JsonSchema.JsonSchema,
+): Result.Result<JsonSchemaObject, UnsupportedModelToolSchema> => {
+  const parsedSchema = parseSchemaDocument(overridden)
+  if (
+    Exit.isFailure(parsedSchema) ||
+    parsedSchema.value.type !== "object"
+  ) {
+    return Result.fail(
+      new UnsupportedModelToolSchema({
+        tool: toolName,
+        path: "#",
+        reason: "invalid_guidance_override",
+      }),
+    )
+  }
+  return Result.succeed(parsedSchema.value)
 }
 
 const toProviderTool = (
   tool: ModelToolDefinition,
+  parameters: JsonSchema.JsonSchema,
   toolArguments: OpenAICompatibleToolArguments,
 ): OpenAICompatibleTool => ({
   type: "function",
@@ -398,52 +509,94 @@ const toProviderTool = (
       ? {
           name: tool.name,
           description: tool.description,
-          parameters: tool.inputSchema,
+          parameters,
           strict: true,
         }
       : {
           name: tool.name,
           description: tool.description,
-          parameters: tool.inputSchema,
+          parameters,
         },
 })
+
+/**
+ * Serialize every outgoing tool, applying the guidance override hook first.
+ *
+ * The hook sees one view per tool — including the synthesized collect-stage
+ * answer tool — and may keep the derived schema by returning `undefined`.
+ * Strict-mode compatibility checks run on the post-override document.
+ */
+const serializeProviderTools = (
+  request: ToolModelRequest,
+  toolArguments: OpenAICompatibleToolArguments,
+  guidanceSchemaOverride: GuidanceSchemaOverride | undefined,
+): Effect.Effect<
+  ReadonlyArray<OpenAICompatibleTool>,
+  UnsupportedModelToolSchema
+> => {
+  const tools: Array<OpenAICompatibleTool> = []
+  for (const tool of request.tools) {
+    const view: ProviderToolSchemaView = {
+      name: tool.name,
+      description: tool.description,
+      derivedSchema: tool.inputSchema,
+    }
+    const overridden = guidanceSchemaOverride?.(view)
+    let parameters: JsonSchema.JsonSchema = tool.inputSchema
+    let issue: UnsupportedModelToolSchema | undefined
+    if (overridden === undefined) {
+      issue =
+        toolArguments === "strict" ? strictToolIssue(tool) : undefined
+    } else {
+      parameters = overridden
+      const parsedOverride = parseGuidanceOverride(tool.name, overridden)
+      if (Result.isFailure(parsedOverride)) {
+        return Effect.fail(parsedOverride.failure)
+      }
+      issue =
+        toolArguments === "strict"
+          ? strictDocumentIssue(tool.name, parsedOverride.success)
+          : undefined
+    }
+    if (issue !== undefined) {
+      return Effect.fail(issue)
+    }
+    tools.push(toProviderTool(tool, parameters, toolArguments))
+  }
+  return Effect.succeed(tools)
+}
 
 const toProviderInput = (
   request: ToolModelRequest,
   requestOptions: Readonly<Record<string, JsonValue>>,
   toolArguments: OpenAICompatibleToolArguments,
-): Effect.Effect<OpenAICompatibleInput, UnsupportedModelToolSchema> => {
-  if (toolArguments === "strict") {
-    const unsupported = request.tools
-      .map(strictToolIssue)
-      .find((issue) => issue !== undefined)
-    if (unsupported !== undefined) {
-      return Effect.fail(unsupported)
-    }
-  }
-
-  return Effect.succeed({
-    ...requestOptions,
-    messages: [
-      {
-        role: "system",
-        content: request.instructions.join("\n\n"),
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          untrustedConversation: request.untrustedMessages,
-        }),
-      },
-    ],
-    tools: request.tools.map((tool) =>
-      toProviderTool(tool, toolArguments),
-    ),
-    tool_choice: "required",
-    parallel_tool_calls: false,
-    stream: false,
-  })
-}
+  guidanceSchemaOverride: GuidanceSchemaOverride | undefined,
+): Effect.Effect<OpenAICompatibleInput, UnsupportedModelToolSchema> =>
+  serializeProviderTools(
+    request,
+    toolArguments,
+    guidanceSchemaOverride,
+  ).pipe(
+    Effect.map((tools) => ({
+      ...requestOptions,
+      messages: [
+        {
+          role: "system",
+          content: request.instructions.join("\n\n"),
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            untrustedConversation: request.untrustedMessages,
+          }),
+        },
+      ],
+      tools,
+      tool_choice: "required",
+      parallel_tool_calls: false,
+      stream: false,
+    })),
+  )
 
 /** Build a structured chat model around one provider definition. */
 export const makeStructuredChatModel = (
@@ -456,39 +609,120 @@ export const makeStructuredChatModel = (
   const classifyError =
     config.classifyError ?? (() => "request_failed" as const)
 
+  const maximumAttempts =
+    config.retry === undefined
+      ? 1
+      : Schema.decodeSync(RetryMaximumAttemptsSchema)(
+          config.retry.maximumAttempts,
+        )
+  // SAFETY: blocked and invalid responses are excluded at the type level; this
+  // runtime filter keeps hand-written or untyped configurations fail-closed.
+  const isConfiguredRetryable = (
+    reason: ChatModelUnavailableReason,
+  ): boolean =>
+    reason !== "response_blocked" && reason !== "invalid_response"
+  const retryableReasons = new Set<ChatModelUnavailableReason>()
+  if (config.retry !== undefined) {
+    for (const reason of config.retry.retryableReasons) {
+      if (isConfiguredRetryable(reason)) {
+        retryableReasons.add(reason)
+      }
+    }
+  }
+  const delayMilliseconds =
+    config.retry?.delayMilliseconds === undefined
+      ? 0
+      : Schema.decodeSync(RetryDelaySchema)(
+          config.retry.delayMilliseconds,
+        )
+
+  const parseProviderResponse = (response: JsonValue) =>
+    Schema.decodeUnknownEffect(ToolCallResponseSchema)(response).pipe(
+      Effect.mapError(() => unavailable("invalid_response")),
+    )
+
+  /** One transport-plus-envelope attempt, bounded by the request timeout. */
+  const attemptProviderCall = (input: OpenAICompatibleInput) =>
+    Effect.tryPromise({
+      try: (signal) => runtime.complete(input, signal),
+      catch: (cause) => unavailable(classifyError(cause)),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: timeoutMilliseconds,
+        orElse: () => Effect.fail(unavailable("timed_out")),
+      }),
+      Effect.flatMap(parseProviderResponse),
+      Effect.flatMap((response) => {
+        const tool =
+          response.choices[0].message.tool_calls[0].function
+
+        return parseJson(tool.arguments).pipe(
+          Effect.map((arguments_) => ({
+            name: tool.name,
+            arguments: arguments_,
+          })),
+        )
+      }),
+    )
+
+  const isRetryableUnavailable = (
+    error: ChatModelUnavailable,
+  ): boolean => retryableReasons.has(error.reason)
+
+  /**
+   * Retry only the transport and envelope region. Guards and strict-schema
+   * parsing stay outside, and interruption never becomes a classified
+   * failure.
+   */
+  const attemptParsedCall = (
+    input: OpenAICompatibleInput,
+    attemptNumber: number,
+    remainingAttempts: number,
+  ): Effect.Effect<
+    { readonly name: string; readonly arguments: JsonValue },
+    ChatModelUnavailable
+  > =>
+    Effect.suspend(() => {
+      const once = attemptProviderCall(input)
+      // Content-free observability: the attempt count is annotated only for
+      // follow-up attempts; reasons stay behind the stable failure tag.
+      const annotatedOnce =
+        attemptNumber > 1
+          ? once.pipe(
+              Effect.withSpan(
+                "popcomputer.structured_chat.model.attempt",
+                { attributes: { attempt: attemptNumber } },
+              ),
+            )
+            : once
+      return annotatedOnce.pipe(
+        Effect.catchIf(isRetryableUnavailable, (error) =>
+          remainingAttempts <= 0
+            ? Effect.fail(error)
+            : Effect.sleep(delayMilliseconds).pipe(
+                Effect.andThen(() =>
+                  attemptParsedCall(
+                    input,
+                    attemptNumber + 1,
+                    remainingAttempts - 1,
+                  ),
+                ),
+              ),
+        ),
+      )
+    })
+
   return {
     requestTool: (request) =>
       toProviderInput(
         request,
         runtime.requestOptions,
         runtime.toolArguments,
+        runtime.guidanceSchemaOverride,
       ).pipe(
         Effect.flatMap((input) =>
-          Effect.tryPromise({
-            try: (signal) => runtime.complete(input, signal),
-            catch: (cause) => unavailable(classifyError(cause)),
-          }),
+          attemptParsedCall(input, 1, maximumAttempts - 1),
         ),
-        Effect.timeoutOrElse({
-          duration: timeoutMilliseconds,
-          orElse: () => Effect.fail(unavailable("timed_out")),
-        }),
-        Effect.flatMap((response) =>
-          Schema.decodeUnknownEffect(ToolCallResponseSchema)(response).pipe(
-            Effect.mapError(() => unavailable("invalid_response")),
-          ),
-        ),
-        Effect.flatMap((response) => {
-          const tool =
-            response.choices[0].message.tool_calls[0].function
-
-          return parseJson(tool.arguments).pipe(
-            Effect.map((arguments_) => ({
-              name: tool.name,
-              arguments: arguments_,
-            })),
-          )
-        }),
       ),
   }
 }

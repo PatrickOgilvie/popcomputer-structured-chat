@@ -1,9 +1,9 @@
-import { Effect, Schema } from "effect"
+import { cast, Effect, Result, Schema } from "effect"
 import {
   ChatSessionIdSchema,
   ChatSessionRevisionSchema,
 } from "./session.js"
-import { defineView } from "./view.js"
+import { defineView, type ViewData, type ViewDefinitionContract } from "./view.js"
 
 /** Bounded plain text emitted by a structured chat presenter. */
 export const AssistantTextPartSchema = Schema.Struct({
@@ -60,14 +60,44 @@ export type StructuredChatSessionReference = Schema.Schema.Type<
   typeof StructuredChatSessionReferenceSchema
 >
 
+/** Upper bound for one application-owned turn-request message bound. */
+const MaximumTurnRequestMessageLengthSchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 1, maximum: 2_147_483_647 }),
+)
+
+/** Message bound applied when a turn-request schema names no bound. */
+const defaultTurnRequestMessageLength = 50_000
+
+/**
+ * Build one browser turn-request schema with an application-owned message
+ * bound.
+ *
+ * The session reference stays optional and the message remains trimmed,
+ * non-empty text bounded by `maximumMessageLength`.
+ */
+export const structuredChatTurnRequestSchema = (options?: {
+  readonly maximumMessageLength?: number
+}) => {
+  const maximumMessageLength =
+    options?.maximumMessageLength === undefined
+      ? defaultTurnRequestMessageLength
+      : Schema.decodeSync(MaximumTurnRequestMessageLengthSchema)(
+          options.maximumMessageLength,
+        )
+
+  return Schema.Struct({
+    session: Schema.optional(StructuredChatSessionReferenceSchema),
+    message: Schema.Trimmed.check(
+      Schema.isNonEmpty(),
+      Schema.isMaxLength(maximumMessageLength),
+    ),
+  })
+}
+
 /** Browser request carrying no server-owned chat state. */
-export const StructuredChatTurnRequestSchema = Schema.Struct({
-  session: Schema.optional(StructuredChatSessionReferenceSchema),
-  message: Schema.Trimmed.check(
-    Schema.isNonEmpty(),
-    Schema.isMaxLength(50_000),
-  ),
-})
+export const StructuredChatTurnRequestSchema =
+  structuredChatTurnRequestSchema()
 
 /** Browser request carrying no server-owned chat state. */
 export type StructuredChatTurnRequest = Schema.Schema.Type<
@@ -85,6 +115,39 @@ export const StructuredChatTurnResponseSchema = Schema.Struct({
 export type StructuredChatTurnResponse = Schema.Schema.Type<
   typeof StructuredChatTurnResponseSchema
 >
+
+/**
+ * Decode every assistant-message part matching the view, skipping mismatches
+ * and undecodable parts.
+ *
+ * Parts are matched by their encoded `name` and strictly decoded with the
+ * view's own part schema, whose data carries the literal view
+ * `schemaVersion`. Non-matching and undecodable parts are silently dropped,
+ * mirroring the fail-closed behaviour of browser renderer fallbacks.
+ */
+export const findTurnParts = <View extends ViewDefinitionContract>(
+  response: StructuredChatTurnResponse,
+  view: View,
+): ReadonlyArray<ViewData<View>> => {
+  const decodePart = Schema.decodeUnknownResult(view.partSchema)
+  const matched: Array<ViewData<View>> = []
+  for (const part of response.message.content) {
+    if (part.type !== "data" || part.name !== view.name) {
+      continue
+    }
+    const decoded = decodePart(part, { onExcessProperty: "error" })
+    if (Result.isSuccess(decoded)) {
+      // SAFETY: view.partSchema decodes data to exactly ViewData<View>; the
+      // generic constraint only exposes its upper bound.
+      matched.push(
+        cast<typeof decoded.success.data, ViewData<View>>(
+          decoded.success.data,
+        ),
+      )
+    }
+  }
+  return matched
+}
 
 /** Built-in browser contract for one collect-stage question. */
 export const CollectQuestionView = defineView({
@@ -120,7 +183,8 @@ export class InvalidChatPresentation extends Schema.TaggedError<InvalidChatPrese
   { reason: Schema.Literal("invalid_message") },
 ) {}
 
-interface PresentableQuestionTurn {
+/** Minimum question-turn shape accepted by browser presentation. */
+export interface PresentableQuestionTurn {
   readonly _tag: "Question"
   readonly stage: string
   readonly question: {
@@ -131,7 +195,8 @@ interface PresentableQuestionTurn {
   }
 }
 
-interface PresentableToolTurn {
+/** Minimum tool-turn shape accepted by browser presentation. */
+export interface PresentableToolTurn {
   readonly _tag: "ToolResult" | "Complete"
   readonly stage: string
   readonly result: {
@@ -139,7 +204,10 @@ interface PresentableToolTurn {
   }
 }
 
-type PresentableTurn = PresentableQuestionTurn | PresentableToolTurn
+/** Domain-turn shapes accepted by browser presentation. */
+export type PresentableTurn =
+  | PresentableQuestionTurn
+  | PresentableToolTurn
 
 /** Optional application projections for question and tool-result messages. */
 export interface PresentChatReplyOptions<Turn extends PresentableTurn> {

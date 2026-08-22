@@ -22,15 +22,10 @@ The published entry points are ESM-only and support Node.js 22 or newer.
 ## Start with one tool
 
 ```ts
-import {
-  defineTool,
-  defineView,
-  Stage,
-  Tool,
-} from "@popcomputer/structured-chat"
+import { Stage, Tool, View } from "@popcomputer/structured-chat"
 import { Schema } from "effect"
 
-const ResultCards = defineView({
+const ResultCards = View.define({
   name: "result_cards",
   version: 1,
   schema: Schema.Struct({
@@ -44,7 +39,7 @@ const ResultCards = defineView({
   }),
 })
 
-const FindResources = defineTool({
+const FindResources = Tool.define({
   name: "find_resources",
   description: "Find resources relevant to the completed request.",
   input: Schema.Struct({
@@ -91,7 +86,7 @@ execution directly:
 ```ts
 import { SearchKnowledgeBase } from "./knowledge-graph.js"
 
-const FindResources = defineTool({
+const FindResources = Tool.define({
   name: "find_resources",
   description: "Find resources supported by relevant source evidence.",
   input: Schema.Struct({
@@ -117,7 +112,7 @@ Collection stages describe meaning, not a fixed form wizard:
 ```ts
 import {
   Answer,
-  defineChat,
+  Chat,
   Question,
   Stage,
 } from "@popcomputer/structured-chat"
@@ -153,7 +148,7 @@ const RequestDetails = Stage.collect({
   },
 })
 
-const ResourceFinder = defineChat({
+const ResourceFinder = Chat.define({
   name: "resource_finder",
   version: 1,
   stages: [RequestDetails, Lookup],
@@ -279,7 +274,7 @@ Present that non-progressing retry with the browser's previous session
 reference, if one exists:
 
 ```ts
-const response = yield* presentAnswerValidationRejection({
+const response = yield* Chat.presentValidationRejection({
   rejection,
   session: request.session,
 })
@@ -309,41 +304,36 @@ The browser submits only its latest text and, after the first turn, an opaque
 session reference. State, history, tools, and answers stay on the server.
 
 ```ts
-import {
-  presentChatReply,
-  StructuredChatTurnRequestSchema,
-  Text,
-} from "@popcomputer/structured-chat"
+import { Chat } from "@popcomputer/structured-chat"
 import { Effect } from "effect"
 
+const PresentResourceFinder = Chat.present(ResourceFinder, {
+  result: ({ result }) => [
+    Chat.Text.make(
+      "Here are the most relevant evidence-backed resources.",
+    ),
+    ...result.views,
+  ],
+})
+
 const program = Effect.gen(function* () {
-  const request = yield* parseRequest(StructuredChatTurnRequestSchema)
+  const request = yield* parseRequest(Chat.TurnRequestSchema)
   const publicSessionId = request.session?.id ?? crypto.randomUUID()
 
-  const reply = yield* ResourceFinder.reply({
+  return yield* Chat.turn(ResourceFinder, {
     namespace: authenticatedActor.id,
     sessionId: publicSessionId,
     expectedRevision: request.session?.revision,
     message: request.message,
-  })
-
-  return yield* presentChatReply(
-    { ...reply, sessionId: publicSessionId },
-    {
-      result: ({ result }) => [
-        Text.make("Here are the most relevant evidence-backed resources."),
-        ...result.views,
-      ],
-    },
-  )
+  }).pipe(PresentResourceFinder)
 })
 ```
 
-`ChatSessionStore` is a two-operation adapter: load a complete snapshot, then
+`Session.Store` is a two-operation Effect service: load a complete snapshot, then
 atomically replace it at an expected revision. A stale or concurrent turn
-fails with `ChatSessionConflict`. The package includes an in-memory adapter at
+fails with `Session.Conflict`. The package includes an in-memory adapter at
 `@popcomputer/structured-chat/testing`; production applications should provide
-a durable database adapter.
+a durable database adapter, such as the shipped Cloudflare D1 adapter below.
 
 The application should generate initial public session IDs on the server and
 pass the authenticated actor as a separate `namespace`. The persistence
@@ -355,11 +345,87 @@ because they were joined. Browser-held IDs are references, not authorization.
 A session stores at most 200 conversation messages. Each reply reserves room
 for the user message and the largest possible assistant result before calling
 the model or an application tool. A session with 198 messages may advance; a
-session with 199 or 200 messages fails with `InvalidChatSession` and reason
+session with 199 or 200 messages fails with `Session.Invalid` and reason
 `history_limit` without performing model, tool, or persistence work. Start a
 new session at that boundary. History summarisation and compaction remain an
 explicit application policy rather than silently changing conversation
 meaning.
+
+### Durable sessions on Cloudflare D1
+
+The package ships a production-ready `Session.Store` adapter for
+Cloudflare D1 behind a dedicated entry point. Apply the shipped migration to
+your database, then pass your D1 binding through the narrow
+`D1ChatSessionDatabase` port:
+
+```bash
+npx wrangler d1 execute SESSIONS_DB \
+  --file=node_modules/@popcomputer/structured-chat/migrations/d1/0001_structured_chat_sessions.sql
+```
+
+```ts
+import { makeD1ChatSessionStore } from "@popcomputer/structured-chat/d1"
+import { Session } from "@popcomputer/structured-chat"
+import { Layer } from "effect"
+
+const SessionStoreLive = Layer.succeed(
+  Session.Store,
+  makeD1ChatSessionStore(env.SESSIONS_DB, {
+    // Optional: expire sessions for selected namespace prefixes.
+    retention: {
+      expiringNamespacePrefixes: ["tenant:"],
+      retentionMillis: 30 * 24 * 60 * 60 * 1000,
+    },
+  }),
+)
+```
+
+Rows are keyed by the full `(namespace, session_id, chat, version)` tuple and
+replaced optimistically at an integer revision: a stale `expectedRevision`
+fails with `Session.Conflict` and never overwrites newer state. With
+retention configured, a load of an expired row in a matching namespace
+performs a guarded compare-and-delete before returning nothing, and aged rows
+can be removed in bulk. Retention accepts at most 49 non-empty prefixes using
+the session-namespace alphabet; an empty prefix is rejected rather than
+implicitly selecting every namespace:
+
+```ts
+import { cleanupExpiredD1ChatSessions } from "@popcomputer/structured-chat/d1"
+
+const removed = yield* cleanupExpiredD1ChatSessions(env.SESSIONS_DB, {
+  expiringNamespacePrefixes: ["tenant:"],
+  retentionMillis: 30 * 24 * 60 * 60 * 1000,
+})
+```
+
+### Non-browser clients and bounded requests
+
+The turn contract is plain JSON over one endpoint, so non-browser clients can
+drive it directly. Parse requests through the parameterized factory when the
+application needs its own bounds instead of restating the schema:
+
+```ts
+import { Chat } from "@popcomputer/structured-chat"
+
+const BoundedTurnRequest = Chat.turnRequestSchema({
+  maximumMessageLength: 4_000,
+})
+```
+
+The default `Chat.TurnRequestSchema` is the no-options instance of
+the same factory, so the two accept identical shapes unless you bound them.
+
+On the client side - CLIs, operators, integration tests - extract view data
+from a response without React or assistant-ui. Parts that do not match the
+view, or fail its strict schema, are skipped:
+
+```ts
+import { Chat } from "@popcomputer/structured-chat"
+
+const results = Chat.findTurnParts(response, ResultCards).map(
+  (data) => data.results,
+)
+```
 
 ## Continue naturally after the first tool result
 
@@ -396,7 +462,7 @@ Declare side effects honestly. A command receives the package-derived stable
 ID that its application endpoint must use as an idempotency key:
 
 ```ts
-const CreateRequest = defineCommand({
+const CreateRequest = Tool.command({
   name: "create_request",
   description: "Create the confirmed request once.",
   input: CreateRequestInput,
@@ -415,9 +481,9 @@ const CreateRequestStage = Stage.command({
 
 `Stage.command` accepts exactly one command, must be the final chat stage, and
 always completes the chat. Commands cannot be added to repeatable
-`Stage.tools` sets. Persisted command chats execute through `Chat.reply`; the
-unscoped `Chat.run` seam refuses to run them because it has no session/revision
-identity.
+`Stage.tools` sets. Persisted command chats execute through `Chat.turn`.
+The unscoped transition process is available only from the testing entrypoint
+because it has no session/revision identity.
 
 The command ID is an opaque SHA-256 identity derived from `(namespace, chat,
 version, sessionId, expectedRevision, commandName)`. A retry after a failed
@@ -438,7 +504,7 @@ Repair is disabled by default. Enable it only on chats whose final stage is a
 repeatable query:
 
 ```ts
-const RepairableResourceFinder = defineChat({
+const RepairableResourceFinder = Chat.define({
   name: "resource_finder",
   version: 2,
   stages: [RequestDetails, Lookup],
@@ -467,13 +533,11 @@ existing definition.
 ## Connect a model provider
 
 ```ts
-import {
-  ModelProvider,
-  structuredChatModelLayer,
-} from "@popcomputer/structured-chat"
+import * as CloudflareAI from "@popcomputer/structured-chat/model/cloudflare-workers-ai"
+import * as OpenAICompatible from "@popcomputer/structured-chat/model/openai-compatible"
 
-const ModelLive = structuredChatModelLayer({
-  provider: ModelProvider.cloudflareWorkersAI({
+const ModelLive = OpenAICompatible.layer({
+  provider: OpenAICompatible.Provider.cloudflareWorkersAI({
     model: "@cf/google/gemma-4-26b-a4b-it",
     complete: ({ model, input }, signal) =>
       env.AI.run(model, { ...input }, { signal }),
@@ -483,12 +547,32 @@ const ModelLive = structuredChatModelLayer({
     },
   }),
   timeoutMilliseconds: 15_000,
-  classifyError: (cause) =>
-    workersAIBlocked(cause)
-      ? "response_blocked"
-      : "request_failed",
+  classifyError: (cause) => {
+    const reason = CloudflareAI.classifyError(cause)
+    reportSafeTelemetry({
+      reason,
+      code: CloudflareAI.errorCode(cause),
+    })
+    return reason
+  },
+  retry: {
+    maximumAttempts: 2,
+    retryableReasons: ["request_failed", "timed_out"],
+    delayMilliseconds: 250,
+  },
 })
 ```
+
+The built-in Cloudflare classifier walks the provider's cause chains (bounded
+depth, cycle-safe) and reports `response_blocked` for security-blocked
+responses and `request_failed` otherwise; `CloudflareAI.errorCode`
+returns only allowlisted, documented Workers AI error codes for safe telemetry.
+
+Retries wrap only the transport attempt: no application tool has executed, so
+repeating an attempt cannot duplicate side effects. Guards run once per turn,
+`response_blocked` and schema-parse failures are never retried (invalid output
+already receives the chat's one bounded repair), interruption is never
+retried, and attempts are bounded by configuration.
 
 The application chooses a provider and model; the package owns the provider's
 tool-call dialect and strongest safe schema guarantee. There is no
@@ -499,8 +583,8 @@ model families use constrained function arguments automatically; unknown or
 older model identifiers conservatively use schema guidance:
 
 ```ts
-const ModelLive = structuredChatModelLayer({
-  provider: ModelProvider.openAI({
+const ModelLive = OpenAICompatible.layer({
+  provider: OpenAICompatible.Provider.openAI({
     model: "gpt-5.6-luna",
     complete: ({ model, input }, signal) =>
       openAI.chat.completions.create(
@@ -533,24 +617,60 @@ incompatibility reason. Every provider response is still parsed with the
 original Effect Schema: constrained generation strengthens the trust boundary;
 it never replaces it.
 
-Provider credentials, gateway routing, retries, and moderation remain at the
-application composition edge. If a provider is not built in, implement the
-public `StructuredChatModelService` Effect seam; provider-specific SDK types do
+Provider credentials, gateway routing, moderation, and any retry policy
+beyond the bounded model-layer option above remain at the application
+composition edge. If a provider is not built in, implement the
+public `Model.ServiceContract` Effect seam; provider-specific SDK types do
 not need to leak into chat, stage, or tool definitions.
 
 Built-in provider policy is deliberately conservative:
 
 | Provider definition | Tool argument policy |
 | --- | --- |
-| `ModelProvider.cloudflareWorkersAI(...)` | Schema-guided, then parsed and validated |
-| `ModelProvider.openAI(...)` with a recognised Structured Outputs model | Schema-constrained, then parsed and validated |
-| `ModelProvider.openAI(...)` with an unknown model ID | Schema-guided, then parsed and validated |
+| `OpenAICompatible.Provider.cloudflareWorkersAI(...)` | Schema-guided, then parsed and validated |
+| `OpenAICompatible.Provider.openAI(...)` with a recognised Structured Outputs model | Schema-constrained, then parsed and validated |
+| `OpenAICompatible.Provider.openAI(...)` with an unknown model ID | Schema-guided, then parsed and validated |
+
+Providers that only use a JSON Schema as loose generation guidance can be
+steered further with the optional `guidanceSchemaOverride` hook. It runs at
+serialization time for every outgoing tool — including the synthesized
+collect-stage answer tool — receives the tool's name, description, and derived
+schema, and may return a replacement schema, or `undefined` to keep the
+derived one. Replacement schemas are validated before transport (the root
+must be an object schema, and OpenAI strict-mode rules apply to the
+post-override document), but they remain guidance-only: responses keep being
+validated against the original Effect Schemas.
+
+```ts
+const ModelLive = OpenAICompatible.layer({
+  provider: OpenAICompatible.Provider.cloudflareWorkersAI({
+    model: "@cf/google/gemma-4-26b-a4b-it",
+    guidanceSchemaOverride: (tool) =>
+      tool.name === "search"
+        ? {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "One short search phrase.",
+              },
+            },
+            required: ["query"],
+            additionalProperties: false,
+          }
+        : undefined,
+    complete: ({ model, input }, signal) =>
+      env.AI.run(model, { ...input }, { signal }),
+  }),
+  timeoutMilliseconds: 15_000,
+})
+```
 
 ## Connect assistant-ui
 
 ```tsx
 import { AssistantRuntimeProvider, useLocalRuntime } from "@assistant-ui/react"
-import { CollectQuestionView } from "@popcomputer/structured-chat"
+import { Chat } from "@popcomputer/structured-chat"
 import {
   makeAssistantChatModelAdapter,
   makeAssistantView,
@@ -562,7 +682,7 @@ const ResultCardsUI = makeAssistantView(ResultCards, {
   fallback: InvalidCardFallback,
 })
 
-const QuestionUI = makeAssistantView(CollectQuestionView, {
+const QuestionUI = makeAssistantView(Chat.CollectQuestionView, {
   render: RequestQuestion,
   fallback: InvalidQuestionFallback,
 })
@@ -611,18 +731,16 @@ Debug data uses a separate, explicit response contract. Select it on an
 authenticated development endpoint:
 
 ```ts
-import {
-  presentChatDebugReply,
-  presentChatReply,
-} from "@popcomputer/structured-chat"
+import { Chat } from "@popcomputer/structured-chat"
+import * as Debug from "@popcomputer/structured-chat/debug"
 
 const response = debugAccessGranted
-  ? yield* presentChatDebugReply(
+  ? yield* Debug.present(
       ResourceFinder,
-      { ...reply, sessionId: publicSessionId },
+      reply,
       { inspection: { evidence: "include" } },
     )
-  : yield* presentChatReply({ ...reply, sessionId: publicSessionId })
+  : yield* Chat.presentReply(reply)
 ```
 
 Connect that endpoint to the inspector store:
@@ -700,7 +818,7 @@ const ModelTest = Scenario.model(
   }),
 )
 
-const reply = yield* ResourceFinder.reply({
+const reply = yield* Chat.turn(ResourceFinder, {
   sessionId: "scenario-1",
   message: "Help me prepare an onboarding plan for new team members.",
 }).pipe(
@@ -762,7 +880,7 @@ call parsing but before application execution. Both hooks can use ordinary
 Effect services:
 
 ```ts
-const InjectionPolicy = defineModelGuard({
+const InjectionPolicy = Model.guard({
   name: "prompt_injection_policy",
   check: ({ messages, toolNames }) =>
     PolicyService.check({ messages, toolNames }),
@@ -829,7 +947,10 @@ the tool or coordinate provider, application, and eval changes together.
 - Tool and command execution are application-owned. Commands make idempotency
   identity explicit; the framework does not infer authorization or provide the
   application's durable outcome journal.
-- Durable persistence requires an adapter; no database is selected by default.
+- The core is storage-neutral: sessions persist through the two-operation
+  `Session.Store` adapter, and no database is required by default. A
+  production Cloudflare D1 adapter ships behind the optional `./d1` entry
+  point.
 - Public errors expose only stable, content-free reasons and identifiers
   relevant to each failure—not raw prompts, provider responses, persisted
   state, or unknown causes. Content-free Effect spans cover model

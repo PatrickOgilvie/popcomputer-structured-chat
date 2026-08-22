@@ -1,15 +1,6 @@
+import { Answer, Chat, Model, Question, Repair, Stage, Tool } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
 import { Effect, Exit, Layer, Schema } from "effect"
-import {
-  Answer,
-  defineChat,
-  defineTool,
-  Message,
-  Question,
-  Repair,
-  Stage,
-  Tool,
-} from "../src/index.js"
 import {
   inMemoryChatSessionStore,
   Scenario,
@@ -39,7 +30,7 @@ const ProjectBrief = Stage.collect({
   },
 })
 
-const Search = defineTool({
+const Search = Tool.define({
   name: "date_search",
   description: "Search by launch date.",
   input: Schema.Struct({ date: Schema.DateFromString }),
@@ -57,13 +48,13 @@ const Matching = Stage.tools({
   tools: [Search],
 })
 
-const LaunchChat = defineChat({
+const LaunchChat = Chat.define({
   name: "launch_scenario",
   version: 1,
   stages: [Launch, Matching],
 })
 
-const FindOffice = defineTool({
+const FindOffice = Tool.define({
   name: "find_office",
   description: "Find an office in one location.",
   input: Schema.Struct({ location: Schema.String }),
@@ -76,7 +67,7 @@ const OfficeMatching = Stage.tools({
   tools: [FindOffice],
 })
 
-const RepairableProjectChat = defineChat({
+const RepairableProjectChat = Chat.define({
   name: "repairable_project_scenario",
   version: 1,
   stages: [ProjectBrief, OfficeMatching],
@@ -93,7 +84,7 @@ const LocalPreference = Stage.collect({
   },
 })
 
-const SearchByLocalPreference = defineTool({
+const SearchByLocalPreference = Tool.define({
   name: "search_by_local_preference",
   description: "Search using the confirmed location preference.",
   input: Schema.Struct({ localOnly: Schema.Boolean }),
@@ -106,7 +97,7 @@ const PreferenceSearch = Stage.tools({
   tools: [SearchByLocalPreference],
 })
 
-const RepairablePreferenceChat = defineChat({
+const RepairablePreferenceChat = Chat.define({
   name: "repairable_preference_scenario",
   version: 1,
   stages: [LocalPreference, PreferenceSearch],
@@ -126,7 +117,7 @@ describe("Scenario", () => {
     const turn = await Effect.runPromise(
       ProjectBrief.run({
         state: ProjectBrief.initialState,
-        messages: [Message.user("We are based in Leeds.")],
+        messages: [Model.Message.user("We are based in Leeds.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -149,7 +140,7 @@ describe("Scenario", () => {
     )
 
     const reply = await Effect.runPromise(
-      LaunchChat.reply({
+      Chat.turn(LaunchChat, {
         sessionId: "typed-scenario",
         message: "Launch on 3 February 2027.",
       }).pipe(
@@ -163,7 +154,7 @@ describe("Scenario", () => {
       expect(reply.turn.result.modelResult).toEqual({ year: 2027 })
     }
     expect(
-      LaunchChat.getAcceptedAnswer(reply.turn.state, Launch, "date"),
+      Chat.acceptedAnswer(LaunchChat, reply.turn.state, Launch, "date"),
     ).toEqual({
       value: date,
       evidence: { messageIndex: 0, quote: "3 February 2027" },
@@ -187,11 +178,11 @@ describe("Scenario", () => {
 
     const replies = await Effect.runPromise(
       Effect.gen(function* () {
-        const first = yield* RepairableProjectChat.reply({
+        const first = yield* Chat.turn(RepairableProjectChat, {
           sessionId: "replacement-scenario",
           message: "Growth matters most; we are based in Leeds.",
         })
-        const second = yield* RepairableProjectChat.reply({
+        const second = yield* Chat.turn(RepairableProjectChat, {
           sessionId: "replacement-scenario",
           expectedRevision: first.revision,
           message: "Actually, Manchester.",
@@ -205,7 +196,8 @@ describe("Scenario", () => {
     expect(replies.first.turn._tag).toBe("ToolResult")
     expect(replies.second.turn._tag).toBe("ToolResult")
     expect(
-      RepairableProjectChat.getAcceptedAnswer(
+      Chat.acceptedAnswer(
+        RepairableProjectChat,
         replies.second.turn.state,
         ProjectBrief,
         "location",
@@ -246,21 +238,21 @@ describe("Scenario", () => {
 
     const replies = await Effect.runPromise(
       Effect.gen(function* () {
-        const asked = yield* RepairablePreferenceChat.reply({
+        const asked = yield* Chat.turn(RepairablePreferenceChat, {
           sessionId: "reconfirmation-scenario",
           message: "Help me choose firms.",
         })
-        const initial = yield* RepairablePreferenceChat.reply({
+        const initial = yield* Chat.turn(RepairablePreferenceChat, {
           sessionId: "reconfirmation-scenario",
           expectedRevision: asked.revision,
           message: "Yes, local firms only.",
         })
-        const correction = yield* RepairablePreferenceChat.reply({
+        const correction = yield* Chat.turn(RepairablePreferenceChat, {
           sessionId: "reconfirmation-scenario",
           expectedRevision: initial.revision,
           message: "Actually, national is fine.",
         })
-        const confirmed = yield* RepairablePreferenceChat.reply({
+        const confirmed = yield* Chat.turn(RepairablePreferenceChat, {
           sessionId: "reconfirmation-scenario",
           expectedRevision: correction.revision,
           message: "Yes, broaden it nationwide.",
@@ -275,7 +267,8 @@ describe("Scenario", () => {
     expect(replies.initial.turn._tag).toBe("ToolResult")
     expect(replies.correction.turn._tag).toBe("Question")
     expect(
-      RepairablePreferenceChat.getAcceptedAnswer(
+      Chat.acceptedAnswer(
+        RepairablePreferenceChat,
         replies.correction.turn.state,
         LocalPreference,
         "localOnly",
@@ -283,7 +276,8 @@ describe("Scenario", () => {
     ).toBeUndefined()
     expect(replies.confirmed.turn._tag).toBe("ToolResult")
     expect(
-      RepairablePreferenceChat.getAcceptedAnswer(
+      Chat.acceptedAnswer(
+        RepairablePreferenceChat,
         replies.confirmed.turn.state,
         LocalPreference,
         "localOnly",
@@ -304,9 +298,9 @@ describe("Scenario", () => {
       Launch.run({
         state: Launch.initialState,
         messages: [
-          Message.user("Maybe February."),
-          Message.assistant("February could work."),
-          Message.user("Yes, February."),
+          Model.Message.user("Maybe February."),
+          Model.Message.assistant("February could work."),
+          Model.Message.user("Yes, February."),
         ],
       }).pipe(Effect.provide(model)),
     )
@@ -329,9 +323,9 @@ describe("Scenario", () => {
       Launch.run({
         state: Launch.initialState,
         messages: [
-          Message.user("Maybe February."),
-          Message.assistant("Which date?"),
-          Message.user("3 February 2027."),
+          Model.Message.user("Maybe February."),
+          Model.Message.assistant("Which date?"),
+          Model.Message.user("3 February 2027."),
         ],
       }).pipe(Effect.provide(model)),
     )

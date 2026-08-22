@@ -1,19 +1,13 @@
+import { Model, Stage, Tool } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref, Result, Schema } from "effect"
-import {
-  defineModelGuard,
-  defineTool,
-  Message,
-  Stage,
-  StructuredChatModel,
-} from "../src/index.js"
 
 class PlannedCallRejected extends Schema.TaggedError<PlannedCallRejected>()(
   "PlannedCallRejected",
   { reason: Schema.Literal("unsafe_proposal") },
 ) {}
 
-const Search = defineTool({
+const Search = Tool.define({
   name: "search",
   description: "Search published work.",
   input: Schema.Struct({ query: Schema.String }),
@@ -27,7 +21,7 @@ describe("Stage.tools", () => {
       instructions: ["Route the brief to one search."],
       tools: [Search],
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: (request) => {
         expect(request.instructions.map(String)).toEqual([
           "Route the brief to one search.",
@@ -41,7 +35,7 @@ describe("Stage.tools", () => {
       },
     })
     const result = await Effect.runPromise(
-      Matching.run([Message.user("Find an agency")]).pipe(
+      Matching.run([Model.Message.user("Find an agency")]).pipe(
         Effect.provide(model),
       ),
     )
@@ -51,7 +45,7 @@ describe("Stage.tools", () => {
 
   test("plans a strictly parsed call without executing application code", async () => {
     const executions = await Effect.runPromise(Ref.make(0))
-    const PlannedSearch = defineTool({
+    const PlannedSearch = Tool.define({
       name: "planned_search",
       description: "Search published work after approval.",
       input: Schema.Struct({ query: Schema.String }),
@@ -65,7 +59,7 @@ describe("Stage.tools", () => {
       instructions: ["Propose one search for review."],
       tools: [PlannedSearch],
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "planned_search",
@@ -73,7 +67,7 @@ describe("Stage.tools", () => {
         }),
     })
     const call = await Effect.runPromise(
-      Approval.plan([Message.user("Find an agency")]).pipe(
+      Approval.plan([Model.Message.user("Find an agency")]).pipe(
         Effect.provide(model),
       ),
     )
@@ -88,7 +82,7 @@ describe("Stage.tools", () => {
 
   test("applies semantic guards to a parsed plan", async () => {
     const checks = await Effect.runPromise(Ref.make(0))
-    const policy = defineModelGuard({
+    const policy = Model.guard({
       name: "planned_call_policy",
       check: () => Effect.void,
       checkCall: () =>
@@ -108,7 +102,7 @@ describe("Stage.tools", () => {
       tools: [Search],
       guards: [policy],
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "search",
@@ -117,7 +111,7 @@ describe("Stage.tools", () => {
     })
     const result = await Effect.runPromise(
       Effect.result(
-        Approval.plan([Message.user("Find an agency")]).pipe(
+        Approval.plan([Model.Message.user("Find an agency")]).pipe(
           Effect.provide(model),
         ),
       ),
@@ -133,7 +127,7 @@ describe("Stage.tools", () => {
 
   test("applies guards before requesting a staged plan", async () => {
     const requests = await Effect.runPromise(Ref.make(0))
-    const policy = defineModelGuard({
+    const policy = Model.guard({
       name: "staged_request_policy",
       check: () =>
         Effect.fail(
@@ -146,7 +140,7 @@ describe("Stage.tools", () => {
       tools: [Search],
       guards: [policy],
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.update(requests, (count) => count + 1).pipe(
           Effect.as({
@@ -156,7 +150,7 @@ describe("Stage.tools", () => {
         ),
     })
     const result = await Effect.runPromise(
-      Approval.plan([Message.user("Find an agency")]).pipe(
+      Approval.plan([Model.Message.user("Find an agency")]).pipe(
         Effect.provide(model),
         Effect.result,
       ),

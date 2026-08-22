@@ -1,3 +1,4 @@
+import { Tool, View } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
 import {
   Context,
@@ -6,13 +7,6 @@ import {
   Result,
   Schema,
 } from "effect"
-import {
-  defineTool,
-  defineView,
-  InvalidToolCall,
-  InvalidToolProjection,
-  Tool,
-} from "../src/index.js"
 
 interface AgencyMatch {
   readonly id: string
@@ -42,7 +36,7 @@ class RequestContext extends Context.Service<
   { readonly tenantId: string }
 >()("RequestContext") {}
 
-const AgencyCards = defineView({
+const AgencyCards = View.define({
   name: "agency_cards",
   version: 1,
   schema: Schema.Struct({
@@ -64,7 +58,7 @@ const ModelEvidence = Schema.Struct({
   ),
 })
 
-const SearchAgencies = defineTool({
+const SearchAgencies = Tool.define({
   name: "search_agencies",
   description: "Find agencies relevant to the project.",
   input: Schema.Struct({
@@ -103,9 +97,9 @@ const Live = Layer.mergeAll(
   }),
 )
 
-describe("defineTool", () => {
+describe("Tool.define", () => {
   test("validates Type-side transformed model projections", async () => {
-    const ProjectDate = defineTool({
+    const ProjectDate = Tool.define({
       name: "project_date",
       description: "Project one date.",
       input: Schema.Struct({}),
@@ -165,8 +159,8 @@ describe("defineTool", () => {
       Result.isFailure(wrongName) &&
       Result.isFailure(excessArguments)
     ) {
-      expect(wrongName.failure).toBeInstanceOf(InvalidToolCall)
-      expect(excessArguments.failure).toBeInstanceOf(InvalidToolCall)
+      expect(wrongName.failure).toBeInstanceOf(Tool.InvalidCall)
+      expect(excessArguments.failure).toBeInstanceOf(Tool.InvalidCall)
     }
   })
 
@@ -226,7 +220,7 @@ describe("defineTool", () => {
   })
 
   test("returns a typed error when an owned projection is invalid", async () => {
-    const InvalidProjection = defineTool({
+    const InvalidProjection = Tool.define({
       name: "invalid_projection",
       description: "Prove projection validation.",
       input: Schema.Struct({ query: Schema.String }),
@@ -245,12 +239,12 @@ describe("defineTool", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidToolProjection)
+      expect(result.failure).toBeInstanceOf(Tool.InvalidProjection)
     }
   })
 
   test("rejects schema-invalid browser projection data", async () => {
-    const InvalidView = defineTool({
+    const InvalidView = Tool.define({
       name: "invalid_view",
       description: "Prove browser projection validation.",
       input: Schema.Struct({}),
@@ -270,7 +264,7 @@ describe("defineTool", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidToolProjection)
+      expect(result.failure).toBeInstanceOf(Tool.InvalidProjection)
       expect(result.failure).toMatchObject({
         tool: "invalid_view",
         target: "agency_cards",
@@ -280,7 +274,7 @@ describe("defineTool", () => {
   })
 
   test("classifies a throwing browser presenter without leaking its cause", async () => {
-    const ThrowingView = defineTool({
+    const ThrowingView = Tool.define({
       name: "throwing_view",
       description: "Prove throwing presenter classification.",
       input: Schema.Struct({}),
@@ -307,7 +301,7 @@ describe("defineTool", () => {
   })
 
   test("omits an intentionally absent browser view", async () => {
-    const OptionalView = defineTool({
+    const OptionalView = Tool.define({
       name: "optional_view",
       description: "Omit a view when there is nothing to display.",
       input: Schema.Struct({}),
@@ -323,7 +317,7 @@ describe("defineTool", () => {
   })
 
   test("rejects a model result too large for later conversation context", async () => {
-    const OversizedModelResult = defineTool({
+    const OversizedModelResult = Tool.define({
       name: "oversized_model_result",
       description: "Prove bounded model conversation context.",
       input: Schema.Struct({}),
@@ -340,7 +334,7 @@ describe("defineTool", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidToolProjection)
+      expect(result.failure).toBeInstanceOf(Tool.InvalidProjection)
       expect(result.failure).toMatchObject({
         tool: "oversized_model_result",
         target: "model_context",

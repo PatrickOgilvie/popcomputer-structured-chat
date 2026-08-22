@@ -1,19 +1,7 @@
+import { Answer, Chat, Model, Question, Repair, Stage, Tool } from "../src/index.js"
+import { Chat as ChatTest } from "../src/testing.js"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref, Result, Schema } from "effect"
-import {
-  Answer,
-  AnswerValidationRejected,
-  defineChat,
-  defineCommand,
-  defineTool,
-  InvalidCollectStageResponse,
-  InvalidToolCall,
-  Question,
-  Repair,
-  Stage,
-  StructuredChatModel,
-  type ToolModelRequest,
-} from "../src/index.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"
 
 const Brief = Stage.collect({
@@ -34,7 +22,7 @@ const Brief = Stage.collect({
   },
 })
 
-const Search = defineTool({
+const Search = Tool.define({
   name: "repair_search",
   description: "Search from the accepted brief.",
   input: Schema.Struct({ location: Schema.String }),
@@ -47,7 +35,7 @@ const Matching = Stage.tools({
   tools: [Search],
 })
 
-const RepairableChat = defineChat({
+const RepairableChat = Chat.define({
   name: "repairable_chat",
   version: 1,
   stages: [Brief, Matching],
@@ -98,16 +86,16 @@ const confirmedAnswer = {
 
 describe("Repair.standard", () => {
   test("leaves ordinary query chats unchanged when repair is omitted", async () => {
-    const PlainChat = defineChat({
+    const PlainChat = Chat.define({
       name: "plain_chat",
       version: 1,
       stages: [Brief, Matching],
     })
     const requests = await Effect.runPromise(
-      Ref.make<ReadonlyArray<ToolModelRequest>>([]),
+      Ref.make<ReadonlyArray<Model.ToolRequest>>([]),
     )
     const calls = await Effect.runPromise(Ref.make(0))
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: (request) =>
         Ref.update(requests, (current) => [...current, request]).pipe(
           Effect.andThen(Ref.updateAndGet(calls, (count) => count + 1)),
@@ -127,16 +115,16 @@ describe("Repair.standard", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const question = yield* PlainChat.reply({
+        const question = yield* Chat.turn(PlainChat, {
           sessionId: "plain-chat",
           message: "We need a public service website in Leeds.",
         })
-        const initial = yield* PlainChat.reply({
+        const initial = yield* Chat.turn(PlainChat, {
           sessionId: "plain-chat",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
-        yield* PlainChat.reply({
+        yield* Chat.turn(PlainChat, {
           sessionId: "plain-chat",
           expectedRevision: initial.revision,
           message: "Prefer accessibility experience.",
@@ -148,18 +136,18 @@ describe("Repair.standard", () => {
     expect(observed[3]?.tools.map(({ name }) => name)).toEqual([
       "repair_search",
     ])
-    expect(PlainChat.initialState.repair).toBeUndefined()
+    expect(ChatTest.initialState(PlainChat).repair).toBeUndefined()
   })
 
   test("enforces maximumCorrections through a persisted chat reply", async () => {
-    const BoundedRepairChat = defineChat({
+    const BoundedRepairChat = Chat.define({
       name: "bounded_repair_chat",
       version: 1,
       stages: [Brief, Matching],
       repair: Repair.standard({ maximumCorrections: 1 }),
     })
     const calls = await Effect.runPromise(Ref.make(0))
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
           Effect.map((count) => {
@@ -203,17 +191,17 @@ describe("Repair.standard", () => {
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const question = yield* BoundedRepairChat.reply({
+        const question = yield* Chat.turn(BoundedRepairChat, {
           sessionId: "bounded-repair",
           message: "We need a public service website in Leeds.",
         })
-        const initial = yield* BoundedRepairChat.reply({
+        const initial = yield* Chat.turn(BoundedRepairChat, {
           sessionId: "bounded-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
         return yield* Effect.result(
-          BoundedRepairChat.reply({
+          Chat.turn(BoundedRepairChat, {
             sessionId: "bounded-repair",
             expectedRevision: initial.revision,
             message:
@@ -225,8 +213,8 @@ describe("Repair.standard", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidToolCall)
-      if (result.failure instanceof InvalidToolCall) {
+      expect(result.failure).toBeInstanceOf(Tool.InvalidCall)
+      if (result.failure instanceof Tool.InvalidCall) {
         expect(result.failure).toMatchObject({
           tool: "apply_conversation_repairs",
           reason: "invalid_arguments",
@@ -238,10 +226,10 @@ describe("Repair.standard", () => {
 
   test("replaces explicit answers then reruns a query in a bounded second step", async () => {
     const requests = await Effect.runPromise(
-      Ref.make<ReadonlyArray<ToolModelRequest>>([]),
+      Ref.make<ReadonlyArray<Model.ToolRequest>>([]),
     )
     const calls = await Effect.runPromise(Ref.make(0))
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: (request) =>
         Ref.update(requests, (current) => [...current, request]).pipe(
           Effect.andThen(
@@ -293,21 +281,21 @@ describe("Repair.standard", () => {
 
     const replies = await Effect.runPromise(
       Effect.gen(function* () {
-        const question = yield* RepairableChat.reply({
+        const question = yield* Chat.turn(RepairableChat, {
           sessionId: "replace-repair",
           message: "We need a public service website in Leeds.",
         })
-        const initial = yield* RepairableChat.reply({
+        const initial = yield* Chat.turn(RepairableChat, {
           sessionId: "replace-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
-        const corrected = yield* RepairableChat.reply({
+        const corrected = yield* Chat.turn(RepairableChat, {
           sessionId: "replace-repair",
           expectedRevision: initial.revision,
           message: "Actually, we are in Manchester.",
         })
-        const followUp = yield* RepairableChat.reply({
+        const followUp = yield* Chat.turn(RepairableChat, {
           sessionId: "replace-repair",
           expectedRevision: corrected.revision,
           message: "Prefer teams with accessibility experience.",
@@ -318,7 +306,8 @@ describe("Repair.standard", () => {
 
     expect(replies.corrected.turn._tag).toBe("ToolResult")
     expect(
-      RepairableChat.getAcceptedAnswer(
+      Chat.acceptedAnswer(
+        RepairableChat,
         replies.corrected.turn.state,
         Brief,
         "location",
@@ -341,7 +330,7 @@ describe("Repair.standard", () => {
 
   test("clears confirmed answers, rewinds, reissues, and reconfirms", async () => {
     const calls = await Effect.runPromise(Ref.make(0))
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
           Effect.map((count) => {
@@ -419,21 +408,21 @@ describe("Repair.standard", () => {
 
     const replies = await Effect.runPromise(
       Effect.gen(function* () {
-        const question = yield* RepairableChat.reply({
+        const question = yield* Chat.turn(RepairableChat, {
           sessionId: "confirmed-repair",
           message: "We need a public service website in Leeds.",
         })
-        const initial = yield* RepairableChat.reply({
+        const initial = yield* Chat.turn(RepairableChat, {
           sessionId: "confirmed-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
-        const correction = yield* RepairableChat.reply({
+        const correction = yield* Chat.turn(RepairableChat, {
           sessionId: "confirmed-repair",
           expectedRevision: initial.revision,
           message: "Actually, only local firms.",
         })
-        const reconfirmed = yield* RepairableChat.reply({
+        const reconfirmed = yield* Chat.turn(RepairableChat, {
           sessionId: "confirmed-repair",
           expectedRevision: correction.revision,
           message: "Yes, local only.",
@@ -446,7 +435,8 @@ describe("Repair.standard", () => {
     expect(replies.correction.turn.state.stage).toBe(0)
     expect(replies.correction.turn.state.repair?.pendingStages).toEqual([0])
     expect(
-      RepairableChat.getAcceptedAnswer(
+      Chat.acceptedAnswer(
+        RepairableChat,
         replies.correction.turn.state,
         Brief,
         "localOnly",
@@ -455,7 +445,8 @@ describe("Repair.standard", () => {
     expect(replies.reconfirmed.turn._tag).toBe("ToolResult")
     expect(replies.reconfirmed.turn.state.repair?.pendingStages).toEqual([])
     expect(
-      RepairableChat.getAcceptedAnswer(
+      Chat.acceptedAnswer(
+        RepairableChat,
         replies.reconfirmed.turn.state,
         Brief,
         "localOnly",
@@ -485,7 +476,7 @@ describe("Repair.standard", () => {
         }),
       },
     })
-    const QueuedChat = defineChat({
+    const QueuedChat = Chat.define({
       name: "queued_repair",
       version: 1,
       stages: [First, Second, Matching],
@@ -508,7 +499,7 @@ describe("Repair.standard", () => {
         nextQuestion: null,
       },
     } as const
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
           Effect.map((count) => {
@@ -617,31 +608,31 @@ describe("Repair.standard", () => {
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const firstQuestion = yield* QueuedChat.reply({
+        const firstQuestion = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           message: "Start approvals.",
         })
-        const secondQuestion = yield* QueuedChat.reply({
+        const secondQuestion = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           expectedRevision: firstQuestion.revision,
           message: "First confirmed.",
         })
-        const initial = yield* QueuedChat.reply({
+        const initial = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           expectedRevision: secondQuestion.revision,
           message: "Second confirmed.",
         })
-        const repair = yield* QueuedChat.reply({
+        const repair = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           expectedRevision: initial.revision,
           message: "Change both approvals.",
         })
-        const first = yield* QueuedChat.reply({
+        const first = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           expectedRevision: repair.revision,
           message: "First changed: no.",
         })
-        const second = yield* QueuedChat.reply({
+        const second = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           expectedRevision: first.revision,
           message: "Second changed: no.",
@@ -659,7 +650,7 @@ describe("Repair.standard", () => {
 
   test("rejects repair evidence that does not come from the current user message", async () => {
     const calls = await Effect.runPromise(Ref.make(0))
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
           Effect.map((count) =>
@@ -695,17 +686,17 @@ describe("Repair.standard", () => {
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const question = yield* RepairableChat.reply({
+        const question = yield* Chat.turn(RepairableChat, {
           sessionId: "invalid-repair",
           message: "We need a public service website in Leeds.",
         })
-        const initial = yield* RepairableChat.reply({
+        const initial = yield* Chat.turn(RepairableChat, {
           sessionId: "invalid-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
         return yield* Effect.result(
-          RepairableChat.reply({
+          Chat.turn(RepairableChat, {
             sessionId: "invalid-repair",
             expectedRevision: initial.revision,
             message: "Actually, we are in Manchester.",
@@ -716,8 +707,8 @@ describe("Repair.standard", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidCollectStageResponse)
-      if (result.failure instanceof InvalidCollectStageResponse) {
+      expect(result.failure).toBeInstanceOf(Stage.InvalidResponse)
+      if (result.failure instanceof Stage.InvalidResponse) {
         expect(result.failure.reason).toBe("invalid_repair")
       }
     }
@@ -725,7 +716,7 @@ describe("Repair.standard", () => {
 
   test("classifies duplicate field corrections as an invalid repair", async () => {
     const calls = await Effect.runPromise(Ref.make(0))
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
           Effect.map((count) => {
@@ -777,17 +768,17 @@ describe("Repair.standard", () => {
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const question = yield* RepairableChat.reply({
+        const question = yield* Chat.turn(RepairableChat, {
           sessionId: "duplicate-repair",
           message: "We need a public service website in Leeds.",
         })
-        const initial = yield* RepairableChat.reply({
+        const initial = yield* Chat.turn(RepairableChat, {
           sessionId: "duplicate-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
         return yield* Effect.result(
-          RepairableChat.reply({
+          Chat.turn(RepairableChat, {
             sessionId: "duplicate-repair",
             expectedRevision: initial.revision,
             message: "Actually, we are in Manchester.",
@@ -798,8 +789,8 @@ describe("Repair.standard", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(InvalidCollectStageResponse)
-      if (result.failure instanceof InvalidCollectStageResponse) {
+      expect(result.failure).toBeInstanceOf(Stage.InvalidResponse)
+      if (result.failure instanceof Stage.InvalidResponse) {
         expect(result.failure.reason).toBe("invalid_repair")
       }
     }
@@ -822,14 +813,14 @@ describe("Repair.standard", () => {
         }),
       },
     })
-    const BudgetChat = defineChat({
+    const BudgetChat = Chat.define({
       name: "budget_repair",
       version: 1,
       stages: [Budget, Matching],
       repair: Repair.standard(),
     })
     const calls = await Effect.runPromise(Ref.make(0))
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
           Effect.map((count) =>
@@ -875,12 +866,12 @@ describe("Repair.standard", () => {
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const initial = yield* BudgetChat.reply({
+        const initial = yield* Chat.turn(BudgetChat, {
           sessionId: "budget-repair",
           message: "The budget is £6,000.",
         })
         return yield* Effect.result(
-          BudgetChat.reply({
+          Chat.turn(BudgetChat, {
             sessionId: "budget-repair",
             expectedRevision: initial.revision,
             message: "Actually, the budget is £2,000.",
@@ -891,8 +882,8 @@ describe("Repair.standard", () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(AnswerValidationRejected)
-      if (result.failure instanceof AnswerValidationRejected) {
+      expect(result.failure).toBeInstanceOf(Stage.AnswerValidationRejected)
+      if (result.failure instanceof Stage.AnswerValidationRejected) {
         expect(result.failure.error).toBeInstanceOf(BudgetTooLow)
       }
     }
@@ -900,7 +891,7 @@ describe("Repair.standard", () => {
   })
 
   test("cannot be enabled for a command chat", () => {
-    const command = defineCommand({
+    const command = Tool.command({
       name: "repair_forbidden_command",
       description: "A command must never be repaired or rerun.",
       input: Schema.Struct({}),
@@ -913,7 +904,7 @@ describe("Repair.standard", () => {
     })
 
     expect(() =>
-      defineChat({
+      Chat.define({
         name: "invalid_repair_command_chat",
         version: 1,
         stages: [terminal],
@@ -931,7 +922,7 @@ describe("Repair.standard", () => {
     })
 
     expect(() =>
-      defineChat({
+      Chat.define({
         name: "invalid_repair_terminal_query_chat",
         version: 1,
         stages: [Brief, terminal],

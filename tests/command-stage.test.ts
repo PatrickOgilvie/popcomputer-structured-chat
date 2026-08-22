@@ -1,19 +1,7 @@
+import { Answer, Chat, Model, Question, Session, Stage, Tool } from "../src/index.js"
+import { Chat as ChatTest } from "../src/testing.js"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref, Result, Schema } from "effect"
-import {
-  Answer,
-  ChatSessionStore,
-  ChatSessionStoreUnavailable,
-  CommandIdSchema,
-  deriveCommandId,
-  defineChat,
-  defineCommand,
-  Message,
-  Question,
-  Stage,
-  StructuredChatModel,
-  Tool,
-} from "../src/index.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"
 
 describe("Stage.command", () => {
@@ -29,14 +17,14 @@ describe("Stage.command", () => {
 
     const ids = await Effect.runPromise(
       Effect.all([
-        deriveCommandId(base),
-        deriveCommandId(base),
-        deriveCommandId({ ...base, namespace: "account-two" }),
-        deriveCommandId({ ...base, chat: "renewal_chat" }),
-        deriveCommandId({ ...base, version: 2 }),
-        deriveCommandId({ ...base, sessionId: "renewal-session" }),
-        deriveCommandId({ ...base, expectedRevision: "5" }),
-        deriveCommandId({ ...base, command: "archive_proposal" }),
+        Tool.deriveCommandId(base),
+        Tool.deriveCommandId(base),
+        Tool.deriveCommandId({ ...base, namespace: "account-two" }),
+        Tool.deriveCommandId({ ...base, chat: "renewal_chat" }),
+        Tool.deriveCommandId({ ...base, version: 2 }),
+        Tool.deriveCommandId({ ...base, sessionId: "renewal-session" }),
+        Tool.deriveCommandId({ ...base, expectedRevision: "5" }),
+        Tool.deriveCommandId({ ...base, command: "archive_proposal" }),
       ]),
     )
 
@@ -53,7 +41,7 @@ describe("Stage.command", () => {
     const observed = await Effect.runPromise(
       Ref.make<string | undefined>(undefined),
     )
-    const Send = defineCommand({
+    const Send = Tool.command({
       name: "send_proposal",
       description: "Send the approved proposal once.",
       input: Schema.Struct({ recipient: Schema.String }),
@@ -72,10 +60,10 @@ describe("Stage.command", () => {
       instructions: ["Send the proposal to the named recipient."],
       command: Send,
     })
-    const commandId = Schema.decodeSync(CommandIdSchema)(
+    const commandId = Schema.decodeSync(Tool.CommandIdSchema)(
       `cmd_${"a".repeat(64)}`,
     )
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "send_proposal",
@@ -85,7 +73,7 @@ describe("Stage.command", () => {
 
     const result = await Effect.runPromise(
       Delivery.run(
-        [Message.user("Send it to team@example.com")],
+        [Model.Message.user("Send it to team@example.com")],
         { commandId },
       ).pipe(Effect.provide(model)),
     )
@@ -105,7 +93,7 @@ describe("Stage.command", () => {
       Ref.make<ReadonlyMap<string, { readonly delivery: number }>>(new Map()),
     )
     const sends = await Effect.runPromise(Ref.make(0))
-    const Send = defineCommand({
+    const Send = Tool.command({
       name: "idempotent_send",
       description: "Send once through an idempotent application endpoint.",
       input: Schema.Struct({ recipient: Schema.String }),
@@ -138,27 +126,27 @@ describe("Stage.command", () => {
       instructions: ["Send the requested message once."],
       command: Send,
     })
-    const DeliveryChat = defineChat({
+    const DeliveryChat = Chat.define({
       name: "delivery_chat",
       version: 1,
       stages: [Delivery],
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "idempotent_send",
           arguments: { recipient: "team@example.com" },
         }),
     })
-    const unavailableStore = Layer.succeed(ChatSessionStore, {
+    const unavailableStore = Layer.succeed(Session.Store, {
       load: () => Effect.succeed(null),
       replace: () =>
-        Effect.fail(new ChatSessionStoreUnavailable({ reason: "write_failed" })),
+        Effect.fail(new Session.StoreUnavailable({ reason: "write_failed" })),
     })
     const live = Layer.merge(model, unavailableStore)
     const reply = () =>
       Effect.result(
-        DeliveryChat.reply({
+        Chat.turn(DeliveryChat, {
           namespace: "account-one",
           sessionId: "delivery-session",
           message: "Send it to the team.",
@@ -178,7 +166,7 @@ describe("Stage.command", () => {
 
   test("completes a persisted command chat and will not execute it again", async () => {
     const executions = await Effect.runPromise(Ref.make(0))
-    const Send = defineCommand({
+    const Send = Tool.command({
       name: "terminal_send",
       description: "Send one terminal message.",
       input: Schema.Struct({ body: Schema.String }),
@@ -192,12 +180,12 @@ describe("Stage.command", () => {
       instructions: ["Send one message."],
       command: Send,
     })
-    const DeliveryChat = defineChat({
+    const DeliveryChat = Chat.define({
       name: "terminal_delivery_chat",
       version: 1,
       stages: [Delivery],
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
           name: "terminal_send",
@@ -208,12 +196,12 @@ describe("Stage.command", () => {
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const first = yield* DeliveryChat.reply({
+        const first = yield* Chat.turn(DeliveryChat, {
           sessionId: "terminal-delivery",
           message: "Send hello.",
         })
         const second = yield* Effect.result(
-          DeliveryChat.reply({
+          Chat.turn(DeliveryChat, {
             sessionId: "terminal-delivery",
             expectedRevision: first.revision,
             message: "Send it again.",
@@ -242,7 +230,7 @@ describe("Stage.command", () => {
         }),
       },
     })
-    const Send = defineCommand({
+    const Send = Tool.command({
       name: "collected_send",
       description: "Send to the collected recipient.",
       input: Schema.Struct({ email: Schema.String }),
@@ -254,12 +242,12 @@ describe("Stage.command", () => {
       instructions: ["Send to the collected recipient."],
       command: Send,
     })
-    const DeliveryChat = defineChat({
+    const DeliveryChat = Chat.define({
       name: "collected_delivery_chat",
       version: 1,
       stages: [Recipient, Delivery],
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(requests, (count) => count + 1).pipe(
           Effect.map((count) =>
@@ -286,7 +274,7 @@ describe("Stage.command", () => {
     })
 
     const reply = await Effect.runPromise(
-      DeliveryChat.reply({
+      Chat.turn(DeliveryChat, {
         sessionId: "collected-delivery",
         message: "Send it to team@example.com.",
       }).pipe(
@@ -303,7 +291,7 @@ describe("Stage.command", () => {
   test("rejects the history limit before command planning or execution", async () => {
     let modelCalls = 0
     let commandCalls = 0
-    const Send = defineCommand({
+    const Send = Tool.command({
       name: "bounded_send",
       description: "Must not run beyond the history boundary.",
       input: Schema.Struct({}),
@@ -318,25 +306,25 @@ describe("Stage.command", () => {
       instructions: ["Send once."],
       command: Send,
     })
-    const DeliveryChat = defineChat({
+    const DeliveryChat = Chat.define({
       name: "bounded_delivery_chat",
       version: 1,
       stages: [Delivery],
     })
-    const store = Layer.succeed(ChatSessionStore, {
+    const store = Layer.succeed(Session.Store, {
       load: () =>
         Effect.succeed({
           revision: "1",
-          state: DeliveryChat.initialState,
+          state: ChatTest.initialState(DeliveryChat),
           messages: Array.from({ length: 199 }, (_, index) =>
             index % 2 === 0
-              ? Message.user(`User ${index}`)
-              : Message.assistant(`Assistant ${index}`),
+              ? Model.Message.user(`User ${index}`)
+              : Model.Message.assistant(`Assistant ${index}`),
           ),
         }),
       replace: () => Effect.die("must not replace"),
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.sync(() => {
           modelCalls += 1
@@ -346,7 +334,7 @@ describe("Stage.command", () => {
 
     const result = await Effect.runPromise(
       Effect.result(
-        DeliveryChat.reply({
+        Chat.turn(DeliveryChat, {
           sessionId: "bounded-delivery",
           expectedRevision: "1",
           message: "Continue",
@@ -362,7 +350,7 @@ describe("Stage.command", () => {
   test("will not execute a command through an unscoped direct chat run", async () => {
     let modelCalls = 0
     let commandCalls = 0
-    const Send = defineCommand({
+    const Send = Tool.command({
       name: "scoped_send",
       description: "Requires persisted command identity.",
       input: Schema.Struct({}),
@@ -377,12 +365,12 @@ describe("Stage.command", () => {
       instructions: ["Send once."],
       command: Send,
     })
-    const DeliveryChat = defineChat({
+    const DeliveryChat = Chat.define({
       name: "scoped_delivery_chat",
       version: 1,
       stages: [Delivery],
     })
-    const model = Layer.succeed(StructuredChatModel, {
+    const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.sync(() => {
           modelCalls += 1
@@ -392,9 +380,9 @@ describe("Stage.command", () => {
 
     const result = await Effect.runPromise(
       Effect.result(
-        DeliveryChat.run({
-          state: DeliveryChat.initialState,
-          messages: [Message.user("Send it")],
+        ChatTest.run(DeliveryChat, {
+          state: ChatTest.initialState(DeliveryChat),
+          messages: [Model.Message.user("Send it")],
         }).pipe(Effect.provide(model)),
       ),
     )

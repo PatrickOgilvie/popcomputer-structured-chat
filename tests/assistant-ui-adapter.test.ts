@@ -1,3 +1,5 @@
+import { Chat } from "../src/index.js"
+import * as Debug from "../src/debug.js"
 import { describe, expect, test } from "bun:test"
 import type {
   ChatModelAdapter,
@@ -6,10 +8,6 @@ import type {
   ThreadMessage,
 } from "@assistant-ui/react"
 import { Schema } from "effect"
-import {
-  StructuredChatTurnRequestSchema,
-  type StructuredChatDebugSnapshot,
-} from "../src/index.js"
 import {
   assistantChatSessionMetadataKey,
   makeAssistantChatModelAdapter,
@@ -179,7 +177,7 @@ describe("makeAssistantChatModelAdapter", () => {
       ),
     )
     const body = Schema.decodeUnknownSync(
-      Schema.fromJsonString(StructuredChatTurnRequestSchema),
+      Schema.fromJsonString(Chat.TurnRequestSchema),
     )(String(requests[0]?.init.body))
 
     expect(requests[0]?.input).toBe("/api/chat")
@@ -262,7 +260,7 @@ describe("makeAssistantChatModelAdapter", () => {
       ]),
     )
     const body = Schema.decodeUnknownSync(
-      Schema.fromJsonString(StructuredChatTurnRequestSchema),
+      Schema.fromJsonString(Chat.TurnRequestSchema),
     )(String(requests[0]?.body))
 
     expect(body).toEqual({ message: "The current answer" })
@@ -353,7 +351,7 @@ describe("makeAssistantChatModelAdapter", () => {
   })
 
   test("delivers an explicitly requested debug snapshot outside message metadata", async () => {
-    const snapshots: Array<StructuredChatDebugSnapshot> = []
+    const snapshots: Array<Debug.Snapshot> = []
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat/debug",
       fetch: () =>

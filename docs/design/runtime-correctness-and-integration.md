@@ -243,7 +243,15 @@ metadata remains parsed at the D1 boundary. This is recommended.
 #### Option 3: Move a D1 adapter into the package
 
 This would add Cloudflare and Drizzle decisions to a storage-neutral package.
-Rejected.
+Rejected at design time.
+
+> Amended 2026-08: a D1 adapter shipped as the optional `@popcomputer/
+> structured-chat/d1` entry point. The core remains storage-neutral and the
+> adapter stays out of the default dependency graph, which preserves this
+> decision's intent; the letter of the rejection ("no D1 adapter in the
+> package") no longer holds. The shipped adapter uses raw parameterized SQL
+> with strictly parsed rows rather than Drizzle, so Option 2's coupling
+> concern does not apply to it.
 
 ### View projection
 

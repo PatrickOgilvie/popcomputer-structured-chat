@@ -1,8 +1,8 @@
+import { View } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
 import { Effect, Result, Schema } from "effect"
-import { defineView } from "../src/index.js"
 
-const AgencyCards = defineView({
+const AgencyCards = View.define({
   name: "agency_cards",
   version: 2,
   schema: Schema.Struct({
@@ -11,13 +11,13 @@ const AgencyCards = defineView({
   }),
 })
 
-const EventCard = defineView({
+const EventCard = View.define({
   name: "event_card",
   version: 1,
   schema: Schema.Struct({ when: Schema.DateFromString }),
 })
 
-describe("defineView", () => {
+describe("View.define", () => {
   test("constructs transformed Type-side view data", () => {
     const when = new Date("2026-08-10T12:00:00.000Z")
 
@@ -90,7 +90,7 @@ describe("defineView", () => {
 
   test("reserves schemaVersion for the protocol", () => {
     expect(() =>
-      defineView({
+      View.define({
         name: "invalid",
         version: 1,
         schema: Schema.Struct({ schemaVersion: Schema.Number }),
