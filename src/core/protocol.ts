@@ -4,6 +4,8 @@ import {
   ChatSessionRevisionSchema,
 } from "./session.js"
 import { defineView, type ViewData, type ViewDefinitionContract } from "./view.js"
+import { JsonValueSchema } from "./json-value.js"
+import { ToolNameSchema } from "./tool.js"
 
 /** Bounded plain text emitted by a structured chat presenter. */
 export const AssistantTextPartSchema = Schema.Struct({
@@ -116,22 +118,48 @@ export type StructuredChatTurnResponse = Schema.Schema.Type<
   typeof StructuredChatTurnResponseSchema
 >
 
-/**
- * Decode every assistant-message part matching the view, skipping mismatches
- * and undecodable parts.
- *
- * Parts are matched by their encoded `name` and strictly decoded with the
- * view's own part schema, whose data carries the literal view
- * `schemaVersion`. Non-matching and undecodable parts are silently dropped,
- * mirroring the fail-closed behaviour of browser renderer fallbacks.
- */
-export const findTurnParts = <View extends ViewDefinitionContract>(
-  response: StructuredChatTurnResponse,
+/** Transport envelope for one application-authored exploration call. */
+export const StructuredChatExplorationCallSchema = Schema.Struct({
+  name: ToolNameSchema,
+  arguments: JsonValueSchema,
+})
+
+/** Transport envelope for one application-authored exploration call. */
+export type StructuredChatExplorationCall = Schema.Schema.Type<
+  typeof StructuredChatExplorationCallSchema
+>
+
+/** Browser request for one exploration against an existing chat session. */
+export const StructuredChatExplorationRequestSchema = Schema.Struct({
+  session: Schema.Struct({ id: ChatSessionIdSchema }),
+  call: StructuredChatExplorationCallSchema,
+})
+
+/** Browser request for one exploration against an existing chat session. */
+export type StructuredChatExplorationRequest = Schema.Schema.Type<
+  typeof StructuredChatExplorationRequestSchema
+>
+
+/** Versioned browser response containing exploration presentation parts. */
+export const StructuredChatExplorationResponseSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  content: Schema.NonEmptyArray(AssistantMessagePartSchema).check(
+    Schema.isMaxLength(20),
+  ),
+})
+
+/** Versioned browser response containing exploration presentation parts. */
+export type StructuredChatExplorationResponse = Schema.Schema.Type<
+  typeof StructuredChatExplorationResponseSchema
+>
+
+const findViewParts = <View extends ViewDefinitionContract>(
+  parts: ReadonlyArray<AssistantMessagePart>,
   view: View,
 ): ReadonlyArray<ViewData<View>> => {
   const decodePart = Schema.decodeUnknownResult(view.partSchema)
   const matched: Array<ViewData<View>> = []
-  for (const part of response.message.content) {
+  for (const part of parts) {
     if (part.type !== "data" || part.name !== view.name) {
       continue
     }
@@ -148,6 +176,30 @@ export const findTurnParts = <View extends ViewDefinitionContract>(
   }
   return matched
 }
+
+/**
+ * Decode every assistant-message part matching the view, skipping mismatches
+ * and undecodable parts.
+ *
+ * Parts are matched by their encoded `name` and strictly decoded with the
+ * view's own part schema, whose data carries the literal view
+ * `schemaVersion`. Non-matching and undecodable parts are silently dropped,
+ * mirroring the fail-closed behaviour of browser renderer fallbacks.
+ */
+export const findTurnParts = <View extends ViewDefinitionContract>(
+  response: StructuredChatTurnResponse,
+  view: View,
+): ReadonlyArray<ViewData<View>> => {
+  return findViewParts(response.message.content, view)
+}
+
+/** Decode every exploration part matching one view definition. */
+export const findExplorationParts = <
+  View extends ViewDefinitionContract,
+>(
+  response: StructuredChatExplorationResponse,
+  view: View,
+): ReadonlyArray<ViewData<View>> => findViewParts(response.content, view)
 
 /** Built-in browser contract for one collect-stage question. */
 export const CollectQuestionView = defineView({
@@ -219,6 +271,22 @@ export interface PresentChatReplyOptions<Turn extends PresentableTurn> {
   ) => ReadonlyArray<AssistantMessagePart>
 }
 
+/** Minimum correlated exploration result accepted by presentation. */
+export interface PresentableExploration {
+  readonly name: string
+  readonly input: unknown
+  readonly execution: {
+    readonly views: ReadonlyArray<AssistantMessagePart>
+  }
+}
+
+/** Optional application projection for one exploration response. */
+export interface PresentChatExplorationOptions<
+  Run extends PresentableExploration,
+> {
+  readonly result?: (run: Run) => ReadonlyArray<AssistantMessagePart>
+}
+
 /** Construct and validate one plain assistant text part. */
 const makeText = (text: string): AssistantMessagePart =>
   Schema.decodeSync(Schema.toType(AssistantTextPartSchema))({
@@ -249,6 +317,20 @@ const parseResponse = (
   Schema.decodeUnknownEffect(StructuredChatTurnResponseSchema)(input, {
     onExcessProperty: "error",
   }).pipe(Effect.mapError(invalidPresentation))
+
+const parseExplorationResponse = (
+  input: {
+    readonly schemaVersion: number
+    readonly content: ReadonlyArray<AssistantMessagePart>
+  },
+): Effect.Effect<
+  StructuredChatExplorationResponse,
+  InvalidChatPresentation
+> =>
+  Schema.decodeUnknownEffect(StructuredChatExplorationResponseSchema)(
+    input,
+    { onExcessProperty: "error" },
+  ).pipe(Effect.mapError(invalidPresentation))
 
 const buildPresentation = <Value>(
   evaluate: () => Value,
@@ -392,3 +474,25 @@ export const presentChatReply = <Turn extends PresentableTurn>(
     }),
   )
 }
+
+/** Project one exploration result into the strict browser protocol. */
+export const presentChatExploration = <
+  Run extends PresentableExploration,
+>(
+  run: Run,
+  options: PresentChatExplorationOptions<Run> = {},
+): Effect.Effect<
+  StructuredChatExplorationResponse,
+  InvalidChatPresentation
+> =>
+  buildPresentation(
+    () => options.result?.(run) ?? run.execution.views,
+  ).pipe(
+    Effect.flatMap((content) =>
+      parseExplorationResponse({ schemaVersion: 1, content }),
+    ),
+    Effect.withSpan(
+      "popcomputer.structured_chat.presentation.exploration",
+      { attributes: { tool: run.name } },
+    ),
+  )

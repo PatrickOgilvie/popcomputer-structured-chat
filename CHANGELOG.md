@@ -8,6 +8,22 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Added side chats, exposed as read-only explorations, so applications can run
+  contextual query tools beside the main conversation without invoking the
+  model, changing the transcript, or advancing the session revision. The new
+  API includes encoded `Tool.makeCall` payloads, strict request and response
+  protocols, an assistant-ui client with typed outcomes, and fail-closed view
+  extraction.
+
+### Fixed
+
+- Preserved conflict-first handling for stale normal turns while sharing
+  persisted-session validation with explorations, and added an overlapping
+  turn-plus-explorations regression test proving that only the main lane
+  replaces the session.
+
 ## [0.3.0] - 2026-08-22
 
 ### Breaking changes

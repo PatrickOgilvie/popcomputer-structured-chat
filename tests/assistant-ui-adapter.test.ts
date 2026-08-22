@@ -7,10 +7,13 @@ import type {
   ChatModelRunResult,
   ThreadMessage,
 } from "@assistant-ui/react"
-import { Schema } from "effect"
+import { Result, Schema } from "effect"
 import {
   assistantChatSessionMetadataKey,
+  AssistantExplorationClientError,
+  makeAssistantExplorationClient,
   makeAssistantChatModelAdapter,
+  readLatestAssistantChatSession,
 } from "../src/integrations/assistant-ui.js"
 
 const compatibleAdapter: ChatModelAdapter =
@@ -457,5 +460,118 @@ describe("makeAssistantChatModelAdapter", () => {
     )
 
     expect(result.content).toEqual(successfulResponseBody.message.content)
+  })
+})
+
+describe("makeAssistantExplorationClient", () => {
+  test("sends the stable session id and call without the chat revision", async () => {
+    const requests: Array<{ readonly input: string; readonly init: RequestInit }> = []
+    const client = makeAssistantExplorationClient({
+      endpoint: "/api/chat/explore",
+      fetch: (input, init) => {
+        requests.push({ input, init })
+        return Promise.resolve(
+          new Response(JSON.stringify({
+            schemaVersion: 1,
+            content: [{ type: "text", text: "Related result" }],
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+      },
+    })
+    const signal = new AbortController().signal
+    const result = await client.run({
+      session: { id: "chat:01", revision: "7" },
+      call: { name: "related_query", arguments: { query: "nearby" } },
+    }, { signal })
+    const body = Schema.decodeUnknownSync(
+      Schema.fromJsonString(Chat.ExplorationRequestSchema),
+    )(String(requests[0]?.init.body), { onExcessProperty: "error" })
+
+    expect(requests[0]?.input).toBe("/api/chat/explore")
+    expect(requests[0]?.init.signal).toBe(signal)
+    expect(body).toEqual({
+      session: { id: "chat:01" },
+      call: { name: "related_query", arguments: { query: "nearby" } },
+    })
+    expect(JSON.stringify(body)).not.toContain("revision")
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      expect(result.success.content).toEqual([
+        { type: "text", text: "Related result" },
+      ])
+    }
+  })
+
+  test("classifies request and response failures without upstream detail", async () => {
+    const unavailable = makeAssistantExplorationClient({
+      endpoint: "/api/chat/explore",
+      fetch: () => Promise.resolve(new Response("private", { status: 503 })),
+    })
+    const invalid = makeAssistantExplorationClient({
+      endpoint: "/api/chat/explore",
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        schemaVersion: 1,
+        content: [],
+      }), { status: 200 })),
+    })
+    const input = {
+      session: { id: "chat:01", revision: "7" },
+      call: { name: "related_query", arguments: {} },
+    } as const
+
+    const [unavailableResult, invalidResult] = await Promise.all([
+      unavailable.run(input),
+      invalid.run(input),
+    ])
+
+    expect(Result.isFailure(unavailableResult)).toBe(true)
+    if (Result.isFailure(unavailableResult)) {
+      expect(unavailableResult.failure).toMatchObject({
+        _tag: "AssistantExplorationClientError",
+        reason: "request_failed",
+      })
+    }
+    expect(Result.isFailure(invalidResult)).toBe(true)
+    if (Result.isFailure(invalidResult)) {
+      expect(invalidResult.failure).toMatchObject({
+        _tag: "AssistantExplorationClientError",
+        reason: "invalid_response",
+      })
+    }
+  })
+
+  test("returns caller cancellation through the typed result", async () => {
+    const controller = new AbortController()
+    const cancellation = new Error("cancelled by caller")
+    const client = makeAssistantExplorationClient({
+      endpoint: "/api/chat/explore",
+      fetch: () => Promise.reject(cancellation),
+    })
+    controller.abort()
+
+    const result = await client.run({
+      session: { id: "chat:01", revision: "7" },
+      call: { name: "related_query", arguments: {} },
+    }, { signal: controller.signal })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(
+        AssistantExplorationClientError,
+      )
+      expect(result.failure).toMatchObject({ reason: "cancelled" })
+    }
+  })
+
+  test("reads the latest valid assistant-held session reference", () => {
+    expect(readLatestAssistantChatSession([
+      assistantMessage("2"),
+      assistantMessageWithInvalidSession(),
+      userMessage("Continue"),
+      assistantMessage("4"),
+    ])).toEqual({ id: "chat:01", revision: "4" })
   })
 })

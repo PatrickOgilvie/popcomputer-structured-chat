@@ -1,4 +1,4 @@
-import { Answer, Chat, Model, Question, Repair, Stage, Tool, View } from "../src/index.js"
+import { Answer, Chat, Model, Question, Repair, Session, Stage, Tool, View } from "../src/index.js"
 import * as OpenAI from "../src/model/openai-compatible.js"
 import { Chat as ChatTest } from "../src/testing.js"
 import { Context, Effect, Schema } from "effect"
@@ -206,6 +206,36 @@ const typedChat = Chat.define({
   version: 1,
   stages: [typedBrief, matching],
 })
+const exploratoryChat = Chat.define({
+  name: "typed_exploration_chat",
+  version: 1,
+  stages: [typedBrief, matching],
+  explorations: [tool],
+})
+const encodedToolCall = Tool.makeCall(tool, { query: "related" })
+const exploration = Chat.explore(exploratoryChat, {
+  sessionId: "typed-session",
+  call: encodedToolCall,
+})
+const presentedExploration = exploration.pipe(
+  Chat.presentExploration(exploratoryChat),
+)
+const assertExplorationBoundaries = (): void => {
+  // @ts-expect-error chats without exploration tools cannot be explored
+  Chat.explore(typedChat, {
+    sessionId: "typed-session",
+    call: encodedToolCall,
+  })
+  Chat.define({
+    name: "unsafe_command_exploration",
+    version: 1,
+    stages: [typedBrief, matching],
+    // @ts-expect-error explorations accept read-only query tools only
+    explorations: [command],
+  })
+  // @ts-expect-error makeCall uses the tool input schema's Type side
+  Tool.makeCall(tool, { query: 42 })
+}
 // @ts-expect-error compiled runtime operations stay behind Chat.turn
 void typedChat.reply
 const _assertOptionalBoundaryInputs = (
@@ -401,6 +431,39 @@ type _ToolSetErrorIsExact = Expect<
   Equal<Effect.Error<typeof setExecution>, ExpectedToolSetError>
 >
 
+type ExpectedExplorationError =
+  | DomainError
+  | Tool.InvalidCall
+  | Tool.InvalidProjection
+  | Session.StoreUnavailable
+  | Session.NotFound
+  | Session.Invalid
+
+type _ExplorationErrorIsExact = Expect<
+  Equal<Effect.Error<typeof exploration>, ExpectedExplorationError>
+>
+
+type _ExplorationRequirementsAreExact = Expect<
+  Equal<
+    Effect.Services<typeof exploration>,
+    Session.Store | Dependency
+  >
+>
+
+type _ExplorationPresentationIsExact = Expect<
+  Equal<
+    Effect.Success<typeof presentedExploration>,
+    Chat.ExplorationResponse
+  >
+>
+
+type _ExplorationDefinitionsAreExact = Expect<
+  Equal<
+    Chat.ExplorationsOf<typeof exploratoryChat>,
+    readonly [typeof tool]
+  >
+>
+
 const _setEffect: Effect.Effect<
   Effect.Success<typeof execution>,
   ExpectedToolSetError,
@@ -432,6 +495,7 @@ void _stageEffect
 void validatedExecution
 void commandExecution
 void assertCommandBoundaries
+void assertExplorationBoundaries
 void assertScenarioTypes
 void assertEscapeValueTypes
 void _part
@@ -441,3 +505,6 @@ void typedRepair
 void assertDefinitionAuthenticity
 void assertProviderAuthenticity
 void _assertPresentChatReplyAcceptsReplyDirectly
+void encodedToolCall
+void exploration
+void presentedExploration

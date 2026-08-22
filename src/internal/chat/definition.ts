@@ -1,6 +1,7 @@
 import { Function as Fn } from "effect"
 import type {
   ChatDefinition as RuntimeDefinition,
+  ChatExplorationTuple,
   ChatStageTuple,
   DefineChatInput,
 } from "../../core/chat.js"
@@ -11,7 +12,8 @@ import type { Definition } from "../../Chat.js"
 type AnyRuntimeDefinition = RuntimeDefinition<
   string,
   number,
-  ChatStageTuple
+  ChatStageTuple,
+  ChatExplorationTuple
 >
 
 const compiledDefinitions = new WeakMap<object, AnyRuntimeDefinition>()
@@ -21,16 +23,18 @@ export const compile = <
   const Name extends string,
   const Version extends number,
   const Stages extends ChatStageTuple,
+  const Explorations extends ChatExplorationTuple = readonly [],
 >(
-  input: DefineChatInput<Name, Version, Stages>,
-): Definition<Name, Version, Stages> => {
+  input: DefineChatInput<Name, Version, Stages, Explorations>,
+): Definition<Name, Version, Stages, Explorations> => {
   const runtime = defineChat(input)
   const definition = structuredDefinition("chat")<
-    Definition<Name, Version, Stages>
+    Definition<Name, Version, Stages, Explorations>
   >({
     name: runtime.name,
     version: runtime.version,
     stages: runtime.stages,
+    explorations: runtime.explorations,
     repair: runtime.repair,
   })
 
@@ -48,9 +52,10 @@ export const read = <
   const Name extends string,
   const Version extends number,
   const Stages extends ChatStageTuple,
+  const Explorations extends ChatExplorationTuple,
 >(
-  definition: Definition<Name, Version, Stages>,
-): RuntimeDefinition<Name, Version, Stages> => {
+  definition: Definition<Name, Version, Stages, Explorations>,
+): RuntimeDefinition<Name, Version, Stages, Explorations> => {
   const runtime = compiledDefinitions.get(definition)
   if (runtime === undefined) {
     throw new Error(
@@ -61,6 +66,6 @@ export const read = <
   // SAFETY: compile stored the runtime under this exact opaque definition.
   return Fn.cast<
     typeof runtime,
-    RuntimeDefinition<Name, Version, Stages>
+    RuntimeDefinition<Name, Version, Stages, Explorations>
   >(runtime)
 }

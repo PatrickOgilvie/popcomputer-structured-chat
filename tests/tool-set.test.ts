@@ -17,6 +17,35 @@ const Delete = Tool.define({
 })
 
 describe("Tool.set", () => {
+  test("encodes typed inputs and preserves call-result correlation", async () => {
+    const ChangedSince = Tool.define({
+      name: "changed_since",
+      description: "Find records changed since one instant.",
+      input: Schema.Struct({ since: Schema.DateFromString }),
+      execute: ({ since }) =>
+        Effect.succeed({ timestamp: since.getTime() }),
+    })
+    const since = new Date("2026-08-22T10:00:00.000Z")
+    const call = Tool.makeCall(ChangedSince, { since })
+    const run = await Effect.runPromise(
+      Tool.set(ChangedSince).runCall(call),
+    )
+
+    expect(call).toEqual({
+      name: "changed_since",
+      arguments: { since: "2026-08-22T10:00:00.000Z" },
+    })
+    expect(run.name).toBe("changed_since")
+    expect(run.input).toEqual({
+      since: new Date("2026-08-22T10:00:00.000Z"),
+    })
+    expect(run.execution.serverResult).toEqual({
+      timestamp: since.getTime(),
+    })
+    expect(run.execution.modelResult).toBeUndefined()
+    expect(run.execution.views).toEqual([])
+  })
+
   test("classifies envelope, name, and argument failures without sentinels", async () => {
     const tools = Tool.set(Search)
     const [envelope, name, arguments_] = await Effect.runPromise(

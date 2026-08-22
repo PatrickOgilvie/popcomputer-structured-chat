@@ -4,6 +4,7 @@ import {
   Scenario,
 } from "@popcomputer/structured-chat/testing"
 import {
+  makeAssistantExplorationClient,
   makeAssistantChatModelAdapter,
   makeAssistantView,
 } from "@popcomputer/structured-chat/assistant-ui"
@@ -15,7 +16,7 @@ import {
   cleanupExpiredD1ChatSessions,
   makeD1ChatSessionStore,
 } from "@popcomputer/structured-chat/d1"
-import { Effect, Schema } from "effect"
+import { Effect, Result, Schema } from "effect"
 
 const ResultView = View.define({
   name: "result",
@@ -217,4 +218,37 @@ if (
   adapted.content[0].text !== "Adapter ready"
 ) {
   throw new Error("Assistant chat adapter smoke test failed")
+}
+
+let requestedExploration
+const explorationClient = makeAssistantExplorationClient({
+  endpoint: "https://example.invalid/explore",
+  fetch: (_input, init) => {
+    requestedExploration = JSON.parse(String(init.body))
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          schemaVersion: 1,
+          content: [{ type: "text", text: "Exploration ready" }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    )
+  },
+})
+const explored = await explorationClient.run({
+  session: { id: "node-smoke", revision: "9" },
+  call: { name: "echo", arguments: { value: "related" } },
+})
+
+if (
+  requestedExploration.session.revision !== undefined ||
+  requestedExploration.session.id !== "node-smoke" ||
+  !Result.isSuccess(explored) ||
+  explored.success.content[0]?.type !== "text"
+) {
+  throw new Error("Assistant exploration client smoke test failed")
 }

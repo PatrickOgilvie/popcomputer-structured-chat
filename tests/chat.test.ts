@@ -1591,6 +1591,38 @@ describe("Chat.define", () => {
     expect(calls).toBe(3)
   })
 
+  test("rejects a stale revision before validating stored chat state", async () => {
+    const store = Layer.succeed(Session.Store, {
+      load: () =>
+        Effect.succeed({
+          revision: "2",
+          state: {},
+          messages: [],
+        }),
+      replace: () => Effect.die("a stale turn must not replace state"),
+    })
+    const model = Layer.succeed(Model.Service, {
+      requestTool: () => Effect.die("a stale turn must not call the model"),
+    })
+    const result = await Effect.runPromise(
+      Effect.result(
+        Chat.turn(Matchmaker, {
+          sessionId: "actor:stale-invalid-state",
+          expectedRevision: "1",
+          message: "Try again.",
+        }).pipe(Effect.provide(Layer.merge(store, model))),
+      ),
+    )
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(Session.Conflict)
+      expect(result.failure).toMatchObject({
+        reason: "concurrent_update",
+      })
+    }
+  })
+
   test("keeps the final tool stage available for follow-up searches", async () => {
     const observed = await Effect.runPromise(
       Ref.make<ReadonlyArray<Model.ToolRequest>>([]),

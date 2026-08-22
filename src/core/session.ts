@@ -65,6 +65,15 @@ export class ChatSessionConflict extends Schema.TaggedError<ChatSessionConflict>
   { reason: Schema.Literal("concurrent_update") },
 ) {}
 
+/** Safe reason that a requested persisted session was not found. */
+export const ChatSessionNotFoundReasonSchema = Schema.Literal("not_found")
+
+/** A requested persisted chat session does not exist. */
+export class ChatSessionNotFound extends Schema.TaggedError<ChatSessionNotFound>()(
+  "ChatSessionNotFound",
+  { reason: ChatSessionNotFoundReasonSchema },
+) {}
+
 /** Safe reason that session input or persisted data was rejected. */
 export const InvalidChatSessionReasonSchema = Schema.Literals([
   "invalid_input",

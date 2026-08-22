@@ -12,6 +12,10 @@ import {
   type StructuredChatSessionReference,
   type StructuredChatAssistantMessage,
   type StructuredChatTurnResponse,
+  type StructuredChatExplorationRequest,
+  type StructuredChatExplorationResponse,
+  StructuredChatExplorationRequestSchema,
+  StructuredChatExplorationResponseSchema,
   StructuredChatSessionReferenceSchema,
   StructuredChatTurnRequestSchema,
   StructuredChatTurnResponseSchema,
@@ -185,7 +189,7 @@ const readMessageText = (message: AssistantChatThreadMessage): string =>
     .join("\n")
     .trim()
 
-const readLatestSession = (
+export const readLatestAssistantChatSession = (
   messages: ReadonlyArray<AssistantChatThreadMessage>,
 ): Schema.Schema.Type<
   typeof StructuredChatTurnRequestSchema
@@ -218,7 +222,7 @@ const readTurnRequest = (
   }
 
   return Schema.decodeSync(StructuredChatTurnRequestSchema)({
-    session: readLatestSession(messages),
+    session: readLatestAssistantChatSession(messages),
     message: readMessageText(message),
   })
 }
@@ -297,6 +301,129 @@ export const makeAssistantChatModelAdapter = (
                 },
         },
       }
+    },
+  }
+}
+
+/** Safe reason an assistant exploration did not produce a response. */
+export const AssistantExplorationClientErrorReasonSchema = Schema.Literals([
+  "cancelled",
+  "request_failed",
+  "invalid_response",
+])
+
+/** A browser exploration ended without exposing upstream details. */
+export class AssistantExplorationClientError extends Schema.TaggedError<AssistantExplorationClientError>()(
+  "AssistantExplorationClientError",
+  { reason: AssistantExplorationClientErrorReasonSchema },
+) {}
+
+/** Typed outcome of one browser exploration request. */
+export type AssistantExplorationClientResult = Result.Result<
+  StructuredChatExplorationResponse,
+  AssistantExplorationClientError
+>
+
+/** Browser dependencies for one structured exploration endpoint. */
+export interface AssistantExplorationClientOptions {
+  readonly endpoint: string
+  readonly fetch?: AssistantChatFetch
+}
+
+/** Input retaining the full assistant-held session reference for callers. */
+export interface AssistantExplorationClientRunInput {
+  readonly session: StructuredChatSessionReference
+  readonly call: StructuredChatExplorationRequest["call"]
+}
+
+/** Final invocation options kept separate from semantic request input. */
+export interface AssistantExplorationClientRunOptions {
+  readonly signal?: AbortSignal
+}
+
+/** Small browser client for non-progressing conversation explorations. */
+export interface AssistantExplorationClient {
+  /** Run one exploration with every expected outcome in the returned result. */
+  readonly run: (
+    input: AssistantExplorationClientRunInput,
+    options?: AssistantExplorationClientRunOptions,
+  ) => Promise<AssistantExplorationClientResult>
+}
+
+/** Create a strict client for one structured exploration endpoint. */
+export const makeAssistantExplorationClient = (
+  options: AssistantExplorationClientOptions,
+): AssistantExplorationClient => {
+  const fetch_ =
+    options.fetch ??
+    ((input: string, init: RequestInit) =>
+      globalThis.fetch(input, init))
+
+  return {
+    run: async (input, runOptions = {}) => {
+      const request = Schema.decodeSync(
+        StructuredChatExplorationRequestSchema,
+      )({
+        session: { id: input.session.id },
+        call: input.call,
+      }, { onExcessProperty: "error" })
+
+      const failure = (
+        reason: Schema.Schema.Type<
+          typeof AssistantExplorationClientErrorReasonSchema
+        >,
+      ) =>
+        Result.fail(new AssistantExplorationClientError({ reason }))
+      const wasCancelled = () => runOptions.signal?.aborted === true
+
+      let response: Response
+      try {
+        const requestInit: RequestInit = {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(request),
+        }
+        if (runOptions.signal !== undefined) {
+          requestInit.signal = runOptions.signal
+        }
+        response = await fetch_(options.endpoint, requestInit)
+      } catch {
+        if (wasCancelled()) {
+          return failure("cancelled")
+        }
+        return failure("request_failed")
+      }
+      if (wasCancelled()) {
+        return failure("cancelled")
+      }
+      if (!response.ok) {
+        return failure("request_failed")
+      }
+
+      let body: unknown
+      try {
+        body = await response.json()
+      } catch {
+        if (wasCancelled()) {
+          return failure("cancelled")
+        }
+        return failure("invalid_response")
+      }
+      if (wasCancelled()) {
+        return failure("cancelled")
+      }
+      const decoded = Schema.decodeUnknownExit(
+        StructuredChatExplorationResponseSchema,
+      )(body, { onExcessProperty: "error" })
+      if (Exit.isFailure(decoded)) {
+        return failure("invalid_response")
+      }
+
+      return Result.succeed(decoded.value)
     },
   }
 }

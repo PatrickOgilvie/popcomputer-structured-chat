@@ -2,6 +2,8 @@ export {
   ChatSessionConflict as Conflict,
   ChatSessionIdSchema as IdSchema,
   ChatSessionNamespaceSchema as NamespaceSchema,
+  ChatSessionNotFound as NotFound,
+  ChatSessionNotFoundReasonSchema as NotFoundReasonSchema,
   ChatSessionReplacementSchema as ReplacementSchema,
   ChatSessionRevisionSchema as RevisionSchema,
   ChatSessionSnapshotSchema as SnapshotSchema,

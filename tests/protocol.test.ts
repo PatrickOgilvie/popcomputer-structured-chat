@@ -382,3 +382,73 @@ describe("Chat.findTurnParts", () => {
     expect(Chat.findTurnParts(response, Card)).toEqual([])
   })
 })
+
+describe("exploration protocol", () => {
+  const Card = View.define({
+    name: "exploration_card",
+    version: 1,
+    schema: Schema.Struct({ value: Schema.String }),
+  })
+
+  test("accepts only a stable session id and one encoded tool call", () => {
+    const decode = Schema.decodeUnknownResult(
+      Chat.ExplorationRequestSchema,
+    )
+    const valid = decode({
+      session: { id: "chat:01" },
+      call: { name: "related_query", arguments: { query: "nearby" } },
+    }, { onExcessProperty: "error" })
+    const revision = decode({
+      session: { id: "chat:01", revision: "2" },
+      call: { name: "related_query", arguments: {} },
+    }, { onExcessProperty: "error" })
+
+    expect(Result.isSuccess(valid)).toBe(true)
+    expect(Result.isFailure(revision)).toBe(true)
+  })
+
+  test("presents validated views without pretending to advance the chat", async () => {
+    const response = await Effect.runPromise(
+      Chat.presentExplorationRun({
+        name: "related_query",
+        input: { query: "nearby" },
+        execution: {
+          views: [Card.make({ value: "Related result" })],
+        },
+      }),
+    )
+
+    expect(response).toEqual({
+      schemaVersion: 1,
+      content: [
+        {
+          type: "data",
+          name: "exploration_card",
+          data: { schemaVersion: 1, value: "Related result" },
+        },
+      ],
+    })
+    expect(response).not.toHaveProperty("session")
+    expect(response).not.toHaveProperty("message")
+    expect(Chat.findExplorationParts(response, Card)).toEqual([
+      { schemaVersion: 1, value: "Related result" },
+    ])
+  })
+
+  test("rejects an empty exploration presentation", async () => {
+    const result = await Effect.runPromise(
+      Effect.result(
+        Chat.presentExplorationRun({
+          name: "related_query",
+          input: {},
+          execution: { views: [] },
+        }),
+      ),
+    )
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(Chat.InvalidPresentation)
+    }
+  })
+})

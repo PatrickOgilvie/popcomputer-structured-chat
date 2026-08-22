@@ -2,6 +2,7 @@ import type { Effect, Schema } from "effect"
 import type { Definition } from "../Chat.js"
 import type {
   ChatError,
+  ChatExplorationTuple,
   ChatRequirements,
   ChatStageTuple,
   ChatState,
@@ -15,8 +16,9 @@ export const initialState = <
   const Name extends string,
   const Version extends number,
   const Stages extends ChatStageTuple,
+  const Explorations extends ChatExplorationTuple,
 >(
-  chat: Definition<Name, Version, Stages>,
+  chat: Definition<Name, Version, Stages, Explorations>,
 ): ChatState<Name, Version, Stages> => read(chat).initialState
 
 /** Strictly decode persisted state for an opaque chat definition. */
@@ -24,8 +26,9 @@ export const parseState = <
   const Name extends string,
   const Version extends number,
   const Stages extends ChatStageTuple,
+  const Explorations extends ChatExplorationTuple,
 >(
-  chat: Definition<Name, Version, Stages>,
+  chat: Definition<Name, Version, Stages, Explorations>,
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- this specialist boundary verifies malformed persisted state through the definition-owned parser
   input: unknown,
 ): Effect.Effect<ChatState<Name, Version, Stages>, Schema.SchemaError> =>
@@ -36,8 +39,9 @@ export const run = <
   const Name extends string,
   const Version extends number,
   const Stages extends ChatStageTuple,
+  const Explorations extends ChatExplorationTuple,
 >(
-  chat: Definition<Name, Version, Stages>,
+  chat: Definition<Name, Version, Stages, Explorations>,
   input: {
     readonly state: ChatState<Name, Version, Stages>
     readonly messages: ReadonlyArray<UntrustedMessage>

@@ -15,6 +15,9 @@ export const modelResult = Tool.modelResult
 /** Add one validated browser-view projection to a tool result. */
 export const present = Tool.present
 
+/** Encode one typed tool input into a transport-safe call. */
+export const makeCall = Tool.makeToolCall
+
 export {
   InvalidToolCall as InvalidCall,
   InvalidToolCallReasonSchema as InvalidCallReasonSchema,
@@ -39,6 +42,8 @@ export type {
   CommandExecutionContext,
   DefineCommandInput,
   DefineToolInput as DefineInput,
+  EncodedToolCall as EncodedCall,
+  EncodedToolCallOf as EncodedCallOf,
   ModelToolDefinition as ModelDefinition,
   StructuredCommand as Command,
   StructuredTool as Definition,
@@ -50,10 +55,12 @@ export type {
 } from "./core/tool.js"
 
 export type {
+  EncodedToolSetCall as EncodedSetCall,
   ToolSet as Set,
   ToolSetCall as SetCall,
   ToolSetError as SetError,
   ToolSetExecution as SetExecution,
   ToolSetRequirements as SetRequirements,
+  ToolSetRun as SetRun,
   ToolTuple as Tuple,
 } from "./core/tool-set.js"

@@ -23,21 +23,29 @@ import {
   type ToolStageDefinitionContract,
 } from "./stage.js"
 import type {
+  ToolSetError,
   ToolSetExecution,
+  ToolSetRequirements,
+  ToolSetRun,
+  ToolTuple,
 } from "./tool-set.js"
+import { defineToolSet } from "./tool-set.js"
 import { readToolExecutionModelContext } from "./tool.js"
 import { deriveCommandId } from "./command.js"
 import { defineTool, type QueryToolDefinitionContract } from "./tool.js"
+import { JsonValueSchema, type JsonValue } from "./json-value.js"
 import type { StandardRepair } from "./repair.js"
 import {
   ChatSessionConflict,
   ChatSessionIdSchema,
   ChatSessionNamespaceSchema,
+  ChatSessionNotFound,
   ChatSessionReplacementSchema,
   ChatSessionRevisionSchema,
   ChatSessionSnapshotSchema,
   ChatSessionStore,
   InvalidChatSession,
+  type ChatSessionSnapshot,
   type ChatSessionStoreUnavailable,
 } from "./session.js"
 import {
@@ -85,6 +93,9 @@ export type ChatStageTuple = readonly [
   ChatStageDefinitionContract,
   ...ReadonlyArray<ChatStageDefinitionContract>,
 ]
+
+/** Optional closed query-tool tuple exposed as conversation explorations. */
+export type ChatExplorationTuple = readonly [] | ToolTuple
 
 type UnionToIntersection<Union> = (
   Union extends unknown ? (value: Union) => void : never
@@ -238,15 +249,47 @@ export type ChatReplyError<Stages extends ChatStageTuple> =
   | ChatSessionConflict
   | InvalidChatSession
 
+/** Input for one read-only exploration against the latest session snapshot. */
+export interface ChatExploreInput {
+  readonly namespace?: string | undefined
+  readonly sessionId: string
+  readonly call: JsonValue
+}
+
+/** Correlated exploration result derived from the configured query tools. */
+export type ChatExplorationRun<
+  Explorations extends ChatExplorationTuple,
+> = Explorations extends ToolTuple ? ToolSetRun<Explorations> : never
+
+/** Failure union produced while loading and running one exploration. */
+export type ChatExploreError<
+  Explorations extends ChatExplorationTuple,
+> =
+  | ChatSessionStoreUnavailable
+  | ChatSessionNotFound
+  | InvalidChatSession
+  | (Explorations extends ToolTuple
+      ? ToolSetError<Explorations>
+      : never)
+
+/** Effect services required by one configured exploration tool. */
+export type ChatExploreRequirements<
+  Explorations extends ChatExplorationTuple,
+> = Explorations extends ToolTuple
+  ? ToolSetRequirements<Explorations>
+  : never
+
 /** Definition input for one sequential structured chat. */
 export interface DefineChatInput<
   Name extends string,
   Version extends number,
   Stages extends ChatStageTuple,
+  Explorations extends ChatExplorationTuple = readonly [],
 > {
   readonly name: Name
   readonly version: Version
   readonly stages: Stages
+  readonly explorations?: Explorations
   readonly repair?: StandardRepair
 }
 
@@ -255,10 +298,12 @@ export interface ChatDefinition<
   Name extends string,
   Version extends number,
   Stages extends ChatStageTuple,
+  Explorations extends ChatExplorationTuple = readonly [],
 > {
   readonly name: Name
   readonly version: Version
   readonly stages: Stages
+  readonly explorations: Explorations
   readonly repair: StandardRepair | undefined
   readonly stateSchema: Schema.Codec<ChatState<Name, Version, Stages>, unknown>
   readonly initialState: ChatState<Name, Version, Stages>
@@ -303,6 +348,15 @@ export interface ChatDefinition<
     ChatReplyError<Stages>,
     ChatSessionStore | ChatRequirements<Stages>
   >
+
+  /** Load the latest session and run one configured read-only query tool. */
+  readonly explore: (
+    input: ChatExploreInput,
+  ) => Effect.Effect<
+    ChatExplorationRun<Explorations>,
+    ChatExploreError<Explorations>,
+    ChatSessionStore | ChatExploreRequirements<Explorations>
+  >
 }
 
 const invalidTransition = (
@@ -326,6 +380,12 @@ const ChatReplyBoundaryInputSchema = Schema.Struct({
   message: UntrustedMessageSchema.fields.content,
 })
 
+const ChatExploreBoundaryInputSchema = Schema.Struct({
+  namespace: Schema.optional(ChatSessionNamespaceSchema),
+  sessionId: ChatSessionIdSchema,
+  call: JsonValueSchema,
+})
+
 const maximumPersistedMessages = 200
 const maximumMessagesAddedPerTurn = 2
 
@@ -339,9 +399,10 @@ export const defineChat = <
   const Name extends string,
   const Version extends number,
   const Stages extends ChatStageTuple,
+  const Explorations extends ChatExplorationTuple = readonly [],
 >(
-  definition: DefineChatInput<Name, Version, Stages>,
-): ChatDefinition<Name, Version, Stages> => {
+  definition: DefineChatInput<Name, Version, Stages, Explorations>,
+): ChatDefinition<Name, Version, Stages, Explorations> => {
   Schema.decodeSync(ChatNameSchema)(definition.name)
   Schema.decodeSync(ChatVersionSchema)(definition.version)
   const names = definition.stages.map(({ name }) => name)
@@ -367,6 +428,17 @@ export const defineChat = <
     )
   }
   const repair = definition.repair
+  const explorationDefinitions = definition.explorations ?? []
+  const explorationToolSet =
+    explorationDefinitions.length === 0
+      ? undefined
+      : defineToolSet(
+          // SAFETY: a non-empty ChatExplorationTuple is exactly ToolTuple;
+          // defineToolSet rechecks query-only operation and unique names.
+          ...cast<typeof explorationDefinitions, ToolTuple>(
+            explorationDefinitions,
+          ),
+        )
   if (
     repair !== undefined &&
     (finalStage?._tag !== "ToolStage" ||
@@ -599,6 +671,36 @@ export const defineChat = <
       )
     })
 
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- this owned persistence boundary strictly parses the adapter's intentionally raw load result
+  const parseSessionSnapshot = (loaded: unknown) =>
+    Schema.decodeUnknownEffect(ChatSessionSnapshotSchema)(loaded, {
+      onExcessProperty: "error",
+    }).pipe(
+      Effect.mapError(() => invalidSession("invalid_snapshot")),
+    )
+
+  const parseStoredSession = (snapshot: ChatSessionSnapshot) =>
+    Effect.gen(function* () {
+      const state = yield* Schema.decodeUnknownEffect(stateSchema)(
+        snapshot.state,
+        { onExcessProperty: "error" },
+      ).pipe(
+        Effect.mapError(() => invalidSession("invalid_state")),
+      )
+      // SAFETY: stateSchema decoded this definition's exact state envelope.
+      const runtimeState = cast<typeof state, RuntimeChatState>(state)
+      if (!isGroundedInMessages(runtimeState, snapshot.messages)) {
+        return yield* Effect.fail(invalidSession("invalid_state"))
+      }
+
+      return {
+        snapshot,
+        state,
+        runtimeState,
+        messages: snapshot.messages,
+      }
+    })
+
   const applyConversationRepairs = (
     state: RuntimeChatState,
     messages: ReadonlyArray<UntrustedMessage>,
@@ -663,7 +765,12 @@ export const defineChat = <
     applyRepairs: applyConversationRepairs,
   })
 
-  const run: ChatDefinition<Name, Version, Stages>["run"] = (input) => {
+  const run: ChatDefinition<
+    Name,
+    Version,
+    Stages,
+    Explorations
+  >["run"] = (input) => {
     // SAFETY: ChatState is generated from the same stage tuple as the sealed
     // runtime state contract; only generic correlations are erased here.
     const runtimeState = cast<
@@ -687,7 +794,12 @@ export const defineChat = <
     >(runtime)
   }
 
-  const reply: ChatDefinition<Name, Version, Stages>["reply"] = (input) =>
+  const reply: ChatDefinition<
+    Name,
+    Version,
+    Stages,
+    Explorations
+  >["reply"] = (input) =>
     Effect.gen(function* () {
       const parsedInput = yield* Schema.decodeUnknownEffect(
         ChatReplyBoundaryInputSchema,
@@ -715,14 +827,7 @@ export const defineChat = <
       const snapshot =
         loaded === null
           ? null
-          : yield* Schema.decodeUnknownEffect(ChatSessionSnapshotSchema)(
-              loaded,
-              { onExcessProperty: "error" },
-            ).pipe(
-              Effect.mapError(() =>
-                invalidSession("invalid_snapshot"),
-              ),
-            )
+          : yield* parseSessionSnapshot(loaded)
 
       if (
         (snapshot === null &&
@@ -735,27 +840,17 @@ export const defineChat = <
         )
       }
 
-      const state =
+      const storedSession =
         snapshot === null
-          ? initialState
-          : yield* Schema.decodeUnknownEffect(stateSchema)(snapshot.state, {
-              onExcessProperty: "error",
-            }).pipe(
-              Effect.mapError(() =>
-                invalidSession("invalid_state"),
-              ),
-            )
-      const previousMessages = snapshot?.messages ?? []
-      // SAFETY: stateSchema decoded this definition's exact state envelope.
-      const runtimeState = cast<typeof state, RuntimeChatState>(state)
-      if (
-        !isGroundedInMessages(
-          runtimeState,
-          previousMessages,
-        )
-      ) {
-        return yield* Effect.fail(invalidSession("invalid_state"))
-      }
+          ? null
+          : yield* parseStoredSession(snapshot)
+      const state =
+        storedSession?.state ?? initialState
+      const previousMessages = storedSession?.messages ?? []
+      const runtimeState =
+        storedSession?.runtimeState ??
+        // SAFETY: initialState was decoded by this definition's stateSchema.
+        cast<typeof initialState, RuntimeChatState>(initialState)
       if (
         previousMessages.length + maximumMessagesAddedPerTurn >
         maximumPersistedMessages
@@ -877,10 +972,76 @@ export const defineChat = <
       }),
     )
 
+  const exploreRuntime = (input: ChatExploreInput) =>
+    Effect.gen(function* () {
+      const parsedInput = yield* Schema.decodeUnknownEffect(
+        ChatExploreBoundaryInputSchema,
+      )(input, { onExcessProperty: "error" }).pipe(
+        Effect.mapError(() => invalidSession("invalid_input")),
+      )
+      if (explorationToolSet === undefined) {
+        return yield* Effect.fail(invalidSession("invalid_input"))
+      }
+
+      const store = yield* ChatSessionStore
+      const loaded = yield* store.load({
+        namespace: parsedInput.namespace ?? "",
+        sessionId: parsedInput.sessionId,
+        chat: definition.name,
+        version: definition.version,
+      }).pipe(
+        Effect.withSpan(
+          "popcomputer.structured_chat.exploration.session.load",
+          {
+            attributes: {
+              chat: definition.name,
+              version: definition.version,
+            },
+          },
+        ),
+      )
+      if (loaded === null) {
+        return yield* Effect.fail(
+          new ChatSessionNotFound({ reason: "not_found" }),
+        )
+      }
+      const snapshot = yield* parseSessionSnapshot(loaded)
+      yield* parseStoredSession(snapshot)
+      const executed = yield* explorationToolSet.runCall(parsedInput.call)
+
+      // SAFETY: explorationToolSet was compiled from Explorations after the
+      // non-empty branch, and runCall preserves each member's correlation.
+      return cast<
+        typeof executed,
+        ChatExplorationRun<Explorations>
+      >(executed)
+    }).pipe(
+      Effect.withSpan("popcomputer.structured_chat.exploration.run", {
+        attributes: { chat: definition.name },
+      }),
+    )
+  // SAFETY: explorationToolSet is compiled from definition.explorations;
+  // its erased runtime unions are restored by the same concrete tuple here.
+  const explore = cast<
+    typeof exploreRuntime,
+    ChatDefinition<
+      Name,
+      Version,
+      Stages,
+      Explorations
+    >["explore"]
+  >(exploreRuntime)
+
   return {
     name: definition.name,
     version: definition.version,
     stages: definition.stages,
+    // SAFETY: omitted explorations correspond to the default empty tuple;
+    // supplied definitions retain their exact inferred tuple.
+    explorations: cast<
+      typeof explorationDefinitions,
+      Explorations
+    >(explorationDefinitions),
     repair,
     stateSchema,
     initialState,
@@ -906,5 +1067,6 @@ export const defineChat = <
       }),
     run,
     reply,
+    explore,
   }
 }

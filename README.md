@@ -427,6 +427,107 @@ const results = Chat.findTurnParts(response, ResultCards).map(
 )
 ```
 
+## Explore without interrupting the conversation
+
+An exploration is one application-selected query that runs beside the main
+chat. It loads and validates the latest session, executes a registered
+read-only tool, and returns independently renderable content. It does not call
+the model, append messages, replace the session, or issue a new revision.
+
+Register the closed query set on the chat. A view can carry a complete call
+without restating the tool's input encoding:
+
+```ts
+const FindRelated = Tool.define({
+  name: "find_related",
+  description: "Find records related to one visible result.",
+  input: Schema.Struct({ seedId: Schema.String }),
+  execute: ({ seedId }) => Catalog.findRelated(seedId),
+}).pipe(
+  Tool.present(RelatedCards, toRelatedCards),
+)
+
+const Results = View.define({
+  name: "results",
+  version: 1,
+  schema: Schema.Struct({
+    records: Schema.Array(RecordCard),
+    exploration: Schema.Struct({
+      label: Schema.String,
+      call: Chat.ExplorationCallSchema,
+    }),
+  }),
+})
+
+const ResourceFinder = Chat.define({
+  name: "resource_finder",
+  version: 1,
+  stages: [RequestDetails, Lookup],
+  explorations: [FindRelated],
+})
+
+const viewData = {
+  records,
+  exploration: {
+    label: "Find related",
+    call: Tool.makeCall(FindRelated, { seedId: records[0].id }),
+  },
+}
+```
+
+The server parses the small exploration protocol and derives the namespace
+from authenticated application context:
+
+```ts
+const request = Schema.decodeUnknownSync(
+  Chat.ExplorationRequestSchema,
+)(await httpRequest.json(), { onExcessProperty: "error" })
+
+const response = Chat.explore(ResourceFinder, {
+  namespace: authenticatedTenantId,
+  sessionId: request.session.id,
+  call: request.call,
+}).pipe(Chat.presentExploration(ResourceFinder))
+```
+
+For assistant-ui, keep exploration state in the component that owns the
+button or slice. The dedicated client accepts the full locally held session
+reference but sends only its stable ID:
+
+```ts
+import {
+  makeAssistantExplorationClient,
+} from "@popcomputer/structured-chat/assistant-ui"
+import { Result } from "effect"
+
+const explorationClient = makeAssistantExplorationClient({
+  endpoint: "/api/resource-finder/explore",
+})
+
+const result = await explorationClient.run(
+  { session, call: viewData.exploration.call },
+  { signal: abortController.signal },
+)
+
+if (Result.isFailure(result)) {
+  // cancelled | request_failed | invalid_response
+  return showExplorationFailure(result.failure.reason)
+}
+
+const related = Chat.findExplorationParts(result.success, RelatedCards)
+```
+
+Explorations may overlap a normal turn because they never call
+`Session.Store.replace`. They always read the latest available snapshot, so
+the browser does not send an anchor revision. Query tools are observationally
+read-only by contract; commands are rejected from `explorations` at both the
+type and runtime boundaries. Results are ephemeral and are not restored after
+a reload or included in later model context.
+
+See the compile-checked
+[`exploration-lane.ts`](./examples/exploration-lane.ts) example for the full
+definition and endpoint composition.
+
 ## Continue naturally after the first tool result
 
 `Stage.tools(...)` stays active by default. A user can refine the previous

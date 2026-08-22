@@ -9,6 +9,7 @@ import type {
   ToolExecution,
   ToolCall,
   ToolSchema,
+  EncodedToolCallOf,
 } from "./tool.js"
 import {
   InvalidToolCall as InvalidToolCallError,
@@ -59,6 +60,10 @@ type ToolCallOf<Tool> = Tool extends StructuredTool<
 export type ToolSetCall<Tools extends ModelToolTuple> =
   ToolCallOf<Tools[number]>
 
+/** Encoded call union accepted by any member of one tool set. */
+export type EncodedToolSetCall<Tools extends ModelToolTuple> =
+  EncodedToolCallOf<Tools[number]>
+
 type ToolErrorOf<Tool> = Tool extends StructuredTool<
   infer _Name,
   infer _InputSchema,
@@ -88,6 +93,31 @@ type ToolRequirementsOf<Tool> = Tool extends StructuredTool<
 /** Execution union produced by any member of a tool set. */
 export type ToolSetExecution<Tools extends ToolTuple> =
   ToolExecutionOf<Tools[number]>
+
+type ToolRunOf<Tool> = Tool extends StructuredTool<
+  infer Name,
+  infer InputSchema,
+  infer ServerResult,
+  infer _Error,
+  infer _Requirements,
+  infer ModelSchema,
+  infer Presenters,
+  infer _Operation
+>
+  ? {
+      readonly name: Name
+      readonly input: Schema.Schema.Type<InputSchema>
+      readonly execution: ToolExecution<
+        ServerResult,
+        ModelSchema,
+        Presenters
+      >
+    }
+  : never
+
+/** Correlated call and execution union produced by one tool set. */
+export type ToolSetRun<Tools extends ToolTuple> =
+  ToolRunOf<Tools[number]>
 
 /** Application failure union produced by any member of a tool set. */
 export type ToolSetError<Tools extends ToolTuple> =
@@ -132,6 +162,15 @@ export interface ToolSet<Tools extends ToolTuple>
     input: JsonValue,
   ) => Effect.Effect<
     ToolSetExecution<Tools>,
+    ToolSetError<Tools>,
+    ToolSetRequirements<Tools>
+  >
+
+  /** Parse and execute one call while preserving its correlated identity. */
+  readonly runCall: (
+    input: JsonValue,
+  ) => Effect.Effect<
+    ToolSetRun<Tools>,
     ToolSetError<Tools>,
     ToolSetRequirements<Tools>
   >
@@ -235,6 +274,33 @@ export const defineToolSet = <const Tools extends ToolTuple>(
   >(executeRuntime)
   const executeCall = (input: JsonValue) =>
     parseCall(input).pipe(Effect.flatMap(execute))
+  const runRuntime = (call: ToolSetCall<Tools>) =>
+    selectTool(call.name).pipe(
+      Effect.flatMap((tool) =>
+        tool.execute(call.arguments).pipe(
+          Effect.map((execution) => ({
+            name: call.name,
+            input: call.arguments,
+            execution,
+          })),
+        ),
+      ),
+      Effect.withSpan("popcomputer.structured_chat.tool_set.run", {
+        attributes: { toolCount: tools.length },
+      }),
+    )
+  // SAFETY: parseCall establishes one specific registered tool member and
+  // runRuntime keeps that member's name, decoded input, and execution together.
+  const run = Fn.cast<
+    typeof runRuntime,
+    (call: ToolSetCall<Tools>) => Effect.Effect<
+      ToolSetRun<Tools>,
+      ToolSetError<Tools>,
+      ToolSetRequirements<Tools>
+    >
+  >(runRuntime)
+  const runCall = (input: JsonValue) =>
+    parseCall(input).pipe(Effect.flatMap(run))
 
   return {
     tools,
@@ -248,5 +314,6 @@ export const defineToolSet = <const Tools extends ToolTuple>(
       typeof executeCall,
       ToolSet<Tools>["executeCall"]
     >(executeCall),
+    runCall,
   }
 }

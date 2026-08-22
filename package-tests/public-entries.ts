@@ -8,9 +8,11 @@ import {
   Scenario,
 } from "@popcomputer/structured-chat/testing"
 import {
+  makeAssistantExplorationClient,
   makeAssistantChatModelAdapter,
   makeAssistantView,
   type AssistantChatModelAdapter,
+  type AssistantExplorationClientResult,
 } from "@popcomputer/structured-chat/assistant-ui"
 import {
   createStructuredChatDebugStore,
@@ -33,6 +35,14 @@ const PackageTool = Tool.define({
 
 const packageAdapter: AssistantChatModelAdapter =
   makeAssistantChatModelAdapter({ endpoint: "/chat" })
+const packageExplorationClient = makeAssistantExplorationClient({
+  endpoint: "/chat/explore",
+})
+const packageExplorationResult: Promise<AssistantExplorationClientResult> =
+  packageExplorationClient.run({
+    session: { id: "package-session", revision: "1" },
+    call: Tool.makeCall(PackageTool, { value: "related" }),
+  })
 const packageResponse: Chat.TurnResponse | undefined = undefined
 const packageDebugSnapshot: Debug.Snapshot | undefined =
   undefined
@@ -48,6 +58,7 @@ void inMemoryChatSessionStore
 void Scenario.call(PackageTool, { value: "typed" })
 void makeAssistantView(PackageView, { render: () => null })
 void packageAdapter
+void packageExplorationResult
 void packageDebugAdapter
 void packageDebugSnapshot
 void packageDebugStore

@@ -17,7 +17,7 @@ import {
   type StructuredDefinition,
 } from "./definition.js"
 import type { CommandId } from "./command.js"
-import type { JsonValue } from "./json-value.js"
+import { JsonValueSchema, type JsonValue } from "./json-value.js"
 
 /** Stable machine-facing name for one structured chat tool. */
 export const ToolNameSchema = Schema.Trimmed.check(
@@ -131,6 +131,29 @@ export type ToolCall<
   readonly name: Name
   readonly arguments: Schema.Schema.Type<InputSchema>
 }
+
+/** JSON-safe encoded call produced for one structured tool. */
+export type EncodedToolCall<
+  Name extends string,
+  InputSchema extends ToolSchema,
+> = {
+  readonly name: Name
+  readonly arguments: Schema.Codec.Encoded<InputSchema>
+} & JsonValue
+
+/** Encoded call shape derived from one concrete structured tool. */
+export type EncodedToolCallOf<Tool> = Tool extends StructuredTool<
+  infer Name,
+  infer InputSchema,
+  infer _ServerResult,
+  infer _Error,
+  infer _Requirements,
+  infer _ModelSchema,
+  infer _Presenters,
+  infer _Operation
+>
+  ? EncodedToolCall<Name, InputSchema>
+  : never
 
 /** One application-owned view projection attached to a tool. */
 export interface ToolPresenter<
@@ -553,6 +576,47 @@ const makeModelInputSchema = (
   }
 }
 
+/** Encode one typed tool input into its JSON-safe transport call. */
+export const makeToolCall = <
+  const Name extends string,
+  InputSchema extends ToolSchema,
+  ServerResult,
+  Error,
+  Requirements,
+  ModelSchema extends ToolSchema | undefined,
+  Presenters extends ReadonlyArray<
+    ToolPresenter<ServerResult, ViewDefinitionContract>
+  >,
+  Operation extends ToolOperation,
+>(
+  tool: StructuredTool<
+    Name,
+    InputSchema,
+    ServerResult,
+    Error,
+    Requirements,
+    ModelSchema,
+    Presenters,
+    Operation
+  >,
+  input: Schema.Schema.Type<InputSchema>,
+): EncodedToolCall<Name, InputSchema> => {
+  const encodedArguments = Schema.encodeSync(tool.inputSchema)(input)
+  const encodedCall = Schema.decodeUnknownSync(JsonValueSchema)({
+    name: tool.name,
+    arguments: encodedArguments,
+  }, {
+    onExcessProperty: "error",
+  })
+
+  // SAFETY: the input codec produced Encoded<InputSchema>; the JSON boundary
+  // then proved that the complete name-and-arguments envelope is transportable.
+  return Fn.cast<
+    typeof encodedCall,
+    EncodedToolCall<Name, InputSchema>
+  >(encodedCall)
+}
+
 const makeTool = <
   const Name extends string,
   InputSchema extends ToolSchema,
@@ -918,6 +982,7 @@ const present = <
 
 /** Combinators that add optional capabilities to a structured tool. */
 export const Tool = {
+  makeToolCall,
   modelResult,
   present,
 } as const
