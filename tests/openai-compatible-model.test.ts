@@ -12,6 +12,7 @@ import {
   Schema,
 } from "effect"
 import { TestClock, TestConsole } from "effect/testing"
+import { captureDebugEvents } from "../src/core/debug-trace.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"
 
 type OpenAICompatibleInput = OpenAI.ProviderRequest["input"]
@@ -433,6 +434,64 @@ describe("OpenAI.layer", () => {
       expect(result.failure).toBeInstanceOf(Model.Unavailable)
       expect(result.failure.reason).toBe("invalid_response")
     }
+  })
+
+  test("rejects a non-JSON provider value before recording model output", async () => {
+    const layer = OpenAI.layer({
+      timeoutMilliseconds: 1_000,
+      provider: OpenAI.Provider.cloudflareWorkersAI({
+        model: "@cf/google/gemma-4-26b-a4b-it",
+        complete: () =>
+          Promise.resolve(
+            // SAFETY: This test deliberately violates the callback's declared
+            // JSON contract to prove the runtime boundary still parses it.
+            {
+              choices: [
+                {
+                  message: {
+                    tool_calls: [
+                      {
+                        function: {
+                          name: "search",
+                          arguments: JSON.stringify({
+                            query: "public sector",
+                          }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+              invalidExtra: undefined,
+            } as never,
+          ),
+      }),
+    })
+
+    const captured = await Effect.runPromise(
+      captureDebugEvents(
+        Model.runToolStep({
+          instructions: [Model.Instruction.make("Call search once.")],
+          messages: [Model.Message.user("Find work")],
+          tools: Tool.set(Search),
+        }).pipe(Effect.provide(layer)),
+      ),
+    )
+
+    expect(Result.isFailure(captured.result)).toBe(true)
+    if (Result.isFailure(captured.result)) {
+      expect(captured.result.failure).toBeInstanceOf(Model.Unavailable)
+      expect(captured.result.failure.reason).toBe("invalid_response")
+    }
+    expect(captured.events.map(({ _tag }) => _tag)).toEqual([
+      "ModelInput",
+      "ModelCallFailed",
+      "ModelInput",
+      "ModelCallFailed",
+    ])
+    expect(captured.events.some(({ _tag }) => _tag === "ModelOutput")).toBe(
+      false,
+    )
   })
 
   test.each([

@@ -181,8 +181,13 @@ describe("Chat.define", () => {
     )
 
     expect(response).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       session: { id: "presented-session", revision: "1" },
+      answers: {
+        schemaVersion: 1,
+        chat: { name: "agency_matchmaker", version: 1 },
+        sections: [],
+      },
       message: {
         role: "assistant",
         content: [

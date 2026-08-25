@@ -2,6 +2,12 @@ import { Chat, View } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
 import { cast, Effect, Result, Schema } from "effect"
 
+const emptyUserAnswers = {
+  schemaVersion: 1,
+  chat: { name: "protocol_chat", version: 1 },
+  sections: [],
+} as const
+
 describe("Chat.presentReply", () => {
   test("classifies dynamic text construction failures in the Effect channel", async () => {
     const result = await Effect.runPromise(
@@ -11,6 +17,7 @@ describe("Chat.presentReply", () => {
             {
               sessionId: "chat:01",
               revision: "2",
+              userAnswers: emptyUserAnswers,
               turn: {
                 _tag: "ToolResult",
                 stage: "matching",
@@ -51,6 +58,7 @@ describe("Chat.presentReply", () => {
       Chat.presentReply({
         sessionId: "chat:01",
         revision: "1",
+        userAnswers: emptyUserAnswers,
         turn: {
           _tag: "Question",
           stage: "brief",
@@ -68,7 +76,7 @@ describe("Chat.presentReply", () => {
     )
 
     expect(response).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       session: { id: "chat:01", revision: "1" },
       message: {
         role: "assistant",
@@ -90,6 +98,7 @@ describe("Chat.presentReply", () => {
           },
         ],
       },
+      answers: emptyUserAnswers,
     })
   })
 
@@ -112,6 +121,8 @@ describe("Chat.presentReply", () => {
     )
 
     expect(response.session).toEqual({ id: "chat:01", revision: "2" })
+    expect(response.schemaVersion).toBe(2)
+    expect(response).not.toHaveProperty("answers")
     expect(response.message.content).toEqual([
       {
         type: "data",
@@ -133,6 +144,7 @@ describe("Chat.presentReply", () => {
         {
           sessionId: "chat:01",
           revision: "2",
+          userAnswers: emptyUserAnswers,
           turn: {
             _tag: "ToolResult",
             stage: "matching",
@@ -172,6 +184,7 @@ describe("Chat.presentReply", () => {
         Chat.presentReply({
           sessionId: "chat:01",
           revision: "2",
+          userAnswers: emptyUserAnswers,
           turn: {
             _tag: "ToolResult",
             stage: "matching",
@@ -202,10 +215,140 @@ describe("Chat.presentReply", () => {
     )
 
     expect(initial.session).toBeUndefined()
+    expect(initial.schemaVersion).toBe(2)
+    expect(initial).not.toHaveProperty("answers")
     expect(retryable.session).toEqual({
       id: "chat:01",
       revision: "2",
     })
+    expect(retryable.schemaVersion).toBe(2)
+    expect(retryable).not.toHaveProperty("answers")
+  })
+})
+
+describe("Chat turn response protocol v2", () => {
+  const message = {
+    role: "assistant",
+    content: [{ type: "text", text: "Continue" }],
+  } as const
+  const persisted = {
+    schemaVersion: 2,
+    session: { id: "chat:01", revision: "3" },
+    message,
+    answers: emptyUserAnswers,
+  } as const
+
+  test("strictly separates persisted and non-progressing members", () => {
+    const decodePersisted = Schema.decodeUnknownResult(
+      Chat.PersistedTurnResponseSchema,
+    )
+    const decodeNonProgressing = Schema.decodeUnknownResult(
+      Chat.NonProgressingResponseSchema,
+    )
+
+    expect(Result.isSuccess(decodePersisted(persisted, {
+      onExcessProperty: "error",
+    }))).toBe(true)
+    expect(Result.isFailure(decodePersisted({
+      schemaVersion: 2,
+      session: persisted.session,
+      message,
+    }, { onExcessProperty: "error" }))).toBe(true)
+    expect(Result.isSuccess(decodeNonProgressing({
+      schemaVersion: 2,
+      session: persisted.session,
+      message,
+    }, { onExcessProperty: "error" }))).toBe(true)
+    expect(Result.isFailure(decodeNonProgressing(persisted, {
+      onExcessProperty: "error",
+    }))).toBe(true)
+  })
+
+  test.each([
+    ["v1 envelope", { ...persisted, schemaVersion: 1 }],
+    [
+      "missing persisted session",
+      { schemaVersion: 2, message, answers: emptyUserAnswers },
+    ],
+    [
+      "wrong answer snapshot version",
+      {
+        ...persisted,
+        answers: { ...emptyUserAnswers, schemaVersion: 2 },
+      },
+    ],
+    [
+      "invalid answer state tag",
+      {
+        ...persisted,
+        answers: {
+          ...emptyUserAnswers,
+          sections: [
+            {
+              key: "brief",
+              label: "Brief",
+              fields: [
+                {
+                  key: "budget",
+                  label: "Budget",
+                  state: { _tag: "Unknown" },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+    [
+      "non-JSON accepted answer value",
+      {
+        ...persisted,
+        answers: {
+          ...emptyUserAnswers,
+          sections: [
+            {
+              key: "brief",
+              label: "Brief",
+              fields: [
+                {
+                  key: "budget",
+                  label: "Budget",
+                  state: { _tag: "Accepted", value: Number.NaN },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+    [
+      "nested excess answer property",
+      {
+        ...persisted,
+        answers: {
+          ...emptyUserAnswers,
+          sections: [
+            {
+              key: "brief",
+              label: "Brief",
+              fields: [
+                {
+                  key: "budget",
+                  label: "Budget",
+                  state: { _tag: "Missing", unexpected: true },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  ])("rejects %s", (_name, input) => {
+    const decoded = Schema.decodeUnknownResult(
+      Chat.TurnResponseSchema,
+    )(input, { onExcessProperty: "error" })
+
+    expect(Result.isFailure(decoded)).toBe(true)
   })
 })
 
@@ -304,6 +447,7 @@ describe("Chat.findTurnParts", () => {
       Chat.presentReply({
         sessionId: "chat:01",
         revision: "1",
+        userAnswers: emptyUserAnswers,
         turn: {
           _tag: "ToolResult",
           stage: "matching",
@@ -338,6 +482,7 @@ describe("Chat.findTurnParts", () => {
       Chat.presentReply({
         sessionId: "chat:01",
         revision: "3",
+        userAnswers: emptyUserAnswers,
         turn: {
           _tag: "Question",
           stage: "brief",
@@ -366,9 +511,10 @@ describe("Chat.findTurnParts", () => {
     // SAFETY: this exercises the finder beyond the non-empty transcript
     // contract, where it must fail closed with no matches.
     const emptyResponse = cast<unknown, Chat.TurnResponse>({
-      schemaVersion: 1,
+      schemaVersion: 2,
       session: { id: "chat:01", revision: "1" },
       message: { role: "assistant", content: [] },
+      answers: emptyUserAnswers,
     })
 
     expect(Chat.findTurnParts(emptyResponse, Card)).toEqual([])

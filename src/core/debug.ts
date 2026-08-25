@@ -1,15 +1,16 @@
 import { cast, Effect, Schema } from "effect"
 import { AnswerModeSchema } from "./answer.js"
 import {
+  inspectChatAnswers,
+  type TrustedChatAnswerState,
+} from "./chat-answer-inspection.js"
+import {
   ChatNameSchema,
   ChatVersionSchema,
   type ChatDefinition,
   type ChatStageTuple,
   type ChatState,
 } from "./chat.js"
-import {
-  readCollectStageInspection,
-} from "./collect-stage.js"
 import { JsonValueSchema } from "./json-value.js"
 import type { QuestionDefinitionContract } from "./question.js"
 import {
@@ -153,6 +154,7 @@ const InvalidChatDebugProjectionReasonSchema = Schema.Literals([
   "invalid_state",
   "invalid_answer_value",
   "invalid_snapshot",
+  "invalid_trace",
 ])
 
 /** A chat state or answer could not be projected into safe debug JSON. */
@@ -169,37 +171,9 @@ type DebugQuestion = Schema.Schema.Type<typeof DebugQuestionSchema>
 type DebugStage = StructuredChatDebugSnapshot["stages"][number]
 type DebugStageStatus = DebugStage["status"]
 
-interface RuntimeAcceptedAnswer {
-  readonly value: unknown
-  readonly evidence: {
-    readonly messageIndex: number
-    readonly quote: string
-  }
-}
-
-interface RuntimeCollectStageState {
-  readonly accepted: Readonly<
-    Partial<Record<string, RuntimeAcceptedAnswer>>
-  >
-  readonly asked: Readonly<
-    Partial<
-      Record<
-        string,
-        {
-          readonly messageIndex: number
-          readonly text: string
-        }
-      >
-    >
-  >
-}
-
-interface RuntimeChatState {
+interface RuntimeChatState extends TrustedChatAnswerState {
   readonly stage: number
   readonly status: "active" | "complete"
-  readonly stages: Readonly<
-    Partial<Record<string, RuntimeCollectStageState>>
-  >
   readonly repair?: {
     readonly pendingStages: ReadonlyArray<number>
   }
@@ -299,6 +273,19 @@ export const inspectChatState = <
     if (currentStage === undefined) {
       return yield* Effect.fail(invalidProjection("invalid_state"))
     }
+    const inspectedAnswers = yield* inspectChatAnswers({
+      definition: chat,
+      state: runtimeState,
+      include: () => true,
+    }).pipe(
+      Effect.mapError(({ reason }) => invalidProjection(reason)),
+    )
+    const answerSections = new Map(
+      inspectedAnswers.sections.map((section) => [
+        section.stage,
+        section,
+      ]),
+    )
 
     const stages: Array<DebugStage> = []
     for (const [index, stage] of chat.stages.entries()) {
@@ -329,64 +316,48 @@ export const inspectChatState = <
         continue
       }
 
-      const collectState = runtimeState.stages[stage.name]
-      if (collectState === undefined) {
+      const inspectedSection = answerSections.get(stage.name)
+      if (inspectedSection === undefined) {
         return yield* Effect.fail(invalidProjection("invalid_state"))
       }
-      const inspection = readCollectStageInspection(stage)
       const fields: Array<
         Extract<DebugStage, { readonly _tag: "CollectStage" }>["fields"][number]
       > = []
       let satisfiedFields = 0
 
-      for (const field of inspection.fields) {
-        const accepted = collectState.accepted[field.field]
-        const issuedQuestion = collectState.asked[field.field]
+      for (const field of inspectedSection.fields) {
         const fieldBase = {
           field: field.field,
           mode: field.mode,
           description: field.description,
           question: projectQuestion(field.question),
         }
-        if (accepted === undefined) {
-          fields.push(
-            issuedQuestion === undefined
-              ? { ...fieldBase, state: { _tag: "Missing" } }
-              : {
-                  ...fieldBase,
-                  state: {
-                    _tag: "Asked",
-                    issuedQuestion,
-                  },
-                },
-          )
+        if (field.state._tag === "Missing") {
+          fields.push({ ...fieldBase, state: { _tag: "Missing" } })
+          continue
+        }
+        if (field.state._tag === "Asked") {
+          fields.push({
+            ...fieldBase,
+            state: {
+              _tag: "Asked",
+              issuedQuestion: field.state.issuedQuestion,
+            },
+          })
           continue
         }
 
-        const encoded = yield* field.encodeValue(accepted.value).pipe(
-          Effect.mapError(() =>
-            invalidProjection("invalid_answer_value"),
-          ),
-        )
-        const value = yield* Schema.decodeUnknownEffect(JsonValueSchema)(
-          encoded,
-          { onExcessProperty: "error" },
-        ).pipe(
-          Effect.mapError(() =>
-            invalidProjection("invalid_answer_value"),
-          ),
-        )
         satisfiedFields += 1
         fields.push({
           ...fieldBase,
           state: {
             _tag: "Accepted",
-            value,
+            value: field.state.value,
             evidence:
               (parsedOptions.evidence ?? "include") === "include"
-                ? accepted.evidence
+                ? field.state.evidence
                 : null,
-            issuedQuestion: issuedQuestion ?? null,
+            issuedQuestion: field.state.issuedQuestion ?? null,
           },
         })
       }
@@ -398,7 +369,7 @@ export const inspectChatState = <
         status: stageStatus(runtimeState, index),
         repairPending,
         satisfiedFields,
-        totalFields: inspection.fields.length,
+        totalFields: inspectedSection.fields.length,
         fields,
       })
     }

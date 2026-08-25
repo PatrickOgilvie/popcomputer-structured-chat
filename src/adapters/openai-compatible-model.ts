@@ -1,4 +1,5 @@
 import {
+  cast,
   Effect,
   Exit,
   JsonSchema,
@@ -14,6 +15,10 @@ import {
   type StructuredChatModelService,
   type ToolModelRequest,
 } from "../core/model.js"
+import {
+  nextDebugModelCall,
+  recordDebugEvent,
+} from "../core/debug-trace.js"
 import type { ModelToolDefinition } from "../core/tool.js"
 import {
   JsonValueSchema,
@@ -641,29 +646,80 @@ export const makeStructuredChatModel = (
       Effect.mapError(() => unavailable("invalid_response")),
     )
 
-  /** One transport-plus-envelope attempt, bounded by the request timeout. */
-  const attemptProviderCall = (input: OpenAICompatibleInput) =>
-    Effect.tryPromise({
-      try: (signal) => runtime.complete(input, signal),
-      catch: (cause) => unavailable(classifyError(cause)),
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: timeoutMilliseconds,
-        orElse: () => Effect.fail(unavailable("timed_out")),
-      }),
-      Effect.flatMap(parseProviderResponse),
-      Effect.flatMap((response) => {
-        const tool =
-          response.choices[0].message.tool_calls[0].function
+  const parseProviderJson = (response: JsonValue) =>
+    Schema.decodeUnknownEffect(JsonValueSchema)(response, {
+      onExcessProperty: "error",
+    }).pipe(Effect.mapError(() => unavailable("invalid_response")))
 
-        return parseJson(tool.arguments).pipe(
-          Effect.map((arguments_) => ({
-            name: tool.name,
-            arguments: arguments_,
-          })),
-        )
-      }),
-    )
+  /** One transport-plus-envelope attempt, bounded by the request timeout. */
+  const attemptProviderCall = (
+    input: OpenAICompatibleInput,
+    providerAttempt: number,
+  ) =>
+    Effect.gen(function* () {
+      const call = yield* nextDebugModelCall
+      const providerRequest = {
+        model: config.provider.model,
+        input,
+      }
+      // SAFETY: the adapter constructs input only from JSON-compatible request
+      // options, messages, and tool schema documents; model is a string.
+      const request = cast<typeof providerRequest, JsonValue>(providerRequest)
+      yield* recordDebugEvent({
+        _tag: "ModelInput",
+        call,
+        provider: config.provider.id,
+        model: config.provider.model,
+        providerAttempt,
+        request,
+      })
+
+      const response = yield* Effect.tryPromise({
+        try: (signal) => runtime.complete(input, signal),
+        catch: (cause) => unavailable(classifyError(cause)),
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: timeoutMilliseconds,
+          orElse: () => Effect.fail(unavailable("timed_out")),
+        }),
+        Effect.flatMap(parseProviderJson),
+        Effect.tap((response) =>
+          recordDebugEvent({
+            _tag: "ModelOutput",
+            call,
+            response,
+          }),
+        ),
+        Effect.tapError((error) =>
+          recordDebugEvent({
+            _tag: "ModelCallFailed",
+            call,
+            reason: error.reason,
+          }),
+        ),
+      )
+
+      return yield* parseProviderResponse(response).pipe(
+        Effect.flatMap((parsedResponse) => {
+          const tool =
+            parsedResponse.choices[0].message.tool_calls[0].function
+
+          return parseJson(tool.arguments).pipe(
+            Effect.map((arguments_) => ({
+              name: tool.name,
+              arguments: arguments_,
+            })),
+          )
+        }),
+        Effect.tapError(() =>
+          recordDebugEvent({
+            _tag: "ModelOutputRejected",
+            call,
+            reason: "invalid_provider_response",
+          }),
+        ),
+      )
+    })
 
   const isRetryableUnavailable = (
     error: ChatModelUnavailable,
@@ -683,7 +739,7 @@ export const makeStructuredChatModel = (
     ChatModelUnavailable
   > =>
     Effect.suspend(() => {
-      const once = attemptProviderCall(input)
+      const once = attemptProviderCall(input, attemptNumber)
       // Content-free observability: the attempt count is annotated only for
       // follow-up attempts; reasons stay behind the stable failure tag.
       const annotatedOnce =

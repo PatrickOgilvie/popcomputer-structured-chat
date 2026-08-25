@@ -4,6 +4,7 @@ import {
   Scenario,
 } from "@popcomputer/structured-chat/testing"
 import {
+  createStructuredChatUserAnswerStore,
   makeAssistantExplorationClient,
   makeAssistantChatModelAdapter,
   makeAssistantView,
@@ -179,19 +180,27 @@ if (debugStore.getSnapshot() !== null) {
 }
 
 let requestedEndpoint
+const answerStore = createStructuredChatUserAnswerStore()
+const nodeUserAnswers = {
+  schemaVersion: 1,
+  chat: { name: "node_smoke", version: 1 },
+  sections: [],
+}
 const adapter = makeAssistantChatModelAdapter({
   endpoint: "https://example.invalid/turn",
+  onAnswerSnapshot: answerStore.receive,
   fetch: (input) => {
     requestedEndpoint = input
     return Promise.resolve(
       new Response(
         JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 2,
           session: { id: "node-smoke", revision: "1" },
           message: {
             role: "assistant",
             content: [{ type: "text", text: "Adapter ready" }],
           },
+          answers: nodeUserAnswers,
         }),
         {
           status: 200,
@@ -215,7 +224,8 @@ const adapted = await adapter.run({
 if (
   requestedEndpoint !== "https://example.invalid/turn" ||
   adapted.content[0]?.type !== "text" ||
-  adapted.content[0].text !== "Adapter ready"
+  adapted.content[0].text !== "Adapter ready" ||
+  answerStore.getSnapshot()?.snapshot.chat.name !== "node_smoke"
 ) {
   throw new Error("Assistant chat adapter smoke test failed")
 }

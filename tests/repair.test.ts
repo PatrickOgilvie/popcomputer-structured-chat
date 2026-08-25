@@ -14,11 +14,11 @@ const Brief = Stage.collect({
     location: Answer.explicit(Schema.String, {
       description: "The location",
       ask: Question.fixed("Where are you based?"),
-    }),
+    }).pipe(Answer.visibleToUser()),
     localOnly: Answer.confirmed(Schema.Boolean, {
       description: "Whether results must be local",
       ask: Question.fixed("Only show local firms?"),
-    }),
+    }).pipe(Answer.visibleToUser({ label: "Local firms only" })),
   },
 })
 
@@ -316,6 +316,27 @@ describe("Repair.standard", () => {
       value: "Manchester",
       evidence: { messageIndex: 3, quote: "Manchester" },
     })
+    expect(replies.corrected.userAnswers.sections).toEqual([
+      {
+        key: "brief",
+        label: "Brief",
+        fields: [
+          {
+            key: "location",
+            label: "Location",
+            state: { _tag: "Accepted", value: "Manchester" },
+          },
+          {
+            key: "localOnly",
+            label: "Local firms only",
+            state: { _tag: "Accepted", value: false },
+          },
+        ],
+      },
+    ])
+    expect(replies.followUp.userAnswers).toEqual(
+      replies.corrected.userAnswers,
+    )
     expect(await Effect.runPromise(Ref.get(calls))).toBe(6)
     const observed = await Effect.runPromise(Ref.get(requests))
     expect(observed[3]?.tools.map(({ name }) => name)).toEqual([
@@ -442,6 +463,24 @@ describe("Repair.standard", () => {
         "localOnly",
       ),
     ).toBeUndefined()
+    expect(replies.correction.userAnswers.sections).toEqual([
+      {
+        key: "brief",
+        label: "Brief",
+        fields: [
+          {
+            key: "location",
+            label: "Location",
+            state: { _tag: "Accepted", value: "Leeds" },
+          },
+          {
+            key: "localOnly",
+            label: "Local firms only",
+            state: { _tag: "Missing" },
+          },
+        ],
+      },
+    ])
     expect(replies.reconfirmed.turn._tag).toBe("ToolResult")
     expect(replies.reconfirmed.turn.state.repair?.pendingStages).toEqual([])
     expect(
@@ -455,6 +494,21 @@ describe("Repair.standard", () => {
       value: true,
       evidence: { messageIndex: 5, quote: "Yes, local only" },
     })
+    expect(replies.reconfirmed.userAnswers.sections[0]?.fields).toEqual([
+      {
+        key: "location",
+        label: "Location",
+        state: { _tag: "Accepted", value: "Leeds" },
+      },
+      {
+        key: "localOnly",
+        label: "Local firms only",
+        state: { _tag: "Accepted", value: true },
+      },
+    ])
+    expect(replies.reconfirmed.revision).not.toBe(
+      replies.correction.revision,
+    )
   })
 
   test("persists an ordered reconfirmation queue across collect stages", async () => {

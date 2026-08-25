@@ -1,8 +1,9 @@
 import { cast, Data, Effect, Result, Schema, Struct } from "effect"
-import type {
-  AnswerDefinition,
-  AnswerDefinitionContract,
-  AnswerMode,
+import {
+  readAnswerUserPresentation,
+  type AnswerDefinition,
+  type AnswerDefinitionContract,
+  type AnswerMode,
 } from "./answer.js"
 import { StageNameSchema } from "./stage-name.js"
 import {
@@ -34,6 +35,7 @@ import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
+import { recordDebugEvent } from "./debug-trace.js"
 
 /** Safe reason that a collect-stage model proposal was rejected. */
 export const InvalidCollectStageResponseReasonSchema = Schema.Literals([
@@ -54,6 +56,12 @@ export class InvalidCollectStageResponse extends Schema.TaggedError<InvalidColle
 export type AnswerFields = Readonly<
   Record<string, AnswerDefinitionContract>
 >
+
+/** Stable machine-facing key for one collect-stage answer field. */
+export const CollectAnswerFieldNameSchema = Schema.String.check(
+  Schema.isMaxLength(60),
+  Schema.isPattern(/^[a-z][a-zA-Z0-9_]*$/),
+)
 
 type AnswerValue<Answer> = Answer extends AnswerDefinition<
   infer _Mode,
@@ -259,6 +267,9 @@ export interface CollectStageInspectionField {
   readonly mode: AnswerMode
   readonly description: string
   readonly question: QuestionDefinitionContract
+  readonly userPresentation:
+    | { readonly label?: string }
+    | undefined
   readonly encodeValue: (
     value: RuntimeAnswerValue,
   ) => Effect.Effect<unknown, Schema.SchemaError>
@@ -388,6 +399,12 @@ const hasOwn = <Owner extends object>(
 ): boolean =>
   Object.prototype.hasOwnProperty.call(value, key)
 
+const getOwn = <Owner extends object, Key extends keyof Owner>(
+  value: Owner,
+  key: Key,
+): Owner[Key] | undefined =>
+  hasOwn(value, key) ? value[key] : undefined
+
 /** Define one deterministic schema-derived fact collection stage. */
 export const defineCollectStage = <
   const Name extends string,
@@ -433,7 +450,7 @@ export const defineCollectStage = <
   // integer-like object keys ahead of string keys; names therefore must
   // start with a letter.
   for (const field of fieldNames) {
-    if (field.length > 60 || !/^[a-z][a-zA-Z0-9_]*$/.test(field)) {
+    if (!Schema.is(CollectAnswerFieldNameSchema)(field)) {
       throw new Error(
         `Collect-stage field names must start with a lowercase letter, use only letters, digits, and underscores, and stay within 60 characters: ${JSON.stringify(field)}`,
       )
@@ -444,6 +461,41 @@ export const defineCollectStage = <
     throw new Error("Collect stages require at least one answer field")
   }
   const fieldSchema = Schema.Literals([firstField, ...remainingFields])
+  const recordStateAnnotations = (
+    previous: CollectStageState<Fields>,
+    next: CollectStageState<Fields>,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      for (const field of fieldNames) {
+        const previousAccepted = getOwn(previous.accepted, field)
+        const nextAccepted = getOwn(next.accepted, field)
+        if (
+          previousAccepted === undefined &&
+          nextAccepted !== undefined
+        ) {
+          yield* recordDebugEvent({
+            _tag: "QuestionAnswered",
+            stage: definition.name,
+            field,
+          })
+        }
+
+        const previousQuestion = getOwn(previous.asked, field)
+        const nextQuestion = getOwn(next.asked, field)
+        if (
+          nextQuestion !== undefined &&
+          (previousQuestion === undefined ||
+            previousQuestion.messageIndex !== nextQuestion.messageIndex ||
+            previousQuestion.text !== nextQuestion.text)
+        ) {
+          yield* recordDebugEvent({
+            _tag: "QuestionAsked",
+            stage: definition.name,
+            field,
+          })
+        }
+      }
+    })
   const messageIndexSchema = Schema.Number.check(
     Schema.isInt(),
     Schema.isBetween({ minimum: 0, maximum: 1_000_000 }),
@@ -461,7 +513,7 @@ export const defineCollectStage = <
   ): Map<string, RuntimeAcceptedAnswer> => {
     const accepted = new Map<string, RuntimeAcceptedAnswer>()
     for (const field of fieldNames) {
-      const answer = state.accepted[field]
+      const answer = getOwn(state.accepted, field)
       if (answer !== undefined) {
         accepted.set(field, answer)
       }
@@ -473,7 +525,7 @@ export const defineCollectStage = <
   ): Map<string, IssuedCollectQuestion> => {
     const asked = new Map<string, IssuedCollectQuestion>()
     for (const field of fieldNames) {
-      const question = state.asked[field]
+      const question = getOwn(state.asked, field)
       if (question !== undefined) {
         asked.set(field, question)
       }
@@ -620,6 +672,7 @@ export const defineCollectStage = <
         mode: answer.mode,
         description: answer.description,
         question: answer.question,
+        userPresentation: readAnswerUserPresentation(answer),
         encodeValue: (value) =>
           Schema.encodeUnknownEffect(answer.schema)(value, {
             onExcessProperty: "error",
@@ -742,7 +795,7 @@ export const defineCollectStage = <
     messages: ReadonlyArray<UntrustedMessage>,
   ): boolean => {
     const questionsAreGrounded = fieldNames.every((field) => {
-      const issued = state.asked[field]
+      const issued = getOwn(state.asked, field)
       if (issued === undefined) {
         return true
       }
@@ -758,13 +811,13 @@ export const defineCollectStage = <
     }
 
     return fieldNames.every((field) => {
-      const accepted = state.accepted[field]
+      const accepted = getOwn(state.accepted, field)
       if (accepted === undefined) {
         return true
       }
       const { messageIndex, quote } = accepted.evidence
       const message = messages[messageIndex]
-      const issued = state.asked[field]
+      const issued = getOwn(state.asked, field)
 
       return (
         message !== undefined &&
@@ -1097,7 +1150,7 @@ export const defineCollectStage = <
             escapeResolution !== undefined &&
             latestMessage !== undefined &&
             (getAnswer(field).mode !== "confirmed" ||
-              state.asked[field] !== undefined)
+              getOwn(state.asked, field) !== undefined)
           ) {
             accepted.set(field, {
               value: escapeResolution.value,
@@ -1119,7 +1172,7 @@ export const defineCollectStage = <
           continue
         }
         const answer = getAnswer(field)
-        const issued = state.asked[field]
+        const issued = getOwn(state.asked, field)
         if (answer.mode === "confirmed" && issued === undefined) {
           continue
         }
@@ -1248,6 +1301,7 @@ export const defineCollectStage = <
           ),
         (error) => Effect.fail(error),
       ),
+      Effect.tap((turn) => recordStateAnnotations(state, turn.state)),
     )
   }
 

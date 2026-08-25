@@ -821,12 +821,78 @@ that expose message editing, regeneration, or persistent branching should pair
 it with an application-owned branch/session policy rather than treating browser
 history as authoritative.
 
+### Drive a user-visible form from accepted answers
+
+Answers remain server-only unless the definition explicitly discloses them.
+Mark the fields that may cross the browser boundary beside their schemas:
+
+```ts
+const RequestDetails = Stage.collect({
+  name: "request_details",
+  fields: {
+    goal: Answer.semantic(Schema.Trimmed.check(Schema.isNonEmpty()), {
+      description: "The outcome the user wants to achieve.",
+      ask: Question.fixed("What would you like help accomplishing?"),
+    }).pipe(Answer.visibleToUser({ label: "Goal" })),
+    internalRoutingNote: Answer.semantic(Schema.String, {
+      description: "Internal routing evidence that must stay server-side.",
+      ask: Question.fixed("Which team should handle this?"),
+    }),
+  },
+})
+```
+
+Every persisted reply now carries a complete `reply.userAnswers` snapshot for
+the exact returned revision. The normal browser response copies it to
+`answers`. Visible unanswered or merely asked fields have a `Missing` state;
+accepted fields have an `Accepted` state containing only the answer schema's
+JSON-encoded value. Hidden field names, prompts, descriptions, evidence, and
+values are absent.
+
+The assistant-ui adapter can deliver the correlated session and snapshot to a
+small replacement store:
+
+```tsx
+import {
+  createStructuredChatUserAnswerStore,
+  makeAssistantChatModelAdapter,
+  useStructuredChatUserAnswers,
+} from "@popcomputer/structured-chat/assistant-ui"
+
+const answerStore = createStructuredChatUserAnswerStore()
+const model = makeAssistantChatModelAdapter({
+  endpoint: "/api/resource-finder/turn",
+  onAnswerSnapshot: answerStore.receive,
+})
+
+export function RequestSummary() {
+  const update = useStructuredChatUserAnswers(answerStore)
+  return <SummaryForm snapshot={update?.snapshot ?? null} />
+}
+```
+
+The store replaces the entire snapshot instead of merging fields, so repairs
+and reconfirmations cannot leave stale answers behind. Validation rejections,
+notices, failed requests, and malformed responses retain the previous value.
+Call `answerStore.clear()` on logout or when changing application context.
+Revisions are opaque correlation identifiers, not counters.
+
+This sidecar is response-coupled: it becomes available after the first
+successful persisted turn and is not hydrated by a standalone page reload.
+Applications that need initial or reload hydration should add an independently
+authorized read path rather than treating assistant message history as current
+form state.
+
 ## Inspect development state
 
-The optional debug inspector shows the current stage, stage progress, required
-fields, accepted values, issued questions, and supporting evidence. It uses a
-small package-owned panel inspired by DialKit, without adding DialKit or another
-runtime dependency.
+The optional debug inspector has two fixed top-level views. **Conversation**
+shows the current stage,
+stage progress, required fields, accepted values, issued questions, and
+supporting evidence. **LLM Trace** shows the ordered, literal JSON input and
+output for every provider invocation, annotated with accepted answers, issued
+questions, validation failures, stage changes, executed tools, and terminal
+turn failures. It uses a small package-owned panel inspired by DialKit, without
+adding DialKit or another runtime dependency.
 
 Debug data uses a separate, explicit response contract. Select it on an
 authenticated development endpoint:
@@ -835,13 +901,21 @@ authenticated development endpoint:
 import { Chat } from "@popcomputer/structured-chat"
 import * as Debug from "@popcomputer/structured-chat/debug"
 
-const response = debugAccessGranted
-  ? yield* Debug.present(
-      ResourceFinder,
-      reply,
-      { inspection: { evidence: "include" } },
-    )
-  : yield* Chat.presentReply(reply)
+if (debugAccessGranted) {
+  const outcome = yield* Debug.turn(
+    ResourceFinder,
+    turnInput,
+    { modelPayloads: "literal" },
+  )
+  return yield* Debug.present(
+    ResourceFinder,
+    outcome,
+    { inspection: { evidence: "include" } },
+  )
+}
+
+const reply = yield* Chat.turn(ResourceFinder, turnInput)
+return yield* Chat.presentReply(reply)
 ```
 
 Connect that endpoint to the inspector store:
@@ -853,10 +927,10 @@ import {
   StructuredChatDebugPanel,
 } from "@popcomputer/structured-chat/assistant-ui/debug"
 
-const debugStore = createStructuredChatDebugStore()
+const debugStore = createStructuredChatDebugStore({ maximumTurns: 100 })
 const model = makeAssistantChatModelAdapter({
   endpoint: "/api/resource-finder/debug/turn",
-  onDebugSnapshot: debugStore.receive,
+  onDebugTurn: debugStore.receiveTurn,
 })
 
 export function ResourceFinderDebugPanel() {
@@ -864,12 +938,36 @@ export function ResourceFinderDebugPanel() {
 }
 ```
 
-Without `onDebugSnapshot`, the normal adapter continues to reject a response
-containing debug data. Hiding or unmounting the panel is not an authorization
-boundary: the server must decide whether to emit the debug response. Use
-`evidence: "omit"` when transcript quotes should not cross that boundary.
-Create one store per chat runtime; it reflects the most recently completed
-debug response. Observer failures are isolated and never change the outcome of
+`Debug.turn` installs an isolated Effect recorder for that turn. The built-in
+OpenAI-compatible adapter captures the exact `{ model, input }` value passed to
+the configured provider `complete` callback and the exact JSON value the
+callback returns. This is application-level provider JSON, not HTTP headers,
+raw response bytes, or transformations performed later inside an SDK. Captured
+model data lives in the explicit success-or-failure outcome; structured-chat
+does not write it to the session store. A terminal expected failure produces a
+debug failure response containing the events captured before the turn failed,
+without claiming that no persistence occurred. No new session revision is
+returned, so the assistant adapter can update the LLM Trace view before it
+rejects the model run. A failure whose request session ID was invalid carries
+`session: null` instead of echoing unvalidated input. Each trace is capped at
+200 events; `TraceTruncated` marks omitted tail events while reserving the final
+slot for a terminal `TurnFailed`. `Debug.present` accepts ordinary persisted
+replies for state-only compatibility, and `Debug.presentState` remains its
+explicit alias.
+
+Without `onDebugTurn` (or the state-only `onDebugSnapshot` callback), the normal
+adapter continues to reject a response containing debug data. Hiding or
+unmounting the panel is not an authorization boundary: the server must decide
+whether to run `Debug.turn` and emit the debug response. Literal model payloads
+can include full conversation text and application instructions, so expose the
+debug endpoint only to authorized development users, send it with
+`Cache-Control: no-store`, and do not feed its payloads into ordinary telemetry.
+The required `{ modelPayloads: "literal" }` option makes that sensitive-data
+exception explicit at the call site. Use `evidence: "omit"` when state
+provenance should not cross that boundary. Create one store per chat runtime;
+it retains at most 100 turns by default (configurable up to 200) and resets when
+the session changes. Call `debugStore.clear()` on logout or when the inspector
+session ends. Observer failures are isolated and never change the outcome of
 the persisted chat turn.
 
 ## Plan without executing

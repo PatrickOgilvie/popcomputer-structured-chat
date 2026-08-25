@@ -6,6 +6,10 @@ import {
 import { defineView, type ViewData, type ViewDefinitionContract } from "./view.js"
 import { JsonValueSchema } from "./json-value.js"
 import { ToolNameSchema } from "./tool.js"
+import {
+  StructuredChatUserAnswerSnapshotSchema,
+  type StructuredChatUserAnswerSnapshot,
+} from "./user-answer-projection.js"
 
 /** Bounded plain text emitted by a structured chat presenter. */
 export const AssistantTextPartSchema = Schema.Struct({
@@ -106,14 +110,38 @@ export type StructuredChatTurnRequest = Schema.Schema.Type<
   typeof StructuredChatTurnRequestSchema
 >
 
-/** Versioned browser response for one persisted structured chat turn. */
-export const StructuredChatTurnResponseSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(1),
+/** Versioned browser response for one successfully persisted chat turn. */
+export const StructuredChatPersistedTurnResponseSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(2),
+  session: StructuredChatSessionReferenceSchema,
+  message: StructuredChatAssistantMessageSchema,
+  answers: StructuredChatUserAnswerSnapshotSchema,
+})
+
+/** Versioned browser response for one successfully persisted chat turn. */
+export type StructuredChatPersistedTurnResponse = Schema.Schema.Type<
+  typeof StructuredChatPersistedTurnResponseSchema
+>
+
+/** Versioned browser response for a notice that did not advance state. */
+export const StructuredChatNonProgressingResponseSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(2),
   session: Schema.optional(StructuredChatSessionReferenceSchema),
   message: StructuredChatAssistantMessageSchema,
 })
 
-/** Versioned browser response for one persisted structured chat turn. */
+/** Versioned browser response for a notice that did not advance state. */
+export type StructuredChatNonProgressingResponse = Schema.Schema.Type<
+  typeof StructuredChatNonProgressingResponseSchema
+>
+
+/** Strict persisted-or-non-progressing browser turn response. */
+export const StructuredChatTurnResponseSchema = Schema.Union([
+  StructuredChatPersistedTurnResponseSchema,
+  StructuredChatNonProgressingResponseSchema,
+])
+
+/** Strict persisted-or-non-progressing browser turn response. */
 export type StructuredChatTurnResponse = Schema.Schema.Type<
   typeof StructuredChatTurnResponseSchema
 >
@@ -302,7 +330,17 @@ export const Text = {
 const invalidPresentation = () =>
   new InvalidChatPresentation({ reason: "invalid_message" })
 
-interface StructuredChatResponseCandidate {
+interface StructuredChatPersistedResponseCandidate {
+  readonly schemaVersion: number
+  readonly session: StructuredChatSessionReference
+  readonly message: {
+    readonly role: string
+    readonly content: ReadonlyArray<AssistantMessagePart>
+  }
+  readonly answers: StructuredChatUserAnswerSnapshot
+}
+
+interface StructuredChatNonProgressingResponseCandidate {
   readonly schemaVersion: number
   readonly session: StructuredChatSessionReference | undefined
   readonly message: {
@@ -311,12 +349,27 @@ interface StructuredChatResponseCandidate {
   }
 }
 
-const parseResponse = (
-  input: StructuredChatResponseCandidate,
-): Effect.Effect<StructuredChatTurnResponse, InvalidChatPresentation> =>
-  Schema.decodeUnknownEffect(StructuredChatTurnResponseSchema)(input, {
-    onExcessProperty: "error",
-  }).pipe(Effect.mapError(invalidPresentation))
+const parsePersistedResponse = (
+  input: StructuredChatPersistedResponseCandidate,
+): Effect.Effect<
+  StructuredChatPersistedTurnResponse,
+  InvalidChatPresentation
+> =>
+  Schema.decodeUnknownEffect(StructuredChatPersistedTurnResponseSchema)(
+    input,
+    { onExcessProperty: "error" },
+  ).pipe(Effect.mapError(invalidPresentation))
+
+const parseNonProgressingResponse = (
+  input: StructuredChatNonProgressingResponseCandidate,
+): Effect.Effect<
+  StructuredChatNonProgressingResponse,
+  InvalidChatPresentation
+> =>
+  Schema.decodeUnknownEffect(StructuredChatNonProgressingResponseSchema)(
+    input,
+    { onExcessProperty: "error" },
+  ).pipe(Effect.mapError(invalidPresentation))
 
 const parseExplorationResponse = (
   input: {
@@ -350,17 +403,17 @@ export const presentChatNotice = (input: {
   readonly text: string
   readonly session?: StructuredChatSessionReference | undefined
 }): Effect.Effect<
-  StructuredChatTurnResponse,
+  StructuredChatNonProgressingResponse,
   InvalidChatPresentation
 > =>
   buildPresentation(() => ({
-    schemaVersion: 1,
+    schemaVersion: 2,
     session: input.session,
     message: {
       role: "assistant",
       content: [makeText(input.text)],
     },
-  })).pipe(Effect.flatMap(parseResponse))
+  })).pipe(Effect.flatMap(parseNonProgressingResponse))
 
 /**
  * Present an application-authored retry question after answer validation.
@@ -383,11 +436,11 @@ export const presentAnswerValidationRejection = (input: {
   }
   readonly session?: StructuredChatSessionReference | undefined
 }): Effect.Effect<
-  StructuredChatTurnResponse,
+  StructuredChatNonProgressingResponse,
   InvalidChatPresentation
 > =>
   buildPresentation(() => ({
-    schemaVersion: 1,
+    schemaVersion: 2,
     session: input.session,
     message: {
       role: "assistant" as const,
@@ -407,7 +460,7 @@ export const presentAnswerValidationRejection = (input: {
         }),
       ],
     },
-  })).pipe(Effect.flatMap(parseResponse))
+  })).pipe(Effect.flatMap(parseNonProgressingResponse))
 
 /**
  * Project one persisted chat reply into the strict browser protocol.
@@ -425,9 +478,13 @@ export const presentChatReply = <Turn extends PresentableTurn>(
       typeof ChatSessionRevisionSchema
     > | string
     readonly turn: Turn
+    readonly userAnswers: StructuredChatUserAnswerSnapshot
   },
   options: PresentChatReplyOptions<Turn> = {},
-): Effect.Effect<StructuredChatTurnResponse, InvalidChatPresentation> => {
+): Effect.Effect<
+  StructuredChatPersistedTurnResponse,
+  InvalidChatPresentation
+> => {
   const buildContent = (): ReadonlyArray<AssistantMessagePart> => {
     if (reply.turn._tag === "Question") {
       // SAFETY: The discriminant narrows the generic Turn to its question
@@ -460,13 +517,14 @@ export const presentChatReply = <Turn extends PresentableTurn>(
 
   return buildPresentation(buildContent).pipe(
     Effect.flatMap((content) =>
-      parseResponse({
-        schemaVersion: 1,
+      parsePersistedResponse({
+        schemaVersion: 2,
         session: {
           id: reply.sessionId,
           revision: reply.revision,
         },
         message: { role: "assistant", content },
+        answers: reply.userAnswers,
       }),
     ),
     Effect.withSpan("popcomputer.structured_chat.presentation.reply", {

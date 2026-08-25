@@ -4,6 +4,7 @@ import {
 import { Exit, Result, Schema } from "effect"
 import { createElement, type ComponentType, type FC } from "react"
 import type { StructuredChatDebugSnapshot } from "../core/debug.js"
+import type { StructuredChatDebugTurn } from "../core/debug-protocol.js"
 import type {
   ViewData,
   ViewDefinitionContract,
@@ -21,6 +22,16 @@ import {
   StructuredChatTurnResponseSchema,
 } from "../core/protocol.js"
 import { JsonValueSchema } from "../core/json-value.js"
+import type { StructuredChatUserAnswerUpdate as UserAnswerUpdate } from "./assistant-ui-user-answers.js"
+
+export {
+  createStructuredChatUserAnswerStore,
+  useStructuredChatUserAnswers,
+} from "./assistant-ui-user-answers.js"
+export type {
+  StructuredChatUserAnswerStore,
+  StructuredChatUserAnswerUpdate,
+} from "./assistant-ui-user-answers.js"
 
 /** Runtime status supplied by assistant-ui to a data-part renderer. */
 export type AssistantViewPartStatus =
@@ -122,6 +133,13 @@ export interface AssistantChatModelAdapterOptions {
   readonly endpoint: string
   readonly fetch?: AssistantChatFetch
   /**
+   * Receive the complete public-answer snapshot after a strictly decoded
+   * persisted response. Supplying this callback does not select debug mode.
+   */
+  readonly onAnswerSnapshot?: (
+    update: UserAnswerUpdate,
+  ) => void | Promise<void>
+  /**
    * Select the explicit debug response contract and receive its safe state
    * projection after every successful turn. Observer failures are ignored so
    * they cannot change the outcome of an already-persisted chat turn.
@@ -129,21 +147,29 @@ export interface AssistantChatModelAdapterOptions {
   readonly onDebugSnapshot?: (
     snapshot: StructuredChatDebugSnapshot,
   ) => void | Promise<void>
+  /**
+   * Receive the current state together with the ordered literal model trace.
+   * Supplying this callback selects the explicit debug response contract.
+   */
+  readonly onDebugTurn?: (
+    turn: StructuredChatDebugTurn,
+  ) => void | Promise<void>
 }
 
-const notifyDebugSnapshot = (
-  callback: NonNullable<
-    AssistantChatModelAdapterOptions["onDebugSnapshot"]
-  >,
-  snapshot: StructuredChatDebugSnapshot,
+const notifyObserver = <Value,>(
+  callback: (value: Value) => void | Promise<void>,
+  value: Value,
 ): void => {
   try {
-    const notified = callback(snapshot)
+    const notified = callback(value)
     void Promise.resolve(notified).catch(() => undefined)
   } catch {
-    // Debug observers are deliberately isolated from the persisted turn.
+    // Browser observers are deliberately isolated from the persisted turn.
   }
 }
+
+const isAbortError = (cause: unknown): cause is DOMException =>
+  cause instanceof DOMException && cause.name === "AbortError"
 
 /** Minimum assistant message shape consumed by the browser adapter. */
 export interface AssistantChatThreadMessage {
@@ -231,8 +257,9 @@ const readTurnRequest = (
  * Adapt assistant-ui to one server-owned structured chat endpoint.
  *
  * By default, only the latest text and opaque prior revision cross the browser
- * boundary. Supplying `onDebugSnapshot` explicitly selects the separate debug
- * response contract and receives its safe answer-and-stage projection.
+ * boundary. `onAnswerSnapshot` observes the normal persisted response without
+ * selecting debug mode. Supplying either debug observer explicitly selects the
+ * separate debug response contract.
  */
 export const makeAssistantChatModelAdapter = (
   options: AssistantChatModelAdapterOptions,
@@ -241,7 +268,11 @@ export const makeAssistantChatModelAdapter = (
     options.fetch ??
     ((input: string, init: RequestInit) =>
       globalThis.fetch(input, init))
+  const onAnswerSnapshot = options.onAnswerSnapshot
   const onDebugSnapshot = options.onDebugSnapshot
+  const onDebugTurn = options.onDebugTurn
+  const debugRequested =
+    onDebugSnapshot !== undefined || onDebugTurn !== undefined
 
   return {
     run: async ({ messages, abortSignal }) => {
@@ -256,23 +287,41 @@ export const makeAssistantChatModelAdapter = (
         body: JSON.stringify(request),
         signal: abortSignal,
       })
-      if (!response.ok) {
+      if (!response.ok && !debugRequested) {
         throw new Error("Structured chat is temporarily unavailable")
       }
 
       let body: unknown
       try {
         body = await response.json()
-      } catch {
-        throw new Error("Structured chat returned an invalid response")
+      } catch (cause: unknown) {
+        abortSignal.throwIfAborted()
+        if (isAbortError(cause)) {
+          throw cause
+        }
+        throw new Error(
+          response.ok
+            ? "Structured chat returned an invalid response"
+            : "Structured chat is temporarily unavailable",
+        )
       }
       let value: StructuredChatTurnResponse
-      if (onDebugSnapshot === undefined) {
+      if (!debugRequested) {
         const decoded = Schema.decodeUnknownExit(
           StructuredChatTurnResponseSchema,
         )(body, { onExcessProperty: "error" })
         if (Exit.isFailure(decoded)) {
           throw new Error("Structured chat returned an invalid response")
+        }
+        abortSignal.throwIfAborted()
+        if (
+          "answers" in decoded.value &&
+          onAnswerSnapshot !== undefined
+        ) {
+          notifyObserver(onAnswerSnapshot, {
+            session: decoded.value.session,
+            snapshot: decoded.value.answers,
+          })
         }
         value = decoded.value
       } else {
@@ -283,9 +332,43 @@ export const makeAssistantChatModelAdapter = (
           StructuredChatDebugTurnResponseSchema,
         )(body, { onExcessProperty: "error" })
         if (Exit.isFailure(decoded)) {
-          throw new Error("Structured chat returned an invalid response")
+          throw new Error(
+            response.ok
+              ? "Structured chat returned an invalid response"
+            : "Structured chat is temporarily unavailable",
+          )
         }
-        notifyDebugSnapshot(onDebugSnapshot, decoded.value.debug)
+        abortSignal.throwIfAborted()
+        if (decoded.value.outcome === "failure") {
+          if (onDebugTurn !== undefined) {
+            notifyObserver(onDebugTurn, {
+              _tag: "Failed",
+              session: decoded.value.session,
+              trace: decoded.value.trace,
+            })
+          }
+          throw new Error("Structured chat is temporarily unavailable")
+        }
+        if (!response.ok) {
+          throw new Error("Structured chat is temporarily unavailable")
+        }
+        if (onAnswerSnapshot !== undefined) {
+          notifyObserver(onAnswerSnapshot, {
+            session: decoded.value.session,
+            snapshot: decoded.value.answers,
+          })
+        }
+        if (onDebugSnapshot !== undefined) {
+          notifyObserver(onDebugSnapshot, decoded.value.debug)
+        }
+        if (onDebugTurn !== undefined) {
+          notifyObserver(onDebugTurn, {
+            _tag: "Succeeded",
+            session: decoded.value.session,
+            snapshot: decoded.value.debug,
+            trace: decoded.value.trace,
+          })
+        }
         value = decoded.value
       }
 

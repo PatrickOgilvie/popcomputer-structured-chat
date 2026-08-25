@@ -9,6 +9,9 @@ export const explicit = Answer.explicit
 /** Define a fact that requires explicit user confirmation. */
 export const confirmed = Answer.confirmed
 
+/** Mark one JSON-encodable answer for user-facing answer snapshots. */
+export const visibleToUser = Answer.visibleToUser
+
 export { AnswerModeSchema as ModeSchema } from "./core/answer.js"
 
 export type {
@@ -18,4 +21,5 @@ export type {
   DefineAnswerInput as DefineInput,
   DefineUnvalidatedAnswerInput as DefineUnvalidatedInput,
   DefineValidatedAnswerInput as DefineValidatedInput,
+  VisibleToUserOptions,
 } from "./core/answer.js"

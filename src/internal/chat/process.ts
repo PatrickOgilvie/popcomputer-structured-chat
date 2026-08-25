@@ -15,6 +15,7 @@ import type {
   CommandExecutionContext,
   QueryToolDefinitionContract,
 } from "../../core/tool.js"
+import { recordDebugEvent } from "../../core/debug-trace.js"
 
 /** Runtime-erased persisted state used only after definition-owned decoding. */
 export interface RuntimeChatState {
@@ -173,16 +174,27 @@ export const make = (input: ProcessInput): Process => {
               return input
                 .applyRepairs(state, messages, proposal.corrections)
                 .pipe(
-                  Effect.flatMap((repairedState) =>
-                    Effect.suspend(() =>
+                  Effect.flatMap((repairedState) => {
+                    const continueTurn = Effect.suspend(() =>
                       runTrusted(
                         repairedState,
                         messages,
                         commandContext,
                         false,
                       ),
-                    ),
-                  ),
+                    )
+                    const from = input.stages[state.stage]
+                    const to = input.stages[repairedState.stage]
+                    return repairedState.stage === state.stage ||
+                      from === undefined ||
+                      to === undefined
+                      ? continueTurn
+                      : recordDebugEvent({
+                          _tag: "StageAdvanced",
+                          from: from.name,
+                          to: to.name,
+                        }).pipe(Effect.andThen(continueTurn))
+                  }),
                 )
             }),
           )
@@ -246,7 +258,7 @@ export const make = (input: ProcessInput): Process => {
                     stage: nextStage,
                     repair: { pendingStages: remainingPending },
                   }
-            return Effect.suspend(() =>
+            const continueTurn = Effect.suspend(() =>
               runTrusted(
                 advancedState,
                 messages,
@@ -254,6 +266,14 @@ export const make = (input: ProcessInput): Process => {
                 false,
               ),
             )
+            const nextStageDefinition = input.stages[nextStage]
+            return nextStageDefinition === undefined
+              ? continueTurn
+              : recordDebugEvent({
+                  _tag: "StageAdvanced",
+                  from: node.stage.name,
+                  to: nextStageDefinition.name,
+                }).pipe(Effect.andThen(continueTurn))
           }),
         )
       }

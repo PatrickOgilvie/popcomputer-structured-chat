@@ -18,6 +18,7 @@ import {
 } from "./definition.js"
 import type { CommandId } from "./command.js"
 import { JsonValueSchema, type JsonValue } from "./json-value.js"
+import { recordDebugEvent } from "./debug-trace.js"
 
 /** Stable machine-facing name for one structured chat tool. */
 export const ToolNameSchema = Schema.Trimmed.check(
@@ -677,6 +678,12 @@ const makeTool = <
           : undefined
       >(context),
     ).pipe(
+      Effect.tap(() =>
+        recordDebugEvent({
+          _tag: "ToolCalled",
+          tool: runtime.name,
+        }),
+      ),
       Effect.flatMap((serverResult) =>
         Effect.all({
           modelResult: projectModelResult(

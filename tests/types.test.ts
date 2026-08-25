@@ -1,4 +1,5 @@
 import { Answer, Chat, Model, Question, Repair, Session, Stage, Tool, View } from "../src/index.js"
+import * as Debug from "../src/debug.js"
 import * as OpenAI from "../src/model/openai-compatible.js"
 import { Chat as ChatTest } from "../src/testing.js"
 import { Context, Effect, Schema } from "effect"
@@ -60,6 +61,30 @@ const validatedBrief = Stage.collect({
     }),
   },
 })
+const visibleValidatedAnswer = Answer.explicit(Schema.String, {
+  description: "A user-visible query accepted by policy",
+  ask: Question.fixed("What should we search for?"),
+  validate: (query) =>
+    QueryPolicy.pipe(
+      Effect.flatMap((policy) => policy.validate(query)),
+    ),
+  reject: {
+    ask: Question.fixed("Please provide a supported catalog query."),
+  },
+}).pipe(Answer.visibleToUser({ label: "Search query" }))
+const visibleDateAnswer = Answer.semantic(Schema.DateFromString, {
+  description: "A browser-safe date codec",
+  ask: Question.fixed("When should it happen?"),
+}).pipe(Answer.visibleToUser())
+const assertVisibleAnswerBoundaries = (): void => {
+  const hiddenBigInt = Answer.semantic(Schema.BigInt, {
+    description: "A non-JSON hidden value",
+    ask: Question.fixed("What is the exact integer?"),
+  })
+
+  // @ts-expect-error visible answers require a JSON-safe encoded side
+  hiddenBigInt.pipe(Answer.visibleToUser())
+}
 const invalidAdaptiveRejection = {
   description: "Invalid adaptive rejection",
   ask: Question.fixed("What should we search for?"),
@@ -338,11 +363,22 @@ const assertProviderAuthenticity = (): void => {
 const typedRepair = Repair.standard({ maximumCorrections: 3 })
 
 type TypedChatReply = Chat.Reply<typeof typedChat>
+type TypedDebugReply = Debug.Reply<
+  "typed_chat",
+  1,
+  Chat.StagesOf<typeof typedChat>
+>
 
 const _assertPresentChatReplyAcceptsReplyDirectly = (
   reply: TypedChatReply,
 ): void => {
   void Chat.presentReply(reply)
+}
+
+const _assertDebugPresentAcceptsReplyDirectly = (
+  reply: TypedDebugReply,
+): void => {
+  void Debug.present(typedChat, reply)
 }
 
 const _effect: Effect.Effect<
@@ -373,8 +409,24 @@ type Equal<Left, Right> =
 
 type Expect<Value extends true> = Value
 
+type _DebugReplyRemainsChatReply = Expect<
+  Equal<TypedDebugReply, TypedChatReply>
+>
+
 type _AcceptedAnswerIsExact = Expect<
   Equal<typeof acceptedQuery, Stage.AcceptedAnswer<string> | undefined>
+>
+
+type _VisibleAnswerPreservesInference = Expect<
+  Equal<
+    typeof visibleValidatedAnswer,
+    Answer.Definition<
+      "explicit",
+      typeof Schema.String,
+      InvalidQuery,
+      QueryPolicy
+    >
+  >
 >
 
 type ValidatedPrompt = Extract<
@@ -498,6 +550,7 @@ void assertCommandBoundaries
 void assertExplorationBoundaries
 void assertScenarioTypes
 void assertEscapeValueTypes
+void assertVisibleAnswerBoundaries
 void _part
 void _answers
 void acceptedQuery
@@ -505,6 +558,9 @@ void typedRepair
 void assertDefinitionAuthenticity
 void assertProviderAuthenticity
 void _assertPresentChatReplyAcceptsReplyDirectly
+void _assertDebugPresentAcceptsReplyDirectly
 void encodedToolCall
 void exploration
 void presentedExploration
+void visibleValidatedAnswer
+void visibleDateAnswer

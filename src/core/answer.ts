@@ -1,4 +1,5 @@
-import { Effect, Schema } from "effect"
+import { cast, Effect, Pipeable, Schema } from "effect"
+import type { JsonValue } from "./json-value.js"
 import type {
   ChoiceQuestion,
   FixedQuestion,
@@ -21,13 +22,39 @@ const AnswerDescriptionSchema = Schema.Trimmed.check(
   Schema.isMaxLength(1_000),
 )
 
+type AnswerPresentation =
+  | { readonly _tag: "Hidden" }
+  | {
+      readonly _tag: "VisibleToUser"
+      readonly label?: string
+    }
+
+const answerPresentation = Symbol(
+  "@popcomputer/structured-chat/AnswerPresentation",
+)
+
+const VisibleToUserOptionsSchema = Schema.Struct({
+  label: Schema.optionalKey(
+    Schema.Trimmed.check(
+      Schema.isNonEmpty(),
+      Schema.isMaxLength(100),
+    ),
+  ),
+})
+
+/** Optional display policy applied to one user-visible answer. */
+export interface VisibleToUserOptions {
+  readonly label?: string
+}
+
 /** Minimum runtime shape retained for every collect-stage answer. */
-export interface AnswerDefinitionContract {
+export interface AnswerDefinitionContract extends Pipeable.Pipeable {
   readonly _tag: "AnswerDefinition"
   readonly mode: AnswerMode
   readonly schema: Schema.ConstraintCodec<unknown, unknown>
   readonly description: string
   readonly question: QuestionDefinitionContract
+  readonly [answerPresentation]: AnswerPresentation
   readonly validate?: (
     value: never,
   ) => Effect.Effect<void, unknown, unknown>
@@ -102,6 +129,79 @@ export type DefineAnswerInput<
   | DefineUnvalidatedAnswerInput<Value>
   | DefineValidatedAnswerInput<Value, Error, Requirements>
 
+interface AnswerDefinitionSeed<
+  Mode extends AnswerMode,
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
+  Error,
+  Requirements,
+> {
+  readonly _tag: "AnswerDefinition"
+  readonly mode: Mode
+  readonly schema: ValueSchema
+  readonly description: string
+  readonly question: QuestionDefinition<ValueSchema["Type"]>
+  readonly validate?: (
+    value: ValueSchema["Type"],
+  ) => Effect.Effect<void, Error, Requirements>
+  readonly reject?: {
+    readonly ask:
+      | FixedQuestion
+      | ChoiceQuestion<ValueSchema["Type"]>
+  }
+  readonly escape?: {
+    readonly value: ValueSchema["Type"]
+  }
+}
+
+const makeAnswer = <
+  const Mode extends AnswerMode,
+  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
+  Error,
+  Requirements,
+>(
+  seed: AnswerDefinitionSeed<
+    Mode,
+    ValueSchema,
+    Error,
+    Requirements
+  >,
+  presentation: AnswerPresentation,
+): AnswerDefinition<Mode, ValueSchema, Error, Requirements> => {
+  const answer = {
+    ...seed,
+    pipe() {
+      return Pipeable.pipeArguments(this, arguments)
+    },
+  }
+  Object.defineProperty(answer, answerPresentation, {
+    value: presentation,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  })
+
+  // SAFETY: defineProperty installed the private presentation policy while
+  // the seed and pipe method retain the exact answer generics.
+  return cast<
+    typeof answer,
+    AnswerDefinition<Mode, ValueSchema, Error, Requirements>
+  >(answer)
+}
+
+/** @internal Read static user-presentation metadata without exposing policy tags. */
+export const readAnswerUserPresentation = (
+  answer: AnswerDefinitionContract,
+): { readonly label?: string } | undefined => {
+  const presentation = answer[answerPresentation]
+  if (presentation._tag === "Hidden") {
+    return undefined
+  }
+
+  return presentation.label === undefined
+    ? {}
+    : { label: presentation.label }
+}
+
 const defineAnswer = <
   const Mode extends AnswerMode,
   ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
@@ -145,26 +245,55 @@ const defineAnswer = <
   }
   if (input.escape === undefined) {
     return input.validate === undefined
-      ? base
-      : {
+      ? makeAnswer(base, { _tag: "Hidden" })
+      : makeAnswer({
           ...base,
           validate: input.validate,
           reject: input.reject,
-        }
+        }, { _tag: "Hidden" })
   }
 
   const escape = {
     value: Schema.decodeSync(Schema.toType(schema))(input.escape.value),
   }
   return input.validate === undefined
-    ? { ...base, escape }
-    : {
+    ? makeAnswer({ ...base, escape }, { _tag: "Hidden" })
+    : makeAnswer({
         ...base,
         escape,
         validate: input.validate,
         reject: input.reject,
-      }
+      }, { _tag: "Hidden" })
 }
+
+/** Mark one JSON-encodable answer for inclusion in user-facing snapshots. */
+export const visibleToUser = (
+  options: VisibleToUserOptions = {},
+) =>
+  <
+    Mode extends AnswerMode,
+    ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
+    Error,
+    Requirements,
+  >(
+    answer: Schema.Codec.Encoded<ValueSchema> extends JsonValue
+      ? AnswerDefinition<Mode, ValueSchema, Error, Requirements>
+      : never,
+  ): AnswerDefinition<Mode, ValueSchema, Error, Requirements> => {
+    const parsedOptions = Schema.decodeSync(VisibleToUserOptionsSchema)(
+      options,
+      { onExcessProperty: "error" },
+    )
+    const presentation: AnswerPresentation =
+      parsedOptions.label === undefined
+        ? { _tag: "VisibleToUser" }
+        : {
+            _tag: "VisibleToUser",
+            label: parsedOptions.label,
+          }
+
+    return makeAnswer(answer, presentation)
+  }
 
 function semantic<
   ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
@@ -270,4 +399,5 @@ export const Answer = {
   semantic,
   explicit,
   confirmed,
+  visibleToUser,
 } as const

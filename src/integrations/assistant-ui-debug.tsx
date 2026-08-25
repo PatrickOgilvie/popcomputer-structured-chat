@@ -1,12 +1,17 @@
+import { Schema } from "effect"
 import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
+  type KeyboardEvent,
   type ReactNode,
 } from "react"
 import type { StructuredChatDebugSnapshot } from "../core/debug.js"
+import type { StructuredChatDebugTurn } from "../core/debug-protocol.js"
+import type { StructuredChatDebugEvent } from "../core/debug-trace.js"
 
 /** Viewport corner used by the structured-chat debug panel. */
 export type StructuredChatDebugPanelPosition =
@@ -22,16 +27,60 @@ export type StructuredChatDebugPanelTheme = "system" | "light" | "dark"
 export interface StructuredChatDebugStore {
   /** Replace the current snapshot and notify active subscribers. */
   readonly receive: (snapshot: StructuredChatDebugSnapshot) => void
-  /** Subscribe to snapshot replacement. */
+  /** Add one atomic state-and-trace update from a debug turn response. */
+  readonly receiveTurn: (turn: StructuredChatDebugTurn) => void
+  /** Immediately discard snapshots and sensitive literal trace data. */
+  readonly clear: () => void
+  /** Subscribe to snapshot or trace-history replacement. */
   readonly subscribe: (listener: () => void) => () => void
   /** Read the current snapshot, or null before the first reply. */
   readonly getSnapshot: () => StructuredChatDebugSnapshot | null
+  /** Read the stable combined state consumed by the package debug panel. */
+  readonly getView: () => StructuredChatDebugStoreView
 }
 
-/** Create one isolated structured-chat debug snapshot store. */
-export const createStructuredChatDebugStore = (): StructuredChatDebugStore => {
+/** Current debug state and every captured trace for its browser session. */
+export interface StructuredChatDebugStoreView {
+  readonly snapshot: StructuredChatDebugSnapshot | null
+  readonly turns: ReadonlyArray<StructuredChatDebugTurn>
+}
+
+const StructuredChatDebugStoreOptionsSchema = Schema.Struct({
+  maximumTurns: Schema.optionalKey(
+    Schema.Number.check(
+      Schema.isInt(),
+      Schema.isBetween({ minimum: 1, maximum: 200 }),
+    ),
+  ),
+})
+
+/** Retention policy for one in-memory structured-chat debug store. */
+export interface StructuredChatDebugStoreOptions {
+  readonly maximumTurns?: number
+}
+
+/** Create one isolated, bounded structured-chat debug snapshot store. */
+export const createStructuredChatDebugStore = (
+  options: StructuredChatDebugStoreOptions = {},
+): StructuredChatDebugStore => {
+  const { maximumTurns = 100 } = Schema.decodeSync(
+    StructuredChatDebugStoreOptionsSchema,
+  )(options, { onExcessProperty: "error" })
   let current: StructuredChatDebugSnapshot | null = null
+  let turns: ReadonlyArray<StructuredChatDebugTurn> = []
+  let view: StructuredChatDebugStoreView = { snapshot: current, turns }
   const listeners = new Set<() => void>()
+
+  const notify = (): void => {
+    view = { snapshot: current, turns }
+    for (const listener of listeners) {
+      try {
+        listener()
+      } catch {
+        // One faulty preview consumer must not leave later panels stale.
+      }
+    }
+  }
 
   return {
     receive: (snapshot) => {
@@ -39,13 +88,56 @@ export const createStructuredChatDebugStore = (): StructuredChatDebugStore => {
         return
       }
       current = snapshot
-      for (const listener of listeners) {
-        try {
-          listener()
-        } catch {
-          // One faulty preview consumer must not leave later panels stale.
+      notify()
+    },
+    receiveTurn: (turn) => {
+      let currentSessionId: string | undefined
+      for (let index = turns.length - 1; index >= 0; index -= 1) {
+        const existingSession = turns[index]?.session
+        if (existingSession !== undefined && existingSession !== null) {
+          currentSessionId = existingSession.id
+          break
         }
       }
+      const incomingSessionId = turn.session?.id
+      if (
+        currentSessionId !== undefined &&
+        incomingSessionId !== undefined &&
+        currentSessionId !== incomingSessionId
+      ) {
+        turns = []
+        current = null
+      }
+      const existingIndex =
+        turn._tag === "Succeeded"
+          ? turns.findIndex(
+              (existing) =>
+                existing._tag === "Succeeded" &&
+                existing.session.revision === turn.session.revision,
+            )
+          : -1
+      const nextTurns =
+        existingIndex === -1
+          ? [...turns, turn]
+          : turns.map((existing, index) =>
+              index === existingIndex ? turn : existing,
+            )
+      turns =
+        nextTurns.length > maximumTurns
+          ? nextTurns.slice(-maximumTurns)
+          : nextTurns
+      if (turn._tag === "Succeeded") {
+        current = turn.snapshot
+      }
+      notify()
+    },
+    clear: () => {
+      if (current === null && turns.length === 0) {
+        return
+      }
+      current = null
+      turns = []
+      notify()
     },
     subscribe: (listener) => {
       listeners.add(listener)
@@ -54,6 +146,7 @@ export const createStructuredChatDebugStore = (): StructuredChatDebugStore => {
       }
     },
     getSnapshot: () => current,
+    getView: () => view,
   }
 }
 
@@ -63,6 +156,7 @@ export interface StructuredChatDebugPanelProps {
   readonly position?: StructuredChatDebugPanelPosition
   readonly theme?: StructuredChatDebugPanelTheme
   readonly defaultOpen?: boolean
+  readonly defaultTab?: "flow" | "calls"
 }
 
 type DebugStage = StructuredChatDebugSnapshot["stages"][number]
@@ -80,6 +174,7 @@ type DebugAcceptedState = Extract<
 >
 type DebugEvidence = NonNullable<DebugAcceptedState["evidence"]>
 type DebugValue = DebugAcceptedState["value"]
+type DebugTraceEvent = StructuredChatDebugEvent
 type IconProps = { readonly className?: string }
 type CopyFeedback =
   | { readonly _tag: "Idle" }
@@ -394,13 +489,64 @@ const panelCss = `
 /* ---------- body ---------- */
 
 .pcsc-debug__body {
-  max-height: calc(min(720px, 100dvh - 32px) - 48px);
+  max-height: calc(min(720px, 100dvh - 32px) - 91px);
   overflow: auto;
   padding: 4px 8px 8px;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   scrollbar-color: var(--pcsc-border-strong) transparent;
   scrollbar-width: thin;
+}
+
+.pcsc-debug[data-open="true"][data-tab="calls"] {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.pcsc-debug__tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 6px 8px;
+  background: var(--pcsc-bg);
+  border-bottom: 1px solid var(--pcsc-border);
+}
+
+.pcsc-debug .pcsc-debug__tab {
+  display: flex;
+  width: auto;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--pcsc-text-2);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.pcsc-debug .pcsc-debug__tab[aria-selected="true"] {
+  color: var(--pcsc-text);
+  background: var(--pcsc-well);
+  box-shadow: 0 0 0 1px var(--pcsc-border);
+}
+
+.pcsc-debug .pcsc-debug__tab:active:not(:disabled) {
+  transform: none;
+}
+
+.pcsc-debug__tab-count {
+  min-width: 18px;
+  padding: 0 5px;
+  color: var(--pcsc-text-3);
+  background: var(--pcsc-border);
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 16px;
+  text-align: center;
 }
 
 .pcsc-debug__flow-heading,
@@ -864,6 +1010,175 @@ const panelCss = `
   font: 400 10px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* ---------- literal model trace ---------- */
+
+.pcsc-debug__trace {
+  display: grid;
+  gap: 12px;
+  padding: 8px 2px 2px;
+}
+
+.pcsc-debug__trace-turn {
+  overflow: hidden;
+  background: var(--pcsc-raised);
+  border: 1px solid var(--pcsc-border);
+  border-radius: 9px;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 180px;
+}
+
+.pcsc-debug__trace-turn[data-outcome="failure"] {
+  border-color: color-mix(in srgb, var(--pcsc-warn) 35%, var(--pcsc-border));
+}
+
+.pcsc-debug__trace-turn-header {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  color: var(--pcsc-text-2);
+  border-bottom: 1px solid var(--pcsc-border);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pcsc-debug__trace-revision {
+  color: var(--pcsc-text-3);
+  font: 400 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.pcsc-debug__event-list {
+  position: relative;
+  display: grid;
+  gap: 0;
+  padding: 7px 8px 8px 30px;
+  margin: 0;
+  list-style: none;
+}
+
+.pcsc-debug__event-list::before {
+  position: absolute;
+  top: 17px;
+  bottom: 18px;
+  left: 18px;
+  width: 1px;
+  background: var(--pcsc-border-strong);
+  content: "";
+}
+
+.pcsc-debug__event {
+  position: relative;
+  min-width: 0;
+}
+
+.pcsc-debug__event::before {
+  position: absolute;
+  z-index: 1;
+  top: 15px;
+  left: -16px;
+  width: 7px;
+  height: 7px;
+  background: var(--pcsc-bg);
+  border: 1.5px solid var(--pcsc-text-3);
+  border-radius: 999px;
+  content: "";
+}
+
+.pcsc-debug__event[data-kind="input"]::before {
+  border-color: var(--pcsc-accent);
+  background: var(--pcsc-accent);
+}
+
+.pcsc-debug__event[data-kind="output"]::before {
+  border-color: var(--pcsc-ok);
+  background: var(--pcsc-ok);
+}
+
+.pcsc-debug__event[data-kind="failure"]::before {
+  border-color: var(--pcsc-warn);
+  background: var(--pcsc-warn);
+}
+
+.pcsc-debug__event-details > summary,
+.pcsc-debug__annotation {
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+}
+
+.pcsc-debug__event-details > summary {
+  display: flex;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pcsc-debug__event-details > summary:hover {
+  background: var(--pcsc-hover);
+}
+
+.pcsc-debug__event-title {
+  min-width: 0;
+  flex: 1;
+  color: var(--pcsc-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pcsc-debug__event-meta {
+  overflow: hidden;
+  color: var(--pcsc-text-3);
+  font: 400 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcsc-debug__event-json {
+  max-height: 360px;
+  overflow: auto;
+  padding: 10px;
+  margin: 0 8px 8px;
+  color: var(--pcsc-text-2);
+  background: var(--pcsc-well);
+  border: 1px solid var(--pcsc-border);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 400 10px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.pcsc-debug__annotation {
+  display: flex;
+  color: var(--pcsc-text-2);
+  font-size: 11px;
+}
+
+.pcsc-debug__annotation strong {
+  color: var(--pcsc-text);
+  font-weight: 600;
+}
+
+.pcsc-debug__annotation-tag {
+  padding: 2px 7px;
+  color: var(--pcsc-accent);
+  background: var(--pcsc-accent-soft);
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.pcsc-debug__trace-empty {
+  padding: 28px 18px;
+  color: var(--pcsc-text-3);
+  text-align: center;
+  font-size: 11px;
+}
+
 /* ---------- footer / empty ---------- */
 
 .pcsc-debug__footer {
@@ -941,12 +1256,16 @@ const panelCss = `
   }
 
   .pcsc-debug__body {
-    max-height: calc(100dvh - 64px);
+    max-height: calc(100dvh - 107px);
   }
 
   .pcsc-debug[data-open="true"] button {
     width: 36px;
     height: 36px;
+  }
+
+  .pcsc-debug[data-open="true"] .pcsc-debug__tab {
+    width: auto;
   }
 
   .pcsc-debug__answer-summary,
@@ -978,6 +1297,12 @@ const FlowIcon = ({ className = "pcsc-debug__icon" }: IconProps) => (
     <circle cx="7.5" cy="4.5" r="1.5" />
     <circle cx="12.5" cy="10" r="1.5" />
     <circle cx="9" cy="15.5" r="1.5" />
+  </svg>
+)
+
+const TraceIcon = ({ className = "pcsc-debug__icon" }: IconProps) => (
+  <svg className={className} viewBox="0 0 20 20" aria-hidden="true">
+    <path d="m7.5 5-4 5 4 5M12.5 5l4 5-4 5M11 3.5 9 16.5" />
   </svg>
 )
 
@@ -1530,9 +1855,233 @@ const StageDetails = ({ stage }: { readonly stage: DebugStage }) => {
   }
 }
 
-const snapshotAnnouncement = (
+type DebugPayloadEvent = Extract<
+  DebugTraceEvent,
+  { readonly _tag: "ModelInput" | "ModelOutput" }
+>
+
+const ModelPayloadEvent = ({
+  event,
+  expanded,
+}: {
+  readonly event: DebugPayloadEvent
+  readonly expanded: boolean
+}) => {
+  const input = event._tag === "ModelInput"
+  const payload = input ? event.request : event.response
+  return (
+    <li
+      className="pcsc-debug__event"
+      data-kind={input ? "input" : "output"}
+    >
+      <details className="pcsc-debug__event-details" open={expanded}>
+        <summary>
+          <span className="pcsc-debug__event-title">
+            {input ? "LLM Input" : "LLM Output"}
+          </span>
+          <span className="pcsc-debug__event-meta">
+            {input
+              ? `${event.provider} · ${event.model} · call ${event.call + 1}`
+              : `call ${event.call + 1}`}
+          </span>
+          <ChevronIcon />
+        </summary>
+        <pre className="pcsc-debug__event-json" translate="no">
+          {JSON.stringify(payload, null, 2)}
+        </pre>
+      </details>
+    </li>
+  )
+}
+
+const annotationContent = (event: Exclude<
+  DebugTraceEvent,
+  DebugPayloadEvent
+>): ReactNode => {
+  switch (event._tag) {
+    case "ModelCallFailed":
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">LLM</span>
+          <strong>Call {event.call + 1} Failed</strong>
+          <span>{humanizeIdentifier(event.reason)}</span>
+        </>
+      )
+    case "ModelOutputRejected":
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">LLM</span>
+          <strong>Output Rejected</strong>
+          <span>
+            {event.reason === "invalid_tool_call"
+              ? `Call ${event.call + 1} failed tool validation`
+              : `Call ${event.call + 1} had an invalid provider response`}
+          </span>
+        </>
+      )
+    case "ToolCalled":
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Tool</span>
+          <strong>{humanizeIdentifier(event.tool)} Called</strong>
+        </>
+      )
+    case "QuestionAnswered":
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Answer</span>
+          <strong>Question Answered</strong>
+          <span>{humanizeIdentifier(event.field)}</span>
+        </>
+      )
+    case "QuestionAsked":
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Question</span>
+          <strong>Question Asked</strong>
+          <span>{humanizeIdentifier(event.field)}</span>
+        </>
+      )
+    case "StageAdvanced":
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Stage</span>
+          <strong>{humanizeIdentifier(event.from)}</strong>
+          <span>→ {humanizeIdentifier(event.to)}</span>
+        </>
+      )
+    case "ChatCompleted":
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Chat</span>
+          <strong>Conversation Complete</strong>
+          <span>{humanizeIdentifier(event.stage)}</span>
+        </>
+      )
+    case "TurnFailed":
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Turn</span>
+          <strong>Turn Failed</strong>
+          <span>No new session revision was returned</span>
+        </>
+      )
+    case "TraceTruncated":
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Trace</span>
+          <strong>Capture Limit Reached</strong>
+          <span>Later events were omitted</span>
+        </>
+      )
+  }
+}
+
+const AnnotationEvent = ({
+  event,
+}: {
+  readonly event: Exclude<DebugTraceEvent, DebugPayloadEvent>
+}) => (
+  <li
+    className="pcsc-debug__event"
+    data-kind={
+      event._tag === "ModelCallFailed" ||
+      event._tag === "ModelOutputRejected"
+        ? "failure"
+        : "annotation"
+    }
+  >
+    <div className="pcsc-debug__annotation">
+      {annotationContent(event)}
+    </div>
+  </li>
+)
+
+const TraceEvent = ({
+  event,
+  expanded,
+}: {
+  readonly event: DebugTraceEvent
+  readonly expanded: boolean
+}) =>
+  event._tag === "ModelInput" || event._tag === "ModelOutput" ? (
+    <ModelPayloadEvent event={event} expanded={expanded} />
+  ) : (
+    <AnnotationEvent event={event} />
+  )
+
+const TraceTurn = ({
+  turn,
+  index,
+  latest,
+}: {
+  readonly turn: StructuredChatDebugTurn
+  readonly index: number
+  readonly latest: boolean
+}) => {
+  const { trace } = turn
+  return (
+    <article
+      className="pcsc-debug__trace-turn"
+      data-outcome={turn._tag === "Succeeded" ? "success" : "failure"}
+    >
+      <header className="pcsc-debug__trace-turn-header">
+        <span>Turn {index + 1}</span>
+        <span className="pcsc-debug__trace-revision">
+          {turn._tag === "Succeeded"
+            ? `revision ${turn.session.revision}`
+            : "no revision returned"}
+        </span>
+      </header>
+      {trace.events.length === 0 ? (
+        <div className="pcsc-debug__trace-empty">
+          No model calls were captured for this turn.
+        </div>
+      ) : (
+        <ol className="pcsc-debug__event-list">
+          {trace.events.map((event) => (
+            <TraceEvent
+              event={event}
+              expanded={latest}
+              key={`${event.sequence}:${event._tag}`}
+            />
+          ))}
+        </ol>
+      )}
+    </article>
+  )
+}
+
+const TraceDetails = ({
+  turns,
+}: {
+  readonly turns: ReadonlyArray<StructuredChatDebugTurn>
+}) =>
+  turns.length === 0 ? (
+    <div className="pcsc-debug__trace-empty">
+      No literal model trace has arrived yet. Run the server turn with the
+      debug capture API to populate this view.
+    </div>
+  ) : (
+    <div className="pcsc-debug__trace" aria-label="Literal LLM call trace">
+      {turns.map((turn, index) => (
+        <TraceTurn
+          turn={turn}
+          index={index}
+          latest={index === turns.length - 1}
+          key={`${turn.session?.id ?? "uncorrelated"}:${turn._tag}:${turn._tag === "Succeeded" ? turn.session.revision : index}`}
+        />
+      ))}
+    </div>
+  )
+
+const debugAnnouncement = (
   snapshot: StructuredChatDebugSnapshot | null,
+  turns: ReadonlyArray<StructuredChatDebugTurn>,
 ): string => {
+  if (turns.at(-1)?._tag === "Failed") {
+    return "The latest debug turn failed; no new session revision was returned."
+  }
   if (snapshot === null) {
     return "Waiting for the first reply."
   }
@@ -1553,27 +2102,92 @@ export const StructuredChatDebugPanel = ({
   position = "bottom-right",
   theme = "system",
   defaultOpen = true,
+  defaultTab = "flow",
 }: StructuredChatDebugPanelProps) => {
-  const snapshot = useSyncExternalStore(
+  const storeView = useSyncExternalStore(
     store.subscribe,
-    store.getSnapshot,
-    store.getSnapshot,
+    store.getView,
+    store.getView,
   )
+  const { snapshot, turns } = storeView
   const [open, setOpen] = useState(defaultOpen)
+  const [activeTab, setActiveTab] = useState(defaultTab)
   const [copyFeedback, setCopyFeedback] = useState<CopyFeedback>({
     _tag: "Idle",
   })
   const contentId = useId()
-  const rawJson = useMemo(
+  const flowPanelId = useId()
+  const callsPanelId = useId()
+  const flowTabId = useId()
+  const callsTabId = useId()
+  const flowTab = useRef<HTMLButtonElement>(null)
+  const callsTab = useRef<HTMLButtonElement>(null)
+  const flowJson = useMemo(
     () => (snapshot === null ? "" : JSON.stringify(snapshot, null, 2)),
     [snapshot],
   )
+  const callsJson = useMemo(
+    () => JSON.stringify(turns, null, 2),
+    [turns],
+  )
+  const rawJson = activeTab === "flow" ? flowJson : callsJson
+  const { modelCallCount, failedTurnCount } = useMemo(
+    () => {
+      let calls = 0
+      let failures = 0
+      for (const turn of turns) {
+        if (turn._tag === "Failed") {
+          failures += 1
+        }
+        for (const event of turn.trace.events) {
+          if (event._tag === "ModelInput") {
+            calls += 1
+          }
+        }
+      }
+      return { modelCallCount: calls, failedTurnCount: failures }
+    },
+    [turns],
+  )
+  const traceSubtitle =
+    turns.length === 0
+      ? "Waiting for a captured turn"
+      : [
+          `${modelCallCount} model ${modelCallCount === 1 ? "call" : "calls"}`,
+          `${turns.length} ${turns.length === 1 ? "turn" : "turns"}`,
+          ...(failedTurnCount === 0
+            ? []
+            : [`${failedTurnCount} failed`]),
+        ].join(" · ")
   const copyStatus =
     copyFeedback._tag === "Idle" || copyFeedback.json !== rawJson
       ? "idle"
       : copyFeedback._tag === "Copied"
         ? "copied"
         : "failed"
+
+  const moveTabFocus = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    currentTab: "flow" | "calls",
+  ): void => {
+    const nextTab =
+      event.key === "Home"
+        ? "flow"
+        : event.key === "End"
+          ? "calls"
+          : event.key === "ArrowLeft" || event.key === "ArrowRight"
+            ? currentTab === "flow"
+              ? "calls"
+              : "flow"
+          : undefined
+    if (nextTab === undefined) {
+      return
+    }
+    event.preventDefault()
+    setActiveTab(nextTab)
+    const targetTab = nextTab === "flow" ? flowTab : callsTab
+    targetTab.current?.focus()
+  }
 
   useEffect(() => {
     if (copyStatus === "idle") {
@@ -1611,24 +2225,29 @@ export const StructuredChatDebugPanel = ({
         data-open={open}
         data-position={position}
         data-theme={theme}
+        data-tab={activeTab}
         data-chat-status={snapshot?.status ?? "waiting"}
         aria-label="Structured chat debug inspector"
       >
         <span className="pcsc-debug__sr-only" role="status" aria-atomic="true">
-          {snapshotAnnouncement(snapshot)}
+          {debugAnnouncement(snapshot, turns)}
         </span>
         <header className="pcsc-debug__header">
           <span className="pcsc-debug__mark" aria-hidden="true">
-            <FlowIcon />
+            {activeTab === "flow" ? <FlowIcon /> : <TraceIcon />}
           </span>
           <div className="pcsc-debug__title">
             <h2>
-              {snapshot === null
-                ? "Chat Flow"
-                : humanizeIdentifier(snapshot.chat.name)}
+              {activeTab === "calls"
+                ? "LLM Trace"
+                : snapshot === null
+                  ? "Chat Flow"
+                  : humanizeIdentifier(snapshot.chat.name)}
             </h2>
             <span>
-              {snapshot === null ? (
+              {activeTab === "calls" ? (
+                traceSubtitle
+              ) : snapshot === null ? (
                 "Waiting for a reply"
               ) : (
                 <>
@@ -1643,12 +2262,26 @@ export const StructuredChatDebugPanel = ({
             <button
               className="pcsc-debug__copy"
               type="button"
-              disabled={snapshot === null}
+              disabled={
+                activeTab === "flow"
+                  ? snapshot === null
+                  : turns.length === 0
+              }
               onClick={() => {
                 void copyJson()
               }}
-              aria-label="Copy debug state as JSON"
-              title={copyStatus === "copied" ? "Copied" : "Copy State"}
+              aria-label={
+                activeTab === "flow"
+                  ? "Copy debug state as JSON"
+                  : "Copy LLM call trace as JSON"
+              }
+              title={
+                copyStatus === "copied"
+                  ? "Copied"
+                  : activeTab === "flow"
+                    ? "Copy State"
+                    : "Copy LLM Trace"
+              }
             >
               <span className="pcsc-debug__copy-glyph" key={copyStatus}>
                 {copyStatus === "copied" ? <CheckIcon /> : <CopyIcon />}
@@ -1673,46 +2306,112 @@ export const StructuredChatDebugPanel = ({
           </div>
         </header>
 
+        <div
+          className="pcsc-debug__tabs"
+          role="tablist"
+          aria-label="Debug view"
+          hidden={!open}
+        >
+          <button
+            ref={flowTab}
+            className="pcsc-debug__tab"
+            type="button"
+            role="tab"
+            id={flowTabId}
+            aria-controls={flowPanelId}
+            aria-selected={activeTab === "flow"}
+            tabIndex={activeTab === "flow" ? 0 : -1}
+            onClick={() => {
+              setActiveTab("flow")
+            }}
+            onKeyDown={(event) => {
+              moveTabFocus(event, "flow")
+            }}
+          >
+            Conversation
+          </button>
+          <button
+            ref={callsTab}
+            className="pcsc-debug__tab"
+            type="button"
+            role="tab"
+            id={callsTabId}
+            aria-controls={callsPanelId}
+            aria-selected={activeTab === "calls"}
+            tabIndex={activeTab === "calls" ? 0 : -1}
+            onClick={() => {
+              setActiveTab("calls")
+            }}
+            onKeyDown={(event) => {
+              moveTabFocus(event, "calls")
+            }}
+          >
+            LLM Trace
+            <span className="pcsc-debug__tab-count">{modelCallCount}</span>
+          </button>
+        </div>
+
         <div id={contentId} className="pcsc-debug__body" hidden={!open}>
-          {snapshot === null ? (
-            <div className="pcsc-debug__empty">
-              <span className="pcsc-debug__empty-mark" aria-hidden="true">
-                <FlowIcon />
-              </span>
-              <strong>Ready for the first reply</strong>
-              <span>The conversation map will appear here.</span>
-            </div>
-          ) : (
-            <>
-              <div className="pcsc-debug__flow-heading">
-                <span>Conversation Flow</span>
-                <span className="pcsc-debug__step-count">
-                  Step {snapshot.currentStage.index + 1} of {snapshot.stages.length}
+          <section
+            id={flowPanelId}
+            role="tabpanel"
+            aria-labelledby={flowTabId}
+            hidden={activeTab !== "flow"}
+          >
+            {snapshot === null ? (
+              <div className="pcsc-debug__empty">
+                <span className="pcsc-debug__empty-mark" aria-hidden="true">
+                  <FlowIcon />
                 </span>
+                <strong>Ready for the first reply</strong>
+                <span>The conversation map will appear here.</span>
               </div>
+            ) : (
+              <>
+                <div className="pcsc-debug__flow-heading">
+                  <span>Conversation Flow</span>
+                  <span className="pcsc-debug__step-count">
+                    Step {snapshot.currentStage.index + 1} of {snapshot.stages.length}
+                  </span>
+                </div>
 
-              <div className="pcsc-debug__stage-list" aria-label="Chat stages">
-                {snapshot.stages.map((stage) => (
-                  <StageDetails
-                    stage={stage}
-                    key={`${stage.index}:${stage.name}`}
-                  />
-                ))}
-              </div>
+                <div className="pcsc-debug__stage-list" aria-label="Chat stages">
+                  {snapshot.stages.map((stage) => (
+                    <StageDetails
+                      stage={stage}
+                      key={`${stage.index}:${stage.name}`}
+                    />
+                  ))}
+                </div>
 
-              <details className="pcsc-debug__raw">
-                <summary>
-                  <span>Raw State</span>
-                  <ChevronIcon />
-                </summary>
-                <pre className="pcsc-debug__json" translate="no">
-                  {rawJson}
-                </pre>
-              </details>
-            </>
-          )}
+                <details className="pcsc-debug__raw">
+                  <summary>
+                    <span>Raw State</span>
+                    <ChevronIcon />
+                  </summary>
+                  <pre className="pcsc-debug__json" translate="no">
+                    {flowJson}
+                  </pre>
+                </details>
+              </>
+            )}
+          </section>
+
+          <section
+            id={callsPanelId}
+            role="tabpanel"
+            aria-labelledby={callsTabId}
+            hidden={activeTab !== "calls"}
+          >
+            {activeTab === "calls" ? <TraceDetails turns={turns} /> : null}
+          </section>
+
           <footer className="pcsc-debug__footer">
-            <span>Preview · includes chat answers</span>
+            <span>
+              {activeTab === "flow"
+                ? "Preview · includes chat answers"
+                : "Debug only · literal model data"}
+            </span>
             <span
               className="pcsc-debug__copy-status"
               role="status"
@@ -1721,7 +2420,9 @@ export const StructuredChatDebugPanel = ({
               {copyStatus === "copied"
                 ? "Copied"
                 : copyStatus === "failed"
-                  ? "Copy failed · use Raw State"
+                  ? activeTab === "flow"
+                    ? "Copy failed · use Raw State"
+                    : "Copy failed · expand call data"
                   : ""}
             </span>
           </footer>

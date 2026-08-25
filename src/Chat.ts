@@ -32,8 +32,8 @@ import type {
   PresentChatReplyOptions,
   PresentChatExplorationOptions,
   PresentableExploration,
+  StructuredChatPersistedTurnResponse,
   StructuredChatExplorationResponse,
-  StructuredChatTurnResponse,
 } from "./core/protocol.js"
 import {
   AssistantDataPartSchema,
@@ -50,6 +50,8 @@ import {
   StructuredChatExplorationCallSchema,
   StructuredChatExplorationRequestSchema,
   StructuredChatExplorationResponseSchema,
+  StructuredChatNonProgressingResponseSchema,
+  StructuredChatPersistedTurnResponseSchema,
   structuredChatTurnRequestSchema,
   StructuredChatAssistantMessageSchema,
   StructuredChatSessionReferenceSchema,
@@ -57,6 +59,15 @@ import {
   StructuredChatTurnResponseSchema,
   Text,
 } from "./core/protocol.js"
+import {
+  InvalidChatUserAnswerProjection,
+  InvalidChatUserAnswerProjectionReasonSchema,
+  StructuredChatUserAnswerSnapshotSchema,
+  type StructuredChatUserAnswerField,
+  type StructuredChatUserAnswerSection,
+  type StructuredChatUserAnswerSnapshot,
+  type StructuredChatUserAnswerState,
+} from "./core/user-answer-projection.js"
 import { compile, read } from "./internal/chat/definition.js"
 import type { ToolTuple } from "./core/tool-set.js"
 
@@ -265,7 +276,7 @@ export const present = <
       Requirements
     >,
   ): Effect.Effect<
-    StructuredChatTurnResponse,
+    StructuredChatPersistedTurnResponse,
     Error | InvalidChatPresentation,
     Requirements
   > =>
@@ -341,6 +352,8 @@ export {
   InvalidChatPresentation as InvalidPresentation,
   InvalidChatTransition as InvalidTransition,
   InvalidChatTransitionReasonSchema as InvalidTransitionReasonSchema,
+  InvalidChatUserAnswerProjection as InvalidUserAnswerProjection,
+  InvalidChatUserAnswerProjectionReasonSchema as InvalidUserAnswerProjectionReasonSchema,
   notice,
   presentValidationRejection,
   structuredChatTurnRequestSchema as turnRequestSchema,
@@ -348,9 +361,12 @@ export {
   StructuredChatExplorationCallSchema as ExplorationCallSchema,
   StructuredChatExplorationRequestSchema as ExplorationRequestSchema,
   StructuredChatExplorationResponseSchema as ExplorationResponseSchema,
+  StructuredChatNonProgressingResponseSchema as NonProgressingResponseSchema,
+  StructuredChatPersistedTurnResponseSchema as PersistedTurnResponseSchema,
   StructuredChatSessionReferenceSchema as SessionReferenceSchema,
   StructuredChatTurnRequestSchema as TurnRequestSchema,
   StructuredChatTurnResponseSchema as TurnResponseSchema,
+  StructuredChatUserAnswerSnapshotSchema as UserAnswerSnapshotSchema,
   Text,
 }
 
@@ -359,11 +375,20 @@ export type {
   StructuredChatExplorationCall as ExplorationCall,
   StructuredChatExplorationRequest as ExplorationRequest,
   StructuredChatExplorationResponse as ExplorationResponse,
+  StructuredChatNonProgressingResponse as NonProgressingResponse,
+  StructuredChatPersistedTurnResponse as PersistedTurnResponse,
   StructuredChatAssistantMessage as AssistantMessage,
   StructuredChatSessionReference as SessionReference,
   StructuredChatTurnRequest as TurnRequest,
   StructuredChatTurnResponse as TurnResponse,
 } from "./core/protocol.js"
+
+export type {
+  StructuredChatUserAnswerField as UserAnswerField,
+  StructuredChatUserAnswerSection as UserAnswerSection,
+  StructuredChatUserAnswerSnapshot as UserAnswerSnapshot,
+  StructuredChatUserAnswerState as UserAnswerState,
+}
 
 export type {
   ChatError as ProcessError,

@@ -21,6 +21,7 @@ import type {
   ToolTuple,
 } from "./tool-set.js"
 import type { JsonValue } from "./json-value.js"
+import { recordLatestDebugModelOutputRejected } from "./debug-trace.js"
 
 /** Bounded application-authored instruction supplied to a model adapter. */
 export const TrustedInstructionSchema =
@@ -216,7 +217,15 @@ export const planToolCall = <
                 },
               },
             ),
-            Effect.flatMap(input.tools.parseCall),
+            Effect.flatMap((call) =>
+              input.tools.parseCall(call).pipe(
+                Effect.tapError(() =>
+                  recordLatestDebugModelOutputRejected(
+                    "invalid_tool_call",
+                  ),
+                ),
+              ),
+            ),
           )
 
       return requestParsedCall(input.instructions, 1).pipe(

@@ -34,6 +34,16 @@ import { readToolExecutionModelContext } from "./tool.js"
 import { deriveCommandId } from "./command.js"
 import { defineTool, type QueryToolDefinitionContract } from "./tool.js"
 import { JsonValueSchema, type JsonValue } from "./json-value.js"
+import { recordDebugEvent } from "./debug-trace.js"
+import {
+  ChatNameSchema,
+  ChatVersionSchema,
+} from "./chat-identity.js"
+import {
+  InvalidChatUserAnswerProjection,
+  projectUserAnswers,
+  type StructuredChatUserAnswerSnapshot,
+} from "./user-answer-projection.js"
 import type { StandardRepair } from "./repair.js"
 import {
   ChatSessionConflict,
@@ -54,18 +64,7 @@ import {
   type RuntimeRepairCorrection,
 } from "../internal/chat/process.js"
 
-/** Stable machine-facing name for one structured chat definition. */
-export const ChatNameSchema = Schema.Trimmed.check(
-  Schema.isNonEmpty(),
-  Schema.isMaxLength(100),
-  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
-)
-
-/** Positive persisted-state version for one structured chat definition. */
-export const ChatVersionSchema = Schema.Number.check(
-  Schema.isInt(),
-  Schema.isBetween({ minimum: 1, maximum: 2_147_483_647 }),
-)
+export { ChatNameSchema, ChatVersionSchema } from "./chat-identity.js"
 
 /** Safe reason that a server-owned chat transition was rejected. */
 export const InvalidChatTransitionReasonSchema = Schema.Literals([
@@ -240,6 +239,8 @@ export interface ChatReply<
   readonly sessionId: string
   readonly revision: string
   readonly turn: ChatTurn<Name, Version, Stages>
+  /** Complete display-safe answers derived from the state at `revision`. */
+  readonly userAnswers: StructuredChatUserAnswerSnapshot
 }
 
 /** Failure union produced while loading, running, and replacing a session. */
@@ -248,6 +249,7 @@ export type ChatReplyError<Stages extends ChatStageTuple> =
   | ChatSessionStoreUnavailable
   | ChatSessionConflict
   | InvalidChatSession
+  | InvalidChatUserAnswerProjection
 
 /** Input for one read-only exploration against the latest session snapshot. */
 export interface ChatExploreInput {
@@ -765,6 +767,22 @@ export const defineChat = <
     applyRepairs: applyConversationRepairs,
   })
 
+  const recordTurnAnnotations = (
+    previous: RuntimeChatState,
+    next: RuntimeChatState,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      if (previous.status !== "complete" && next.status === "complete") {
+        const completedStage = definition.stages[next.stage]
+        if (completedStage !== undefined) {
+          yield* recordDebugEvent({
+            _tag: "ChatCompleted",
+            stage: completedStage.name,
+          })
+        }
+      }
+    })
+
   const run: ChatDefinition<
     Name,
     Version,
@@ -899,6 +917,12 @@ export const defineChat = <
           ChatRequirements<Stages>
         >
       >(trustedTurn)
+      // SAFETY: turn.state is produced by this definition's sealed runtime.
+      const nextRuntimeState = cast<
+        typeof turn.state,
+        RuntimeChatState
+      >(turn.state)
+      yield* recordTurnAnnotations(runtimeState, nextRuntimeState)
       const toolModelContext =
         turn._tag === "Question"
           ? undefined
@@ -930,6 +954,10 @@ export const defineChat = <
       ).pipe(
         Effect.mapError(() => invalidSession("invalid_state")),
       )
+      const userAnswers = yield* projectUserAnswers({
+        definition,
+        state: nextRuntimeState,
+      })
       const replaced = yield* store
         .replace({
           ...scope,
@@ -965,6 +993,7 @@ export const defineChat = <
         sessionId: scope.sessionId,
         revision: replacement.revision,
         turn,
+        userAnswers,
       }
     }).pipe(
       Effect.withSpan("popcomputer.structured_chat.session.reply", {
@@ -1052,7 +1081,17 @@ export const defineChat = <
       // SAFETY: Stage is restricted to this chat's concrete collect stages,
       // Field is restricted to its field keys, and state uses the same tuple.
       const runtimeState = cast<typeof state, RuntimeChatState>(state)
-      const accepted = runtimeState.stages[stage.name]?.accepted[field]
+      const stageState = Object.prototype.hasOwnProperty.call(
+        runtimeState.stages,
+        stage.name,
+      )
+        ? runtimeState.stages[stage.name]
+        : undefined
+      const accepted =
+        stageState !== undefined &&
+          Object.prototype.hasOwnProperty.call(stageState.accepted, field)
+          ? stageState.accepted[field]
+          : undefined
       return cast<
         typeof accepted,
         | AcceptedAnswer<

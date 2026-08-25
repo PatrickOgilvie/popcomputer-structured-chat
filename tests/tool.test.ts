@@ -7,6 +7,7 @@ import {
   Result,
   Schema,
 } from "effect"
+import { captureDebugEvents } from "../src/core/debug-trace.js"
 
 interface AgencyMatch {
   readonly id: string
@@ -241,6 +242,41 @@ describe("Tool.define", () => {
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Tool.InvalidProjection)
     }
+  })
+
+  test("records successful server execution before a later projection fails", async () => {
+    let executions = 0
+    const InvalidProjection = Tool.define({
+      name: "executed_before_projection_failure",
+      description: "Prove execution tracing follows the server boundary.",
+      input: Schema.Struct({}),
+      execute: () =>
+        Effect.sync(() => {
+          executions += 1
+          return { id: "agency:1" }
+        }),
+    }).pipe(
+      Tool.modelResult(
+        Schema.Struct({ id: Schema.String }),
+        // SAFETY: This test deliberately violates the projection contract after
+        // the server effect succeeds.
+        () => ({ id: 123 }) as never,
+      ),
+    )
+
+    const captured = await Effect.runPromise(
+      captureDebugEvents(InvalidProjection.execute({})),
+    )
+
+    expect(executions).toBe(1)
+    expect(Result.isFailure(captured.result)).toBe(true)
+    expect(captured.events).toEqual([
+      {
+        _tag: "ToolCalled",
+        sequence: 0,
+        tool: "executed_before_projection_failure",
+      },
+    ])
   })
 
   test("rejects schema-invalid browser projection data", async () => {

@@ -1,11 +1,29 @@
 import { describe, expect, test } from "bun:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import {
+  act,
+  create,
+  type ReactTestInstance,
+  type ReactTestRenderer,
+} from "react-test-renderer"
 import type { StructuredChatDebugSnapshot } from "../src/core/debug.js"
+import type { StructuredChatDebugTurn } from "../src/core/debug-protocol.js"
+import type { StructuredChatDebugTrace } from "../src/core/debug-trace.js"
 import {
   createStructuredChatDebugStore,
   StructuredChatDebugPanel,
 } from "../src/integrations/assistant-ui-debug.js"
+
+declare global {
+  var IS_REACT_ACT_ENVIRONMENT: boolean
+}
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+interface MountedRenderer {
+  renderer?: ReactTestRenderer
+}
 
 const snapshot: StructuredChatDebugSnapshot = {
   schemaVersion: 1,
@@ -131,6 +149,65 @@ const snapshot: StructuredChatDebugSnapshot = {
   ],
 }
 
+const trace: StructuredChatDebugTrace = {
+  schemaVersion: 1,
+  events: [
+    {
+      _tag: "ModelInput",
+      sequence: 0,
+      call: 0,
+      provider: "openai",
+      model: "gpt-5-mini",
+      providerAttempt: 1,
+      request: {
+        model: "gpt-5-mini",
+        input: {
+          messages: [{ role: "user", content: "literal <request>" }],
+        },
+      },
+    },
+    {
+      _tag: "ModelOutput",
+      sequence: 1,
+      call: 0,
+      response: {
+        choices: [{ message: { content: "literal <response>" } }],
+      },
+    },
+    {
+      _tag: "ToolCalled",
+      sequence: 2,
+      tool: "find_resources",
+    },
+    {
+      _tag: "QuestionAnswered",
+      sequence: 3,
+      stage: "request_details",
+      field: "audience",
+    },
+    {
+      _tag: "TraceTruncated",
+      sequence: 4,
+    },
+  ],
+}
+
+const successfulTurn: StructuredChatDebugTurn = {
+  _tag: "Succeeded",
+  session: { id: "resource:01", revision: "1" },
+  snapshot,
+  trace,
+}
+
+const uncorrelatedFailedTurn: StructuredChatDebugTurn = {
+  _tag: "Failed",
+  session: null,
+  trace: {
+    schemaVersion: 1,
+    events: [{ _tag: "TurnFailed", sequence: 0 }],
+  },
+}
+
 describe("createStructuredChatDebugStore", () => {
   test("isolates snapshot ownership and unsubscribe behavior", () => {
     const store = createStructuredChatDebugStore()
@@ -172,9 +249,133 @@ describe("createStructuredChatDebugStore", () => {
     expect(laterNotifications).toBe(1)
     expect(store.getSnapshot()).toBe(snapshot)
   })
+
+  test("bounds turns by session and replaces duplicate revisions", () => {
+    const store = createStructuredChatDebugStore()
+    store.receiveTurn(successfulTurn)
+    store.receiveTurn({
+      _tag: "Succeeded",
+      session: { id: "resource:01", revision: "2" },
+      snapshot: { ...snapshot, status: "complete" },
+      trace: {
+        ...trace,
+        events: [],
+      },
+    })
+    store.receiveTurn({
+      _tag: "Succeeded",
+      session: { id: "resource:01", revision: "2" },
+      snapshot,
+      trace,
+    })
+
+    expect(store.getView().turns).toHaveLength(2)
+    expect(store.getView().turns[1]?.trace.events).toEqual(trace.events)
+
+    store.receiveTurn({
+      _tag: "Succeeded",
+      session: { id: "resource:02", revision: "1" },
+      snapshot,
+      trace,
+    })
+    expect(store.getView().turns).toHaveLength(1)
+    expect(store.getView().turns[0]?.session?.id).toBe("resource:02")
+  })
+
+  test("retains a known session across an uncorrelated failure", () => {
+    const store = createStructuredChatDebugStore()
+    store.receiveTurn(successfulTurn)
+    store.receiveTurn(uncorrelatedFailedTurn)
+
+    expect(store.getView().snapshot).toBe(snapshot)
+    expect(store.getView().turns).toHaveLength(2)
+    expect(store.getView().turns[1]?.session).toBeNull()
+
+    store.receiveTurn({
+      ...successfulTurn,
+      session: { id: "resource:01", revision: "2" },
+    })
+    expect(store.getView().turns).toHaveLength(3)
+    expect(store.getView().snapshot).toBe(snapshot)
+  })
+
+  test("retains failed turns, enforces the configured bound, and clears", () => {
+    const store = createStructuredChatDebugStore({ maximumTurns: 2 })
+    store.receiveTurn(successfulTurn)
+    store.receiveTurn({
+      _tag: "Failed",
+      session: { id: "resource:01" },
+      trace: {
+        schemaVersion: 1,
+        events: [{ _tag: "TurnFailed", sequence: 0 }],
+      },
+    })
+    store.receiveTurn({
+      ...successfulTurn,
+      session: { id: "resource:01", revision: "2" },
+    })
+
+    expect(store.getView().turns).toHaveLength(2)
+    expect(store.getView().turns[0]?._tag).toBe("Failed")
+    store.clear()
+    expect(store.getView()).toEqual({ snapshot: null, turns: [] })
+  })
 })
 
 describe("StructuredChatDebugPanel", () => {
+  test("wraps arrow navigation and preserves Home and End", async () => {
+    const store = createStructuredChatDebugStore()
+    const mounted: MountedRenderer = {}
+
+    await act(() => {
+      mounted.renderer = create(
+        createElement(StructuredChatDebugPanel, { store }),
+      )
+    })
+    const renderer = mounted.renderer
+    if (renderer === undefined) {
+      throw new Error("React debug-panel test renderer did not mount")
+    }
+
+    const readTabs = (): ReadonlyArray<ReactTestInstance> =>
+      renderer.root.findAllByProps({ role: "tab" })
+    const selectedTabIndex = (): number =>
+      readTabs().findIndex((tab) => tab.props["aria-selected"] === true)
+    const pressTabKey = async (
+      tabIndex: number,
+      key: "ArrowLeft" | "ArrowRight" | "Home" | "End",
+    ): Promise<void> => {
+      const tab = readTabs()[tabIndex]
+      if (tab === undefined) {
+        throw new Error(`Debug-panel tab ${tabIndex} was not rendered`)
+      }
+      let defaultPrevented = false
+      await act(() => {
+        tab.props.onKeyDown({
+          key,
+          preventDefault: () => {
+            defaultPrevented = true
+          },
+        })
+      })
+      expect(defaultPrevented).toBe(true)
+    }
+
+    expect(selectedTabIndex()).toBe(0)
+    await pressTabKey(0, "ArrowLeft")
+    expect(selectedTabIndex()).toBe(1)
+    await pressTabKey(1, "ArrowRight")
+    expect(selectedTabIndex()).toBe(0)
+    await pressTabKey(0, "End")
+    expect(selectedTabIndex()).toBe(1)
+    await pressTabKey(1, "Home")
+    expect(selectedTabIndex()).toBe(0)
+
+    await act(() => {
+      renderer.unmount()
+    })
+  })
+
   test("renders stage progress, answer states, and escaped debug data", () => {
     const store = createStructuredChatDebugStore()
     store.receive(snapshot)
@@ -299,5 +500,60 @@ describe("StructuredChatDebugPanel", () => {
     expect(html).toContain('aria-label="Expand debug panel"')
     expect(html).toContain("disabled")
     expect(html).toContain("hidden")
+  })
+
+  test("renders the literal model chain and semantic annotations on its own tab", () => {
+    const store = createStructuredChatDebugStore()
+    store.receiveTurn(successfulTurn)
+
+    const html = renderToStaticMarkup(
+      createElement(StructuredChatDebugPanel, {
+        store,
+        defaultTab: "calls",
+      }),
+    )
+
+    expect(html).toContain('data-tab="calls"')
+    expect(html).toContain(">Conversation</button>")
+    expect(html).toContain("LLM Trace")
+    expect(html.indexOf('class="pcsc-debug__tabs"')).toBeLessThan(
+      html.indexOf('class="pcsc-debug__body"'),
+    )
+    expect(html).toContain('aria-label="Literal LLM call trace"')
+    expect(html).toContain("LLM Input")
+    expect(html).toContain("LLM Output")
+    expect(html).toContain("openai · gpt-5-mini · call 1")
+    expect(html).toContain("literal &lt;request&gt;")
+    expect(html).toContain("literal &lt;response&gt;")
+    expect(html).not.toContain("literal <request>")
+    expect(html).toContain("Find Resources Called")
+    expect(html).toContain("Question Answered")
+    expect(html).toContain("Audience")
+    expect(html).toContain("Capture Limit Reached")
+    expect(html).toContain("Later events were omitted")
+    expect(html).toContain('aria-label="Copy LLM call trace as JSON"')
+  })
+
+  test("renders an uncorrelated failure without claiming persistence certainty", () => {
+    const store = createStructuredChatDebugStore()
+    store.receiveTurn(successfulTurn)
+    store.receiveTurn(uncorrelatedFailedTurn)
+
+    const html = renderToStaticMarkup(
+      createElement(StructuredChatDebugPanel, {
+        store,
+        defaultTab: "calls",
+      }),
+    )
+
+    expect(html).toContain("Turn 2")
+    expect(html).toContain("no revision returned")
+    expect(html).toContain("Turn Failed")
+    expect(html).toContain("No new session revision was returned")
+    expect(html).toContain(
+      "The latest debug turn failed; no new session revision was returned.",
+    )
+    expect(html).not.toContain("failed before persistence")
+    expect(html).not.toContain("was persisted")
   })
 })
