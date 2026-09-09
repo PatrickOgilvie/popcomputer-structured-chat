@@ -5,8 +5,10 @@ export {
   ChatModelUnavailable as Unavailable,
   ChatModelUnavailableReasonSchema as UnavailableReasonSchema,
   ConversationRoleSchema as RoleSchema,
+  defineModelProfile as profile,
   Instruction,
   Message,
+  ModelProfileNameSchema as ProfileNameSchema,
   runToolStep,
   StructuredChatModel as Service,
   TrustedInstructionSchema as InstructionSchema,
@@ -20,6 +22,8 @@ export {
 } from "./core/model-guard.js"
 
 export type {
+  ModelProfile as Profile,
+  ModelProfileName as ProfileName,
   RunToolStepInput,
   StructuredChatModelService as ServiceContract,
   ToolModelRequest as ToolRequest,

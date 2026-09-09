@@ -169,7 +169,7 @@ export const presentChatDebugReply = <
   const Version extends number,
   const Stages extends ChatStageTuple,
 >(
-  chat: ChatDefinition<Name, Version, Stages>,
+  chat: ChatDefinition<Name, Version, Stages, import("./chat.js").ChatExplorationTuple>,
   input: ChatDebugPresentationInput<Name, Version, Stages>,
   options: PresentChatDebugReplyOptions<Name, Version, Stages> = {},
 ): Effect.Effect<

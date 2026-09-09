@@ -81,6 +81,18 @@ describe("D1 chat session store in workerd", () => {
         }),
       ),
     ).toBe(1)
-    expect(await Effect.runPromise(store.load(scope))).toBeNull()
+    const expired = await Effect.runPromise(Effect.result(store.load(scope)))
+    expect(Result.isFailure(expired)).toBe(true)
+    if (Result.isFailure(expired)) expect(expired.failure).toBeInstanceOf(Session.Expired)
+    for (const expectedRevision of [null, "2"]) {
+      const recreate = await Effect.runPromise(Effect.result(store.replace({
+        ...scope, expectedRevision, state: {}, messages: [],
+      })))
+      expect(Result.isFailure(recreate)).toBe(true)
+      if (Result.isFailure(recreate)) expect(recreate.failure).toBeInstanceOf(Session.Conflict)
+    }
+    expect(await Effect.runPromise(cleanupExpiredD1ChatSessions(env.SESSIONS_DB, {
+      expiringNamespacePrefixes: ["runtime:"], retentionMillis: 1,
+    }))).toBe(0)
   })
 })

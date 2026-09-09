@@ -87,7 +87,7 @@ export type StructuredChatUserAnswerSnapshot = Schema.Schema.Type<
 type UserAnswerProjectionStage =
   | CollectStageDefinitionContract
   | {
-      readonly _tag: "ToolStage" | "CommandStage"
+      readonly _tag: "ToolStage" | "CommandStage" | "InteractionStage"
       readonly name: string
     }
 

@@ -28,7 +28,7 @@ Non-goals:
 
 Existing `tool_step.plan` spans combine pre-guards, provider I/O, response parsing, and post-guards. Existing `session.reply` spans combine store reads/writes with the entire state machine. Leaf spans are necessary to identify which boundary dominates a hot reply.
 
-OpenTelemetry's GenAI conventions warn that input/output messages and tool arguments/results can contain sensitive information and recommend filtering or truncation. Its convention guidance also favors low-cardinality, inexpensive attributes available at span start. This spec therefore records counts only:
+OpenTelemetry's GenAI conventions warn that input/output messages and tool arguments/results can contain sensitive information and recommend filtering or truncation. Its convention guidance also favors low-cardinality, inexpensive attributes available at span start. This spec therefore records aggregate counts plus the bounded, application-authored logical model profile:
 
 - <https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/>
 - <https://opentelemetry.io/docs/specs/semconv/how-to-write-conventions/>
@@ -41,7 +41,7 @@ Applications can do this, but package traces would remain incomplete and adapter
 
 ### B. Adopt unstable provider semantic conventions wholesale
 
-Rejected for this provider-neutral core. Model/provider names and token usage are not reliably available at the current seam, and content attributes are unsafe by default.
+Rejected for this provider-neutral core. Concrete provider/model names and token usage are not reliably available at the current seam, and content attributes are unsafe by default. The logical model profile is available because the core selects its service key.
 
 ### C. Package-owned leaf spans with aggregate attributes
 
@@ -55,7 +55,7 @@ Span contract:
 
 | Span | Parent | Attributes |
 |---|---|---|
-| `popcomputer.structured_chat.model.request` | `tool_step.plan` | `messageCount`, `messageCharacterCount`, `instructionCount`, `toolCount` |
+| `popcomputer.structured_chat.model.request` | `tool_step.plan` | `messageCount`, `messageCharacterCount`, `instructionCount`, `toolCount`, `modelProfile` |
 | `popcomputer.structured_chat.session.load` | `session.reply` | `chat`, `version` |
 | `popcomputer.structured_chat.session.replace` | `session.reply` | `chat`, `version`, `messageCount`, `messageCharacterCount`, `stage`, `status` |
 

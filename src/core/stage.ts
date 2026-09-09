@@ -2,8 +2,10 @@ import { Effect, Function as Fn, Schema } from "effect"
 import {
   Instruction,
   planToolCall,
-  StructuredChatModel,
+  type AnyModelProfile,
   type ChatModelUnavailable,
+  type ModelProfileInput,
+  type ModelRequirement,
   type UnsupportedModelToolSchema,
   type UntrustedMessage,
 } from "./model.js"
@@ -19,7 +21,6 @@ import {
   type ToolSetError,
   type ToolSetExecution,
   type ToolSetRequirements,
-  type ToolCallPlanner,
   type ToolTuple,
 } from "./tool-set.js"
 import type {
@@ -30,9 +31,10 @@ import type {
   StructuredCommand,
   ToolCall,
   ToolExecution,
-  QueryToolDefinitionContract,
-  ToolSchema,
 } from "./tool.js"
+import { compileToolRegistry, compileRepairToolRegistry, type RepairDecision } from "./tool-registry.js"
+import type { RepairTool } from "./repair.js"
+import { defineInteractionStage } from "./interaction-stage.js"
 import { defineCollectStage } from "./collect-stage.js"
 import { StageNameSchema } from "./stage-name.js"
 import {
@@ -54,33 +56,26 @@ export type ToolStageAfterExecution = Schema.Schema.Type<
 >
 
 /** Definition input for one stage-scoped, repeatable tool step. */
-export interface DefineToolStageInput<
+export type DefineToolStageInput<
   Name extends string,
   Tools extends ToolTuple,
   Guards extends ModelGuardTuple,
-> {
+  Profile extends AnyModelProfile | undefined = undefined,
+> = {
   readonly name: Name
   readonly instructions: readonly [string, ...ReadonlyArray<string>]
   readonly tools: Tools
   readonly guards?: Guards
   readonly afterExecution?: ToolStageAfterExecution
-}
+} & ModelProfileInput<Profile>
 
 /** @internal Erased tool-stage behavior consumed by the chat runtime. */
 export interface ToolStageRuntime {
   readonly afterExecution: ToolStageAfterExecution
   readonly toolNames: ReadonlyArray<string>
-  readonly planWith: (
+  readonly withRepair: (repair: RepairTool) => (
     messages: ReadonlyArray<UntrustedMessage>,
-    additionalTool: QueryToolDefinitionContract,
-  ) => Effect.Effect<
-    ToolCall<string, ToolSchema>,
-    unknown,
-    unknown
-  >
-  readonly execute: (
-    call: ToolCall<string, ToolSchema>,
-  ) => Effect.Effect<unknown, unknown, unknown>
+  ) => Effect.Effect<RepairDecision, unknown, unknown>
   readonly run: (
     messages: ReadonlyArray<UntrustedMessage>,
   ) => Effect.Effect<unknown, unknown, unknown>
@@ -95,6 +90,8 @@ export interface ToolStageDefinitionContract
   extends StructuredDefinition<"tool_stage"> {
   readonly _tag: "ToolStage"
   readonly name: string
+  readonly guards: ModelGuardTuple
+  readonly toolSet: { readonly tools: ToolTuple }
   readonly [toolStageRuntime]: ToolStageRuntime
 }
 
@@ -121,6 +118,7 @@ export interface CommandStageDefinitionContract
   extends StructuredDefinition<"command_stage"> {
   readonly _tag: "CommandStage"
   readonly name: string
+  readonly guards: ModelGuardTuple
   readonly command: CommandDefinitionContract
   readonly [commandStageRuntime]: CommandStageRuntime
 }
@@ -135,6 +133,7 @@ export interface ToolStage<
   Name extends string,
   Tools extends ToolTuple,
   Guards extends ModelGuardTuple,
+  Profile extends AnyModelProfile | undefined = undefined,
 > extends ToolStageDefinitionContract {
   readonly _tag: "ToolStage"
   readonly name: Name
@@ -151,7 +150,7 @@ export interface ToolStage<
     | UnsupportedModelToolSchema
     | InvalidToolCall
     | ModelGuardError<Guards>,
-    | StructuredChatModel
+    | ModelRequirement<Profile>
     | ModelGuardRequirements<Guards>
   >
 
@@ -164,7 +163,7 @@ export interface ToolStage<
     | UnsupportedModelToolSchema
     | ToolSetError<Tools>
     | ModelGuardError<Guards>,
-    | StructuredChatModel
+    | ModelRequirement<Profile>
     | ToolSetRequirements<Tools>
     | ModelGuardRequirements<Guards>
   >
@@ -219,22 +218,24 @@ type CommandRequirements<Command> = Command extends StructuredCommand<
   : never
 
 /** Definition input for one exactly-once-intent terminal command stage. */
-export interface DefineCommandStageInput<
+export type DefineCommandStageInput<
   Name extends string,
   Command extends CommandDefinitionContract,
   Guards extends ModelGuardTuple,
-> {
+  Profile extends AnyModelProfile | undefined = undefined,
+> = {
   readonly name: Name
   readonly instructions: readonly [string, ...ReadonlyArray<string>]
   readonly command: Command
   readonly guards?: Guards
-}
+} & ModelProfileInput<Profile>
 
 /** One terminal stage exposing exactly one side-effecting command. */
 export interface CommandStage<
   Name extends string,
   Command extends CommandDefinitionContract,
   Guards extends ModelGuardTuple,
+  Profile extends AnyModelProfile | undefined = undefined,
 > extends CommandStageDefinitionContract {
   readonly name: Name
   readonly command: Command
@@ -248,7 +249,7 @@ export interface CommandStage<
     | UnsupportedModelToolSchema
     | InvalidToolCall
     | ModelGuardError<Guards>,
-    | StructuredChatModel
+    | ModelRequirement<Profile>
     | ModelGuardRequirements<Guards>
   >
 
@@ -263,7 +264,7 @@ export interface CommandStage<
     | InvalidToolProjection
     | CommandError<Command>
     | ModelGuardError<Guards>,
-    | StructuredChatModel
+    | ModelRequirement<Profile>
     | CommandRequirements<Command>
     | ModelGuardRequirements<Guards>
   >
@@ -273,9 +274,15 @@ const defineToolStage = <
   const Name extends string,
   const Tools extends ToolTuple,
   const Guards extends ModelGuardTuple = readonly [],
+  const Profile extends AnyModelProfile | undefined = undefined,
 >(
-  definition: DefineToolStageInput<Name, Tools, Guards>,
-): ToolStage<Name, Tools, Guards> => {
+  definition: DefineToolStageInput<
+    Name,
+    Tools,
+    Guards,
+    Profile
+  >,
+): ToolStage<Name, Tools, Guards, Profile> => {
   Schema.decodeSync(StageNameSchema)(definition.name)
   const instructions = definition.instructions.map(Instruction.make)
   const toolSet = defineToolSet(...definition.tools)
@@ -283,49 +290,46 @@ const defineToolStage = <
   // explicitly supplied tuple is returned unchanged.
   const guards =
     definition.guards ?? Fn.cast<readonly [], Guards>([])
+  // SAFETY: ModelProfileInput requires a concrete model whenever Profile is
+  // defined; when Profile is undefined, undefined is the only legal value.
+  const model = Fn.cast<typeof definition.model, Profile>(
+    definition.model,
+  )
+  // SAFETY: the selected value above preserves the conditional input proof;
+  // this projection only restores that relationship for object construction.
+  const modelInput = Fn.cast<
+    { readonly model: Profile },
+    ModelProfileInput<Profile>
+  >({ model })
   const afterExecution = Schema.decodeSync(
     ToolStageAfterExecutionSchema,
   )(definition.afterExecution ?? "stay")
 
   const plan = (messages: ReadonlyArray<UntrustedMessage>) =>
-    planToolCall({
+    planToolCall<Tools, Guards, Profile>({
       instructions,
       messages,
       tools: toolSet,
       guards,
+      ...modelInput,
     }).pipe(
       Effect.withSpan("popcomputer.structured_chat.stage.plan", {
         attributes: { stage: definition.name },
       }),
     )
 
-  const run: ToolStage<Name, Tools, Guards>["run"] = (messages) =>
+  const run: ToolStage<Name, Tools, Guards, Profile>["run"] = (messages) =>
     plan(messages).pipe(Effect.flatMap(toolSet.execute))
-  // SAFETY: chat repair supplies only a call parsed by a combined set that
-  // contains this exact query tuple; non-repair names therefore belong here.
-  const executeRuntime = Fn.cast<
-    typeof toolSet.execute,
-    (
-      call: ToolCall<string, ToolSchema>,
-    ) => Effect.Effect<unknown, unknown, unknown>
-  >(toolSet.execute)
-
-  const planWith = (
-    messages: ReadonlyArray<UntrustedMessage>,
-    additionalTool: QueryToolDefinitionContract,
-  ) => {
-    // SAFETY: the additional package-owned query and this non-empty exact
-    // query tuple form another valid closed tool set for planning only.
-    const combined = defineToolSet(
-      additionalTool,
-      ...definition.tools,
-    )
-    return planToolCall({
-      instructions,
-      messages,
-      tools: combined,
-      guards,
-    })
+  const withRepair = (repair: RepairTool) => {
+    const combined = compileRepairToolRegistry(definition.tools, repair)
+    return (messages: ReadonlyArray<UntrustedMessage>) =>
+      planToolCall<readonly [RepairTool, ...Tools], Guards, Profile>({
+        instructions,
+        messages,
+        tools: combined.planner,
+        guards,
+        ...modelInput,
+      }).pipe(Effect.map(combined.decide))
   }
 
   return structuredDefinition("tool_stage")({
@@ -339,8 +343,7 @@ const defineToolStage = <
     [toolStageRuntime]: {
       afterExecution,
       toolNames: definition.tools.map(({ name }) => name),
-      planWith,
-      execute: executeRuntime,
+      withRepair,
       run,
     },
   })
@@ -350,46 +353,51 @@ const defineCommandStage = <
   const Name extends string,
   const Command extends CommandDefinitionContract,
   const Guards extends ModelGuardTuple = readonly [],
+  const Profile extends AnyModelProfile | undefined = undefined,
 >(
-  definition: DefineCommandStageInput<Name, Command, Guards>,
-): CommandStage<Name, Command, Guards> => {
+  definition: DefineCommandStageInput<
+    Name,
+    Command,
+    Guards,
+    Profile
+  >,
+): CommandStage<Name, Command, Guards, Profile> => {
   Schema.decodeSync(StageNameSchema)(definition.name)
   const instructions = definition.instructions.map(Instruction.make)
   // SAFETY: when omitted, Guards is its readonly [] default.
   const guards =
     definition.guards ?? Fn.cast<readonly [], Guards>([])
-  const planner: ToolCallPlanner<readonly [Command]> = {
-    models: [definition.command.model],
-    // SAFETY: this command parses its literal name and exact input schema.
-    parseCall: Fn.cast<
-      typeof definition.command.parseCall,
-      ToolCallPlanner<readonly [Command]>["parseCall"]
-    >(definition.command.parseCall),
-  }
+  // SAFETY: ModelProfileInput requires a concrete model whenever Profile is
+  // defined; when Profile is undefined, undefined is the only legal value.
+  const model = Fn.cast<typeof definition.model, Profile>(
+    definition.model,
+  )
+  // SAFETY: the selected value above preserves the conditional input proof;
+  // this projection only restores that relationship for object construction.
+  const modelInput = Fn.cast<
+    { readonly model: Profile },
+    ModelProfileInput<Profile>
+  >({ model })
+  const registry = compileToolRegistry([definition.command] as const)
   const plan = (messages: ReadonlyArray<UntrustedMessage>) =>
-    planToolCall({ instructions, messages, tools: planner, guards }).pipe(
+    planToolCall<readonly [Command], Guards, Profile>({
+      instructions,
+      messages,
+      tools: registry,
+      guards,
+      ...modelInput,
+    }).pipe(
       Effect.withSpan("popcomputer.structured_chat.command_stage.plan", {
         attributes: { stage: definition.name },
       }),
     )
-  interface RuntimeCommand {
-    readonly execute: (
-      input: Schema.Schema.Type<ToolSchema>,
-      context: CommandExecutionContext,
-    ) => Effect.Effect<unknown, unknown, unknown>
-  }
-  // SAFETY: Command has the package-owned identity and command operation;
-  // its parsed call and runtime execute input originate from one definition.
-  const runtimeCommand = Fn.cast<Command, RuntimeCommand>(
-    definition.command,
-  )
   const runRuntime = (
     messages: ReadonlyArray<UntrustedMessage>,
     context: CommandExecutionContext,
   ) =>
     plan(messages).pipe(
       Effect.flatMap((call) =>
-        runtimeCommand.execute(call.arguments, context),
+        registry.execute(call, () => Effect.succeed(context)),
       ),
       Effect.withSpan("popcomputer.structured_chat.command_stage.run", {
         attributes: { stage: definition.name },
@@ -399,7 +407,7 @@ const defineCommandStage = <
   // projections and result are preserved by its own execute operation.
   const run = Fn.cast<
     typeof runRuntime,
-    CommandStage<Name, Command, Guards>["run"]
+    CommandStage<Name, Command, Guards, Profile>["run"]
   >(runRuntime)
 
   return structuredDefinition("command_stage")({
@@ -421,4 +429,5 @@ export const Stage = {
   collect: defineCollectStage,
   tools: defineToolStage,
   command: defineCommandStage,
+  interact: defineInteractionStage,
 } as const

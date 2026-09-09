@@ -95,7 +95,10 @@ export type ToolSchema = Schema.Codec<unknown, unknown, never, never>
 /** Whether an executable model capability is repeatable or side-effecting. */
 export type ToolOperation = "query" | "command"
 
-/** Opaque stable identity supplied when a command executes. */
+/**
+ * Stable turn identity supplied when a command executes. Application receipts
+ * share this key across commands and reject a changed command or input.
+ */
 export interface CommandExecutionContext {
   readonly commandId: CommandId
 }
@@ -252,7 +255,8 @@ const ToolExecutionModelContextSchema =
     Schema.isMaxLength(40_000),
   )
 
-interface RuntimeToolExecutionContext {
+/** @internal Bounded model projection retained by a sealed tool execution. */
+export interface RuntimeToolExecutionContext {
   readonly [toolExecutionModelContext]?: string | undefined
 }
 

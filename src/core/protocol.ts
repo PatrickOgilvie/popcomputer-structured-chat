@@ -110,12 +110,20 @@ export type StructuredChatTurnRequest = Schema.Schema.Type<
   typeof StructuredChatTurnRequestSchema
 >
 
+/** Invocation owning the visible answer snapshot. */
+export const StructuredChatInvocationSchema = Schema.Struct({
+  id: Schema.Natural,
+  chat: Schema.String,
+  version: Schema.Natural,
+})
+
 /** Versioned browser response for one successfully persisted chat turn. */
 export const StructuredChatPersistedTurnResponseSchema = Schema.Struct({
   schemaVersion: Schema.Literal(2),
   session: StructuredChatSessionReferenceSchema,
   message: StructuredChatAssistantMessageSchema,
   answers: StructuredChatUserAnswerSnapshotSchema,
+  invocation: Schema.optionalKey(StructuredChatInvocationSchema),
 })
 
 /** Versioned browser response for one successfully persisted chat turn. */
@@ -338,6 +346,7 @@ interface StructuredChatPersistedResponseCandidate {
     readonly content: ReadonlyArray<AssistantMessagePart>
   }
   readonly answers: StructuredChatUserAnswerSnapshot
+  readonly invocation?: Schema.Schema.Type<typeof StructuredChatInvocationSchema>
 }
 
 interface StructuredChatNonProgressingResponseCandidate {
@@ -479,6 +488,8 @@ export const presentChatReply = <Turn extends PresentableTurn>(
     > | string
     readonly turn: Turn
     readonly userAnswers: StructuredChatUserAnswerSnapshot
+    readonly invocation?: Schema.Schema.Type<typeof StructuredChatInvocationSchema>
+    readonly emittedMessages?: ReadonlyArray<StructuredChatAssistantMessage>
   },
   options: PresentChatReplyOptions<Turn> = {},
 ): Effect.Effect<
@@ -516,17 +527,18 @@ export const presentChatReply = <Turn extends PresentableTurn>(
   }
 
   return buildPresentation(buildContent).pipe(
-    Effect.flatMap((content) =>
-      parsePersistedResponse({
+    Effect.flatMap((content) => {
+      const candidate: StructuredChatPersistedResponseCandidate = {
         schemaVersion: 2,
         session: {
           id: reply.sessionId,
           revision: reply.revision,
         },
-        message: { role: "assistant", content },
+        message: { role: "assistant", content: [...(reply.emittedMessages ?? []).flatMap((message) => message.content), ...content] },
         answers: reply.userAnswers,
-      }),
-    ),
+      }
+      return parsePersistedResponse(reply.invocation === undefined ? candidate : { ...candidate, invocation: reply.invocation })
+    }),
     Effect.withSpan("popcomputer.structured_chat.presentation.reply", {
       attributes: { stage: reply.turn.stage },
     }),

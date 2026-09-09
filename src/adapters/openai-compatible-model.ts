@@ -1,5 +1,6 @@
 import {
   cast,
+  Context,
   Effect,
   Exit,
   JsonSchema,
@@ -11,7 +12,9 @@ import {
   ChatModelUnavailable,
   StructuredChatModel,
   UnsupportedModelToolSchema,
+  type AnyModelProfile,
   type ChatModelUnavailableReasonSchema,
+  type ExactModelProfile,
   type StructuredChatModelService,
   type ToolModelRequest,
 } from "../core/model.js"
@@ -783,11 +786,38 @@ export const makeStructuredChatModel = (
   }
 }
 
-/** Build an Effect layer for one provider-backed structured chat model. */
-export const structuredChatModelLayer = (
+/** Build the default Effect layer for one provider-backed chat model. */
+export function structuredChatModelLayer(
   config: StructuredChatModelConfig,
-): Layer.Layer<StructuredChatModel> =>
-  Layer.succeed(
-    StructuredChatModel,
-    StructuredChatModel.of(makeStructuredChatModel(config)),
+): Layer.Layer<StructuredChatModel>
+
+/** Build a named-profile Effect layer for one provider-backed chat model. */
+export function structuredChatModelLayer<
+  const Profile extends AnyModelProfile,
+>(
+  profile: Profile & ExactModelProfile<Profile>,
+  config: StructuredChatModelConfig,
+): Layer.Layer<Context.Service.Identifier<Profile>>
+
+export function structuredChatModelLayer(
+  ...args:
+    | readonly [config: StructuredChatModelConfig]
+    | readonly [
+        profile: AnyModelProfile,
+        config: StructuredChatModelConfig,
+      ]
+) {
+  if (args.length === 1) {
+    const service = makeStructuredChatModel(args[0])
+    return Layer.succeed(
+      StructuredChatModel,
+      StructuredChatModel.of(service),
+    )
+  }
+
+  const [profile, config] = args
+  return Layer.succeed(
+    profile,
+    makeStructuredChatModel(config),
   )
+}

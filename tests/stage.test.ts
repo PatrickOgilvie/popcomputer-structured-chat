@@ -43,6 +43,99 @@ describe("Stage.tools", () => {
     expect(result.serverResult).toEqual({ query: "public sector" })
   })
 
+  test("selects a named model profile when the default is also provided", async () => {
+    const ReasoningModel = Model.profile("reasoning")
+    const Matching = Stage.tools({
+      name: "profiled_matching",
+      instructions: ["Route the brief to one search."],
+      tools: [Search],
+      model: ReasoningModel,
+    })
+    const requests = await Effect.runPromise(
+      Ref.make<ReadonlyArray<"default" | "reasoning">>([]),
+    )
+    const defaultModel = Layer.succeed(Model.Service, {
+      requestTool: () =>
+        Ref.update(requests, (recorded) => [
+          ...recorded,
+          "default" as const,
+        ]).pipe(
+          Effect.as({
+            name: "search",
+            arguments: { query: "default model" },
+          }),
+        ),
+    })
+    const reasoningModel = Layer.succeed(ReasoningModel, {
+      requestTool: () =>
+        Ref.update(requests, (recorded) => [
+          ...recorded,
+          "reasoning" as const,
+        ]).pipe(
+          Effect.as({
+            name: "search",
+            arguments: { query: "reasoning model" },
+          }),
+        ),
+    })
+
+    const result = await Effect.runPromise(
+      Matching.run([Model.Message.user("Find an agency")]).pipe(
+        Effect.provide(Layer.merge(defaultModel, reasoningModel)),
+      ),
+    )
+    const recorded = await Effect.runPromise(Ref.get(requests))
+
+    expect(result.serverResult).toEqual({ query: "reasoning model" })
+    expect(recorded).toEqual(["reasoning"])
+  })
+
+  test("selects the default model when no profile is configured", async () => {
+    const UnusedModel = Model.profile("unused")
+    const Matching = Stage.tools({
+      name: "default_matching",
+      instructions: ["Route the brief to one search."],
+      tools: [Search],
+    })
+    const requests = await Effect.runPromise(
+      Ref.make<ReadonlyArray<"default" | "unused">>([]),
+    )
+    const defaultModel = Layer.succeed(Model.Service, {
+      requestTool: () =>
+        Ref.update(requests, (recorded) => [
+          ...recorded,
+          "default" as const,
+        ]).pipe(
+          Effect.as({
+            name: "search",
+            arguments: { query: "default model" },
+          }),
+        ),
+    })
+    const unusedModel = Layer.succeed(UnusedModel, {
+      requestTool: () =>
+        Ref.update(requests, (recorded) => [
+          ...recorded,
+          "unused" as const,
+        ]).pipe(
+          Effect.as({
+            name: "search",
+            arguments: { query: "unused model" },
+          }),
+        ),
+    })
+
+    const result = await Effect.runPromise(
+      Matching.run([Model.Message.user("Find an agency")]).pipe(
+        Effect.provide(Layer.merge(defaultModel, unusedModel)),
+      ),
+    )
+    const recorded = await Effect.runPromise(Ref.get(requests))
+
+    expect(result.serverResult).toEqual({ query: "default model" })
+    expect(recorded).toEqual(["default"])
+  })
+
   test("plans a strictly parsed call without executing application code", async () => {
     const executions = await Effect.runPromise(Ref.make(0))
     const PlannedSearch = Tool.define({

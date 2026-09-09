@@ -7,6 +7,9 @@ export * as Chat from "./Chat.js"
 /** Structured-model service and guard module. */
 export * as Model from "./Model.js"
 
+/** Outbound messages with persisted conditional reply hints. */
+export * as Message from "./Message.js"
+
 /** Question-definition domain module. */
 export * as Question from "./Question.js"
 

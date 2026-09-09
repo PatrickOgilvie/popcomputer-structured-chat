@@ -12,15 +12,17 @@ import type {
 import {
   type StructuredChatSessionReference,
   type StructuredChatAssistantMessage,
-  type StructuredChatTurnResponse,
   type StructuredChatExplorationRequest,
   type StructuredChatExplorationResponse,
-  StructuredChatExplorationRequestSchema,
-  StructuredChatExplorationResponseSchema,
   StructuredChatSessionReferenceSchema,
   StructuredChatTurnRequestSchema,
-  StructuredChatTurnResponseSchema,
 } from "../core/protocol.js"
+import {
+  makeChatTurnClient,
+  makeChatDebugTurnClient,
+  makeChatExplorationClient,
+  type ChatClientFetch,
+} from "./chat-client.js"
 import { JsonValueSchema } from "../core/json-value.js"
 import type { StructuredChatUserAnswerUpdate as UserAnswerUpdate } from "./assistant-ui-user-answers.js"
 
@@ -47,7 +49,10 @@ export type AssistantViewPartStatus =
         | "error"
       readonly error?: unknown
     }
-  | { readonly type: "requires-action"; readonly reason: "interrupt" }
+  | {
+      readonly type: "requires-action"
+      readonly reason: "interrupt" | "tool-calls"
+    }
 
 /** Stable data-part props consumed without exposing assistant-ui internals. */
 export interface AssistantDataMessagePartProps<Data = unknown> {
@@ -123,10 +128,7 @@ export const assistantChatSessionMetadataKey =
   "popcomputerStructuredChatSession" as const
 
 /** Small fetch capability required by the assistant-ui chat adapter. */
-export type AssistantChatFetch = (
-  input: string,
-  init: RequestInit,
-) => Promise<Response>
+export type AssistantChatFetch = ChatClientFetch
 
 /** Browser dependencies for one structured assistant-ui endpoint. */
 export interface AssistantChatModelAdapterOptions {
@@ -167,9 +169,6 @@ const notifyObserver = <Value,>(
     // Browser observers are deliberately isolated from the persisted turn.
   }
 }
-
-const isAbortError = (cause: unknown): cause is DOMException =>
-  cause instanceof DOMException && cause.name === "AbortError"
 
 /** Minimum assistant message shape consumed by the browser adapter. */
 export interface AssistantChatThreadMessage {
@@ -247,10 +246,10 @@ const readTurnRequest = (
     throw new Error("Attachments are not supported")
   }
 
-  return Schema.decodeSync(StructuredChatTurnRequestSchema)({
+  return {
     session: readLatestAssistantChatSession(messages),
     message: readMessageText(message),
-  })
+  }
 }
 
 /**
@@ -264,112 +263,47 @@ const readTurnRequest = (
 export const makeAssistantChatModelAdapter = (
   options: AssistantChatModelAdapterOptions,
 ): AssistantChatModelAdapter => {
-  const fetch_ =
-    options.fetch ??
-    ((input: string, init: RequestInit) =>
-      globalThis.fetch(input, init))
   const onAnswerSnapshot = options.onAnswerSnapshot
   const onDebugSnapshot = options.onDebugSnapshot
   const onDebugTurn = options.onDebugTurn
   const debugRequested =
     onDebugSnapshot !== undefined || onDebugTurn !== undefined
 
+  const client = debugRequested
+    ? makeChatDebugTurnClient(options)
+    : makeChatTurnClient(options)
+
   return {
     run: async ({ messages, abortSignal }) => {
-      const request = readTurnRequest(messages)
-      const response = await fetch_(options.endpoint, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(request),
-        signal: abortSignal,
-      })
-      if (!response.ok && !debugRequested) {
+      const result = await client.run(readTurnRequest(messages), { signal: abortSignal })
+      if (result._tag === "Failure") {
+        if (result.failure._tag === "ChatClientCancelled") throw result.failure.cause
+        throw new Error(
+          result.failure.reason === "invalid_response"
+            ? "Structured chat returned an invalid response"
+            : result.failure.reason === "invalid_request"
+              ? "Structured chat received an invalid request"
+              : "Structured chat is temporarily unavailable",
+        )
+      }
+      abortSignal.throwIfAborted()
+      const value = result.success
+      if ("outcome" in value && value.outcome === "failure") {
+        if (onDebugTurn !== undefined) {
+          notifyObserver(onDebugTurn, { _tag: "Failed", session: value.session, trace: value.trace })
+        }
         throw new Error("Structured chat is temporarily unavailable")
       }
-
-      let body: unknown
-      try {
-        body = await response.json()
-      } catch (cause: unknown) {
-        abortSignal.throwIfAborted()
-        if (isAbortError(cause)) {
-          throw cause
-        }
-        throw new Error(
-          response.ok
-            ? "Structured chat returned an invalid response"
-            : "Structured chat is temporarily unavailable",
-        )
+      if ("answers" in value && onAnswerSnapshot !== undefined) {
+        notifyObserver(onAnswerSnapshot, { session: value.session, snapshot: value.answers })
       }
-      let value: StructuredChatTurnResponse
-      if (!debugRequested) {
-        const decoded = Schema.decodeUnknownExit(
-          StructuredChatTurnResponseSchema,
-        )(body, { onExcessProperty: "error" })
-        if (Exit.isFailure(decoded)) {
-          throw new Error("Structured chat returned an invalid response")
-        }
-        abortSignal.throwIfAborted()
-        if (
-          "answers" in decoded.value &&
-          onAnswerSnapshot !== undefined
-        ) {
-          notifyObserver(onAnswerSnapshot, {
-            session: decoded.value.session,
-            snapshot: decoded.value.answers,
-          })
-        }
-        value = decoded.value
-      } else {
-        const { StructuredChatDebugTurnResponseSchema } = await import(
-          "../core/debug-protocol.js"
-        )
-        const decoded = Schema.decodeUnknownExit(
-          StructuredChatDebugTurnResponseSchema,
-        )(body, { onExcessProperty: "error" })
-        if (Exit.isFailure(decoded)) {
-          throw new Error(
-            response.ok
-              ? "Structured chat returned an invalid response"
-            : "Structured chat is temporarily unavailable",
-          )
-        }
-        abortSignal.throwIfAborted()
-        if (decoded.value.outcome === "failure") {
-          if (onDebugTurn !== undefined) {
-            notifyObserver(onDebugTurn, {
-              _tag: "Failed",
-              session: decoded.value.session,
-              trace: decoded.value.trace,
-            })
-          }
-          throw new Error("Structured chat is temporarily unavailable")
-        }
-        if (!response.ok) {
-          throw new Error("Structured chat is temporarily unavailable")
-        }
-        if (onAnswerSnapshot !== undefined) {
-          notifyObserver(onAnswerSnapshot, {
-            session: decoded.value.session,
-            snapshot: decoded.value.answers,
-          })
-        }
-        if (onDebugSnapshot !== undefined) {
-          notifyObserver(onDebugSnapshot, decoded.value.debug)
-        }
+      if ("outcome" in value) {
+        if (onDebugSnapshot !== undefined) notifyObserver(onDebugSnapshot, value.debug)
         if (onDebugTurn !== undefined) {
           notifyObserver(onDebugTurn, {
-            _tag: "Succeeded",
-            session: decoded.value.session,
-            snapshot: decoded.value.debug,
-            trace: decoded.value.trace,
+            _tag: "Succeeded", session: value.session, snapshot: value.debug, trace: value.trace,
           })
         }
-        value = decoded.value
       }
 
       return {
@@ -391,6 +325,7 @@ export const makeAssistantChatModelAdapter = (
 /** Safe reason an assistant exploration did not produce a response. */
 export const AssistantExplorationClientErrorReasonSchema = Schema.Literals([
   "cancelled",
+  "invalid_request",
   "request_failed",
   "invalid_response",
 ])
@@ -437,76 +372,16 @@ export interface AssistantExplorationClient {
 export const makeAssistantExplorationClient = (
   options: AssistantExplorationClientOptions,
 ): AssistantExplorationClient => {
-  const fetch_ =
-    options.fetch ??
-    ((input: string, init: RequestInit) =>
-      globalThis.fetch(input, init))
-
+  const client = makeChatExplorationClient(options)
   return {
-    run: async (input, runOptions = {}) => {
-      const request = Schema.decodeSync(
-        StructuredChatExplorationRequestSchema,
-      )({
+    run: async (input, runOptions) => {
+      const result = await client.run({
         session: { id: input.session.id },
         call: input.call,
-      }, { onExcessProperty: "error" })
-
-      const failure = (
-        reason: Schema.Schema.Type<
-          typeof AssistantExplorationClientErrorReasonSchema
-        >,
-      ) =>
-        Result.fail(new AssistantExplorationClientError({ reason }))
-      const wasCancelled = () => runOptions.signal?.aborted === true
-
-      let response: Response
-      try {
-        const requestInit: RequestInit = {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(request),
-        }
-        if (runOptions.signal !== undefined) {
-          requestInit.signal = runOptions.signal
-        }
-        response = await fetch_(options.endpoint, requestInit)
-      } catch {
-        if (wasCancelled()) {
-          return failure("cancelled")
-        }
-        return failure("request_failed")
-      }
-      if (wasCancelled()) {
-        return failure("cancelled")
-      }
-      if (!response.ok) {
-        return failure("request_failed")
-      }
-
-      let body: unknown
-      try {
-        body = await response.json()
-      } catch {
-        if (wasCancelled()) {
-          return failure("cancelled")
-        }
-        return failure("invalid_response")
-      }
-      if (wasCancelled()) {
-        return failure("cancelled")
-      }
-      const decoded = Schema.decodeUnknownExit(
-        StructuredChatExplorationResponseSchema,
-      )(body, { onExcessProperty: "error" })
-      if (Exit.isFailure(decoded)) {
-        return failure("invalid_response")
-      }
-
-      return Result.succeed(decoded.value)
+      }, runOptions)
+      return Result.isFailure(result)
+        ? Result.fail(new AssistantExplorationClientError({ reason: result.failure.reason }))
+        : Result.succeed(result.success)
     },
   }
 }

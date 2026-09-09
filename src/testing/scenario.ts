@@ -6,6 +6,7 @@ import type {
 } from "../core/collect-stage.js"
 import {
   StructuredChatModel,
+  type AnyModelProfile,
   type ToolModelRequest,
 } from "../core/model.js"
 import type { ModelGuardTuple } from "../core/model-guard.js"
@@ -134,8 +135,9 @@ const answers = <
   const Name extends string,
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple,
+  const Profile extends AnyModelProfile | undefined,
 >(
-  stage: CollectStage<Name, Fields, Guards>,
+  stage: CollectStage<Name, Fields, Guards, Profile>,
   proposed: QuotedAnswers<Fields>,
   options: {
     readonly nextQuestion?: ScenarioNextQuestion<Fields> | null
@@ -208,9 +210,10 @@ const replace = <
   const Name extends string,
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple,
+  const Profile extends AnyModelProfile | undefined,
   const Field extends ReplaceableField<Fields>,
 >(
-  stage: CollectStage<Name, Fields, Guards>,
+  stage: CollectStage<Name, Fields, Guards, Profile>,
   field: Field,
   value: CollectAnswers<Fields>[Field],
   options: { readonly quote: string; readonly messageIndex?: number },
@@ -242,9 +245,10 @@ const reconfirm = <
   const Name extends string,
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple,
+  const Profile extends AnyModelProfile | undefined,
   const Field extends ConfirmedField<Fields>,
 >(
-  stage: CollectStage<Name, Fields, Guards>,
+  stage: CollectStage<Name, Fields, Guards, Profile>,
   field: Field,
   options: { readonly quote: string; readonly messageIndex?: number },
 ): ScenarioRepair => {

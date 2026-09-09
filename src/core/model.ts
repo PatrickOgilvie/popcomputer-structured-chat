@@ -1,4 +1,4 @@
-import { Context, Effect, Schema } from "effect"
+import { Context, Effect, Function as Fn, Schema } from "effect"
 import type {
   InvalidToolCall,
   ModelToolDefinition,
@@ -133,26 +133,185 @@ export class StructuredChatModel extends Context.Service<
   "@popcomputer/structured-chat/StructuredChatModel",
 ) {}
 
+const ModelProfileTypeId: unique symbol = Symbol.for(
+  "@popcomputer/structured-chat/ModelProfile",
+)
+
+/** Stable machine-facing name for one named model profile. */
+export const ModelProfileNameSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(100),
+  Schema.isPattern(
+    /^(?!default$)[a-z0-9]+(?:[._-][a-z0-9]+)*$/,
+  ),
+)
+
+/** Stable machine-facing name for one named model profile. */
+export type ModelProfileName = Schema.Schema.Type<
+  typeof ModelProfileNameSchema
+>
+
+/** Named provider-neutral Effect service key for one model configuration. */
+export interface ModelProfile<Name extends string>
+  extends Context.Service<
+    ModelProfile<Name>,
+    StructuredChatModelService
+  > {
+  readonly _tag: "ModelProfile"
+  readonly profile: Name
+  readonly [ModelProfileTypeId]: typeof ModelProfileTypeId
+}
+
+/** Any authentic named model-profile service key. */
+export type AnyModelProfile = Context.Key<
+  unknown,
+  StructuredChatModelService
+> & {
+  readonly _tag: "ModelProfile"
+  readonly profile: string
+  readonly [ModelProfileTypeId]: typeof ModelProfileTypeId
+}
+
+type IsUnion<Value, Whole = Value> = Value extends unknown
+  ? [Whole] extends [Value]
+    ? false
+    : true
+  : never
+
+type ConcreteModelProfileName<Name extends string> =
+  string extends Name
+    ? never
+    : true extends IsUnion<Name>
+      ? never
+      : Record<never, never> extends Record<Name, never>
+        ? never
+        : Name
+
+/** @internal One exact, non-erased model-profile service identity. */
+export type ExactModelProfile<Profile extends AnyModelProfile> =
+  true extends IsUnion<Profile>
+    ? never
+    : ConcreteModelProfileName<Profile["profile"]> extends never
+      ? never
+      : unknown extends Context.Service.Identifier<Profile>
+        ? never
+        : Profile
+
+/** Define or reference one named model profile. */
+export const defineModelProfile = <const Name extends string>(
+  name: ConcreteModelProfileName<Name>,
+): ModelProfile<Name> => {
+  const profileName = Schema.decodeSync(ModelProfileNameSchema)(name)
+  const service = Context.Service<
+    ModelProfile<Name>,
+    StructuredChatModelService
+  >(
+    `@popcomputer/structured-chat/ModelProfile/${profileName}`,
+  )
+
+  Object.defineProperties(service, {
+    _tag: {
+      value: "ModelProfile",
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    },
+    profile: {
+      value: profileName,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    },
+    [ModelProfileTypeId]: {
+      value: ModelProfileTypeId,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    },
+  })
+
+  // SAFETY: the schema only refines the literal input; defineProperties adds
+  // the exact parsed name and private runtime proof to this Context key.
+  return Fn.cast<typeof service, ModelProfile<Name>>(service)
+}
+
+/** Sound stage/model input: omission is legal only for the default profile. */
+export type ModelProfileInput<
+  Profile extends AnyModelProfile | undefined,
+> = [Profile] extends [never]
+  ? never
+  : true extends IsUnion<Profile>
+    ? never
+    : [Profile] extends [undefined]
+      ? { readonly model?: undefined }
+      : {
+          readonly model: Profile &
+            ExactModelProfile<Extract<Profile, AnyModelProfile>>
+        }
+
+/** Effect requirement selected by an optional named model profile. */
+export type ModelRequirement<
+  Profile extends AnyModelProfile | undefined,
+> = Profile extends AnyModelProfile
+  ? Context.Service.Identifier<Profile>
+  : StructuredChatModel
+
+const resolveModel = <
+  const Profile extends AnyModelProfile | undefined,
+>(
+  selected: Profile,
+): Effect.Effect<
+  StructuredChatModelService,
+  never,
+  ModelRequirement<Profile>
+> => {
+  if (selected === undefined) {
+    // SAFETY: undefined is the only default selection and therefore requires
+    // the existing StructuredChatModel service.
+    return Fn.cast<
+      typeof StructuredChatModel,
+      Effect.Effect<
+        StructuredChatModelService,
+        never,
+        ModelRequirement<Profile>
+      >
+    >(StructuredChatModel)
+  }
+
+  // SAFETY: a selected profile is itself the exact Context key whose
+  // identifier is represented by ModelRequirement<Profile>.
+  return Fn.cast<
+    typeof selected,
+    Effect.Effect<
+      StructuredChatModelService,
+      never,
+      ModelRequirement<Profile>
+    >
+  >(selected)
+}
+
 /** Input for one required, stage-scoped tool step. */
-export interface RunToolStepInput<
+export type RunToolStepInput<
   Tools extends ToolTuple,
   Guards extends ModelGuardTuple = readonly [],
-> {
+  Profile extends AnyModelProfile | undefined = undefined,
+> = {
   readonly instructions: ReadonlyArray<TrustedInstruction>
   readonly messages: ReadonlyArray<UntrustedMessage>
   readonly tools: ToolSet<Tools>
   readonly guards?: Guards
-}
+} & ModelProfileInput<Profile>
 
-interface PlanToolCallInput<
+type PlanToolCallInput<
   Tools extends ModelToolTuple,
   Guards extends ModelGuardTuple,
-> {
+  Profile extends AnyModelProfile | undefined,
+> = {
   readonly instructions: ReadonlyArray<TrustedInstruction>
   readonly messages: ReadonlyArray<UntrustedMessage>
   readonly tools: ToolCallPlanner<Tools>
   readonly guards?: Guards
-}
+} & ModelProfileInput<Profile>
 
 const invalidOutputRepairInstruction = Schema.decodeSync(
   TrustedInstructionSchema,
@@ -174,21 +333,26 @@ const isRepairableModelOutput = (
 export const planToolCall = <
   const Tools extends ModelToolTuple,
   const Guards extends ModelGuardTuple = readonly [],
+  const Profile extends AnyModelProfile | undefined = undefined,
 >(
-  input: PlanToolCallInput<Tools, Guards>,
+  input: PlanToolCallInput<Tools, Guards, Profile>,
 ): Effect.Effect<
   ToolSetCall<Tools>,
   | ChatModelUnavailable
   | UnsupportedModelToolSchema
   | InvalidToolCall
   | ModelGuardError<Guards>,
-  StructuredChatModel | ModelGuardRequirements<Guards>
-> =>
-  runModelGuards(input.guards ?? [], {
+  ModelRequirement<Profile> | ModelGuardRequirements<Guards>
+> => {
+  // SAFETY: ModelProfileInput requires a concrete model whenever Profile is
+  // defined; when Profile is undefined, undefined is the only legal value.
+  const selected = Fn.cast<typeof input.model, Profile>(input.model)
+
+  return runModelGuards(input.guards ?? [], {
     messages: input.messages,
     toolNames: input.tools.models.map(({ name }) => name),
   }).pipe(
-    Effect.andThen(StructuredChatModel),
+    Effect.andThen(resolveModel(selected)),
     Effect.flatMap((model) => {
       const requestParsedCall = (
         instructions: ReadonlyArray<TrustedInstruction>,
@@ -213,6 +377,8 @@ export const planToolCall = <
                   messageCharacterCount:
                     countUntrustedMessageCharacters(input.messages),
                   instructionCount: instructions.length,
+                  modelProfile:
+                    selected?.profile ?? "default",
                   toolCount: input.tools.models.length,
                 },
               },
@@ -274,6 +440,7 @@ export const planToolCall = <
       },
     }),
   )
+}
 
 /**
  * Ask the configured model for one call to a closed tool set, then execute it.
@@ -285,19 +452,20 @@ export const planToolCall = <
 export const runToolStep = <
   const Tools extends ToolTuple,
   const Guards extends ModelGuardTuple = readonly [],
+  const Profile extends AnyModelProfile | undefined = undefined,
 >(
-  input: RunToolStepInput<Tools, Guards>,
+  input: RunToolStepInput<Tools, Guards, Profile>,
 ): Effect.Effect<
   ToolSetExecution<Tools>,
   | ChatModelUnavailable
   | UnsupportedModelToolSchema
   | ToolSetError<Tools>
   | ModelGuardError<Guards>,
-  | StructuredChatModel
+  | ModelRequirement<Profile>
   | ToolSetRequirements<Tools>
   | ModelGuardRequirements<Guards>
 > =>
-  planToolCall(input).pipe(
+  planToolCall<Tools, Guards, Profile>(input).pipe(
     Effect.flatMap(input.tools.execute),
     Effect.withSpan("popcomputer.structured_chat.tool_step.run", {
       attributes: {

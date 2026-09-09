@@ -8,6 +8,56 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-09
+
+### Breaking changes
+
+- D1 expiry now retains terminal session identity tombstones and returns
+  `Session.Expired` on load. Expired scopes cannot restart; use a new session ID.
+  The bundled session table schema includes constrained active/expired rows.
+
+- Command IDs now identify one persisted turn across all command choices.
+  `Tool.deriveCommandId` no longer accepts a `command` field. Application
+  receipts must share a namespace across commands and reject retries that
+  change the command name or arguments.
+
+### Added
+
+- Added composable chats with typed input/output, `Chat.branch`, invocation-local
+  answers, nested call/return, suspension, resumption, and cancellation.
+- Added `Message.define`, conditional tool/branch reply hints, atomic
+  `Message.emit`, and retry-stable `Chat.post` for application-authored messages.
+- Added `Chat.start`, composed browser/debug presentation with invocation
+  identity, and definition-owned validation of complete conversation snapshots.
+
+- Added React-free `/client` factories for ordinary turns, debug turns, and
+  explorations, with strict protocol boundaries and typed failure/cancellation
+  results. Assistant-ui adapters now compose those clients.
+- Added `StructuredChatAssistantProvider` at `/assistant-ui/react`, including
+  chat identity resets and an optional lazily loaded debug window.
+
+- Added `Stage.interact` for repeatable closed sets of queries and commands,
+  with stable turn identities and explicitly named completion tools.
+- Added `Tool.acceptedAnswer` and `Tool.Context` for trusted collection-to-tool
+  bindings, including side explorations, without model-authored arguments.
+
+- Added optional stage-scoped `Model.profile(...)` service keys and named
+  OpenAI-compatible model layers. Existing stages and the one-argument model
+  layer continue to use `Model.Service`; explicitly selected profiles are
+  exact Effect requirements and never silently fall back.
+
+### Fixed
+
+- Unified tool-set, command, interaction, and repair dispatch behind a compiled
+  registry, preserving transformed inputs and precise application Effect types.
+- D1 expiry guards both revision and timestamp, preventing a concurrent refresh
+  in the same millisecond from being erased. Cleanup counts each expiry once.
+
+- Accepted-answer bindings validate decoded values, allowing transformed answer
+  schemas to be reused after collection and persistence.
+- Stage guards and validators receive accepted-answer context, including during
+  repair planning and after recursive collection or repair transitions.
+
 ## [0.4.0] - 2026-08-25
 
 ### Breaking changes
@@ -164,7 +214,8 @@ const reply = Chat.turn(chat, input)
   questions, tools, commands, session persistence, browser presentation,
   assistant-ui integration, and transcript scenarios.
 
-[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.2.0...v0.3.0

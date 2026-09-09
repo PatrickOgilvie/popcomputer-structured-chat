@@ -7,6 +7,7 @@ const expectedRootModules = new Set([
   "./Answer.js",
   "./Chat.js",
   "./Model.js",
+  "./Message.js",
   "./Question.js",
   "./Repair.js",
   "./Session.js",
@@ -17,6 +18,7 @@ const expectedRootModules = new Set([
 const internalImporters = new Set([
   "Chat.ts",
   "core/chat.ts",
+  "internal/chat/composition-definition.ts",
   "debug.ts",
   "testing/chat.ts",
 ])

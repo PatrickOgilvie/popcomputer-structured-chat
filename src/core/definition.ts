@@ -1,10 +1,13 @@
 /** Package-owned kinds for executable structured-chat definitions. */
 export type StructuredDefinitionKind =
   | "chat"
+  | "chat_branch"
+  | "outbound_message"
   | "tool"
   | "collect_stage"
   | "tool_stage"
   | "command_stage"
+  | "interaction_stage"
   | "repair"
   | "model_guard"
 

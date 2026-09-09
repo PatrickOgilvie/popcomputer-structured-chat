@@ -1022,6 +1022,97 @@ describe("Chat.define", () => {
     expect(callCount).toBe(2)
   })
 
+  test("selects each stage profile during one recursive turn", async () => {
+    const Economy = Model.profile("economy")
+    const Deliberate = Model.profile("deliberate")
+    const ProfiledBrief = Stage.collect({
+      name: "profiled_brief",
+      model: Economy,
+      fields: {
+        project: Answer.semantic(Schema.String, {
+          description: "What the client needs help creating",
+          ask: Question.fixed("What are you hoping to create?"),
+        }),
+      },
+    })
+    const ProfiledMatching = Stage.tools({
+      name: "profiled_matching",
+      model: Deliberate,
+      instructions: ["Route the completed brief to one search."],
+      tools: [Search],
+    })
+    const ProfiledChat = Chat.define({
+      name: "profiled_chat",
+      version: 1,
+      stages: [ProfiledBrief, ProfiledMatching],
+    })
+    const calls = await Effect.runPromise(
+      Ref.make({ economy: 0, deliberate: 0, default: 0 }),
+    )
+    const economy = Layer.succeed(Economy, {
+      requestTool: () =>
+        Ref.update(calls, (current) => ({
+          ...current,
+          economy: current.economy + 1,
+        })).pipe(
+          Effect.as({
+            name: "submit_answers",
+            arguments: {
+              answers: { project: "A public service website" },
+              evidence: [
+                {
+                  field: "project",
+                  quote: "public service website",
+                },
+              ],
+              nextQuestion: null,
+            },
+          }),
+        ),
+    })
+    const deliberate = Layer.succeed(Deliberate, {
+      requestTool: () =>
+        Ref.update(calls, (current) => ({
+          ...current,
+          deliberate: current.deliberate + 1,
+        })).pipe(
+          Effect.as({
+            name: "search_agencies",
+            arguments: { query: "public service website" },
+          }),
+        ),
+    })
+    const fallback = Layer.succeed(Model.Service, {
+      requestTool: () =>
+        Ref.update(calls, (current) => ({
+          ...current,
+          default: current.default + 1,
+        })).pipe(
+          Effect.as({
+            name: "search_agencies",
+            arguments: { query: "unexpected fallback" },
+          }),
+        ),
+    })
+    const live = Layer.mergeAll(economy, deliberate, fallback)
+
+    const turn = await Effect.runPromise(
+      ChatTest.run(ProfiledChat, {
+        state: ChatTest.initialState(ProfiledChat),
+        messages: [
+          Model.Message.user("We need a public service website."),
+        ],
+      }).pipe(Effect.provide(live)),
+    )
+
+    expect(turn._tag).toBe("ToolResult")
+    expect(await Effect.runPromise(Ref.get(calls))).toEqual({
+      economy: 1,
+      deliberate: 1,
+      default: 0,
+    })
+  })
+
   test("returns a question while required facts remain missing", async () => {
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>

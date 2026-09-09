@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { Model, Session, Stage, Tool, View } from "@popcomputer/structured-chat"
 import {
   inMemoryChatSessionStore,
@@ -13,6 +14,7 @@ import {
   createStructuredChatDebugStore,
   StructuredChatDebugPanel,
 } from "@popcomputer/structured-chat/assistant-ui/debug"
+import { StructuredChatAssistantProvider } from "@popcomputer/structured-chat/assistant-ui/react"
 import {
   cleanupExpiredD1ChatSessions,
   makeD1ChatSessionStore,
@@ -84,24 +86,16 @@ if (!makeD1ChatSessionStore || !cleanupExpiredD1ChatSessions) {
   throw new Error("./d1 entry point smoke test failed")
 }
 
+if (!StructuredChatAssistantProvider) {
+  throw new Error("./assistant-ui/react entry point smoke test failed")
+}
+
 // node:sqlite is available unflagged from Node 23.4; exercise the built D1
 // adapter against a real SQL engine when the runtime provides it.
 try {
   const { DatabaseSync } = await import("node:sqlite")
   const sqlite = new DatabaseSync(":memory:")
-  sqlite.exec(`
-    CREATE TABLE structured_chat_sessions (
-      namespace TEXT NOT NULL,
-      session_id TEXT NOT NULL,
-      chat TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      revision INTEGER NOT NULL CHECK (revision > 0),
-      state TEXT NOT NULL,
-      messages TEXT NOT NULL,
-      updated_at INTEGER NOT NULL,
-      PRIMARY KEY (namespace, session_id, chat, version)
-    )
-  `)
+  sqlite.exec(readFileSync(new URL("../migrations/d1/0001_structured_chat_sessions.sql", import.meta.url), "utf8"))
   const d1Store = makeD1ChatSessionStore({
     prepare: (query) => {
       const statement = sqlite.prepare(query)

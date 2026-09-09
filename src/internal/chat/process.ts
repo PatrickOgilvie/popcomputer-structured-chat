@@ -1,4 +1,6 @@
-import { Data, Effect, Result, cast } from "effect"
+import { ToolContext } from "../../core/tool-context.js"
+import { readInteractionStageRuntime, type InteractionStageDefinitionContract, type InteractionCommandContext } from "../../core/interaction-stage.js"
+import { Data, Effect, Result } from "effect"
 import type { CollectStageDefinitionContract } from "../../core/collect-stage.js"
 import { readCollectStageRuntime } from "../../core/collect-stage.js"
 import type { InvalidChatTransition } from "../../core/chat.js"
@@ -11,10 +13,8 @@ import {
   readCommandStageRuntime,
   readToolStageRuntime,
 } from "../../core/stage.js"
-import type {
-  CommandExecutionContext,
-  QueryToolDefinitionContract,
-} from "../../core/tool.js"
+import type { RepairCorrection } from "../../core/repair.js"
+import type { RepairDecision } from "../../core/tool-registry.js"
 import { recordDebugEvent } from "../../core/debug-trace.js"
 
 /** Runtime-erased persisted state used only after definition-owned decoding. */
@@ -36,25 +36,11 @@ export interface RuntimeChatState {
   }
 }
 
-/** Runtime correction accepted by a definition-owned repair tool. */
-export interface RuntimeRepairCorrection {
-  readonly _tag: "ReplaceAcceptedAnswer" | "ReconfirmAnswer"
-  readonly stage: string
-  readonly field: string
-  readonly value?: unknown
-  readonly evidence: {
-    readonly quote: string
-  }
-}
-
-interface RuntimeRepairProposal {
-  readonly corrections: ReadonlyArray<RuntimeRepairCorrection>
-}
-
 type ActiveNode = Data.TaggedEnum<{
   Collect: { readonly stage: CollectStageDefinitionContract }
   Tool: { readonly stage: ToolStageDefinitionContract }
   Command: { readonly stage: CommandStageDefinitionContract }
+  Interaction: { readonly stage: InteractionStageDefinitionContract }
 }>
 
 const ActiveNode = Data.taggedEnum<ActiveNode>()
@@ -65,10 +51,12 @@ interface ProcessInput {
     | CollectStageDefinitionContract
     | ToolStageDefinitionContract
     | CommandStageDefinitionContract
+    | InteractionStageDefinitionContract
   >
   readonly finalStageIndex: number
-  readonly repairTool: QueryToolDefinitionContract | undefined
-  readonly repairToolName: string
+  readonly planRepair: ((
+    messages: ReadonlyArray<UntrustedMessage>,
+  ) => Effect.Effect<RepairDecision, unknown, unknown>) | undefined
   readonly invalidTransition: (
     reason: "already_complete" | "invalid_state",
   ) => InvalidChatTransition
@@ -80,7 +68,7 @@ interface ProcessInput {
   readonly applyRepairs: (
     state: RuntimeChatState,
     messages: ReadonlyArray<UntrustedMessage>,
-    corrections: ReadonlyArray<RuntimeRepairCorrection>,
+    corrections: ReadonlyArray<RepairCorrection>,
   ) => Effect.Effect<RuntimeChatState, unknown, unknown>
 }
 
@@ -88,13 +76,13 @@ interface Process {
   readonly runChecked: (
     state: RuntimeChatState,
     messages: ReadonlyArray<UntrustedMessage>,
-    commandContext?: CommandExecutionContext,
+    commandContext?: InteractionCommandContext,
     allowRepair?: boolean,
   ) => Effect.Effect<unknown, unknown, unknown>
   readonly runTrusted: (
     state: RuntimeChatState,
     messages: ReadonlyArray<UntrustedMessage>,
-    commandContext?: CommandExecutionContext,
+    commandContext?: InteractionCommandContext,
     allowRepair?: boolean,
   ) => Effect.Effect<unknown, unknown, unknown>
 }
@@ -117,6 +105,8 @@ export const make = (input: ProcessInput): Process => {
         return Result.succeed(ActiveNode.Collect({ stage }))
       case "ToolStage":
         return Result.succeed(ActiveNode.Tool({ stage }))
+      case "InteractionStage":
+        return Result.succeed(ActiveNode.Interaction({ stage }))
       case "CommandStage":
         return Result.succeed(ActiveNode.Command({ stage }))
     }
@@ -125,9 +115,9 @@ export const make = (input: ProcessInput): Process => {
   const runTrusted = (
     state: RuntimeChatState,
     messages: ReadonlyArray<UntrustedMessage>,
-    commandContext?: CommandExecutionContext,
+    commandContext?: InteractionCommandContext,
     allowRepair = false,
-  ): Effect.Effect<unknown, unknown, unknown> => {
+  ): Effect.Effect<unknown, unknown, unknown> => Effect.suspend(() => {
     const planned = locate(state)
     if (Result.isFailure(planned)) {
       return Effect.fail(planned.failure)
@@ -135,13 +125,24 @@ export const make = (input: ProcessInput): Process => {
 
     const node = planned.success
     switch (node._tag) {
+      case "Interaction": {
+        if (commandContext === undefined) return Effect.fail(input.invalidTransition("invalid_state"))
+        return readInteractionStageRuntime(node.stage).run(messages, commandContext).pipe(
+          Effect.map(({ complete, execution }) => ({
+            _tag: complete ? "Complete" as const : "ToolResult" as const,
+            stage: node.stage.name,
+            state: complete ? { ...state, status: "complete" as const } : state,
+            result: execution,
+          })),
+        )
+      }
       case "Command": {
         if (commandContext === undefined) {
           return Effect.fail(input.invalidTransition("invalid_state"))
         }
-        return readCommandStageRuntime(node.stage)
-          .run(messages, commandContext)
-          .pipe(
+        const runtime = readCommandStageRuntime(node.stage)
+        return commandContext().pipe(
+            Effect.flatMap((identity) => runtime.run(messages, identity)),
             Effect.map((result) => ({
               _tag: "Complete" as const,
               stage: node.stage.name,
@@ -152,11 +153,11 @@ export const make = (input: ProcessInput): Process => {
       }
       case "Tool": {
         const runtime = readToolStageRuntime(node.stage)
-        if (allowRepair && input.repairTool !== undefined) {
-          return runtime.planWith(messages, input.repairTool).pipe(
-            Effect.flatMap((plannedCall) => {
-              if (plannedCall.name !== input.repairToolName) {
-                return runtime.execute(plannedCall).pipe(
+        if (allowRepair && input.planRepair !== undefined) {
+          return input.planRepair(messages).pipe(
+            Effect.flatMap((decision) => {
+              if (decision._tag === "Query") {
+                return decision.execute.pipe(
                   Effect.map((result) => ({
                     _tag: "ToolResult" as const,
                     stage: node.stage.name,
@@ -165,14 +166,8 @@ export const make = (input: ProcessInput): Process => {
                   })),
                 )
               }
-              // SAFETY: planWith used the generated repair tool schema, and
-              // this branch selected that tool's unique literal name.
-              const proposal = cast<
-                typeof plannedCall.arguments,
-                RuntimeRepairProposal
-              >(plannedCall.arguments)
               return input
-                .applyRepairs(state, messages, proposal.corrections)
+                .applyRepairs(state, messages, decision.proposal.corrections)
                 .pipe(
                   Effect.flatMap((repairedState) => {
                     const continueTurn = Effect.suspend(() =>
@@ -278,7 +273,11 @@ export const make = (input: ProcessInput): Process => {
         )
       }
     }
-  }
+  }).pipe(
+    // Each recursive transition supplies its own accepted state, including
+    // planning guards and validators before any tool execution begins.
+    Effect.provideService(ToolContext, { stages: state.stages }),
+  )
 
   const runChecked: Process["runChecked"] = (
     state,

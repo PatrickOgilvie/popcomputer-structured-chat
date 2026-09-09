@@ -2,6 +2,7 @@ import { Clock, Effect, Schema } from "effect"
 import { UntrustedMessageSchema } from "../core/model.js"
 import {
   ChatSessionConflict,
+  ChatSessionExpired,
   ChatSessionNamespaceSchema,
   ChatSessionStoreUnavailable,
   type ChatSessionScope,
@@ -73,13 +74,15 @@ const SessionsTable = "structured_chat_sessions"
 const identityPredicate =
   "namespace = ?1 AND session_id = ?2 AND chat = ?3 AND version = ?4"
 
-const SelectSnapshotSql = `SELECT revision, state, messages, updated_at FROM ${SessionsTable} WHERE ${identityPredicate} LIMIT 1`
+const SelectSnapshotSql = `SELECT lifecycle, revision, state, messages, updated_at, expired_at FROM ${SessionsTable} WHERE ${identityPredicate} LIMIT 1`
 
-const GuardedExpiryDeleteSql = `DELETE FROM ${SessionsTable} WHERE ${identityPredicate} AND updated_at = ?5`
+const ExpireSnapshotSql = `UPDATE ${SessionsTable} SET lifecycle = 'expired', revision = NULL, state = NULL, messages = NULL, updated_at = NULL, expired_at = `
+
+const GuardedExpirySql = `${ExpireSnapshotSql}?7 WHERE ${identityPredicate} AND lifecycle = 'active' AND revision = ?5 AND updated_at = ?6`
 
 const InsertInitialSql = `INSERT INTO ${SessionsTable} (namespace, session_id, chat, version, revision, state, messages, updated_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7) ON CONFLICT (namespace, session_id, chat, version) DO NOTHING`
 
-const ReplaceAtRevisionSql = `UPDATE ${SessionsTable} SET revision = ?5, state = ?6, messages = ?7, updated_at = ?8 WHERE ${identityPredicate} AND revision = ?9`
+const ReplaceAtRevisionSql = `UPDATE ${SessionsTable} SET revision = ?5, state = ?6, messages = ?7, updated_at = ?8 WHERE ${identityPredicate} AND lifecycle = 'active' AND revision = ?9`
 
 /** Positive-integer bound for retention windows. */
 const RetentionMillisSchema = Schema.Number.check(
@@ -90,8 +93,8 @@ const RetentionMillisSchema = Schema.Number.check(
 /**
  * Strict retention configuration bounded by D1's 100-parameter query limit.
  *
- * Bulk cleanup uses two parameters per prefix and one cutoff parameter, so 49
- * prefixes consume at most 99 parameters.
+ * Bulk cleanup uses two parameters per prefix, a cutoff, and an expiry timestamp, so 49
+ * prefixes consume exactly 100 parameters.
  */
 const ChatSessionRetentionOptionsSchema = Schema.Struct({
   expiringNamespacePrefixes: Schema.Array(
@@ -101,15 +104,24 @@ const ChatSessionRetentionOptionsSchema = Schema.Struct({
 })
 
 /** Strict persisted-row shape; excess columns are rejected on load. */
-const PersistedRowSchema = Schema.Struct({
-  revision: Schema.Number.check(
-    Schema.isInt(),
-    Schema.isGreaterThan(0),
-  ),
-  state: Schema.String,
-  messages: Schema.String,
-  updated_at: Schema.Finite,
-})
+const PersistedRowSchema = Schema.Union([
+  Schema.Struct({
+    lifecycle: Schema.Literal("active"),
+    revision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
+    state: Schema.String,
+    messages: Schema.String,
+    updated_at: Schema.Finite,
+    expired_at: Schema.Null,
+  }),
+  Schema.Struct({
+    lifecycle: Schema.Literal("expired"),
+    revision: Schema.Null,
+    state: Schema.Null,
+    messages: Schema.Null,
+    updated_at: Schema.Null,
+    expired_at: Schema.Finite,
+  }),
+])
 
 /** Minimal D1 run-result shape carrying the changed-row count. */
 const RunResultSchema = Schema.Struct({
@@ -215,15 +227,15 @@ const matchesRetentionPrefix = (
  * Load one raw snapshot payload for the runtime to revalidate, or `null`.
  *
  * When retention is configured and the namespace matches an expiring prefix,
- * an aged row is removed with a guarded compare-and-delete on `updated_at`
- * before `null` is returned; a row refreshed between the read and the delete
- * survives and is served instead.
+ * an aged row becomes a terminal tombstone guarded by revision and timestamp.
+ * A concurrently refreshed row survives and is served instead. Tombstones
+ * always fail with `ChatSessionExpired`, even without a retention policy.
  */
 const loadSnapshot = (
   database: D1ChatSessionDatabase,
   scope: ChatSessionScope,
   retention: ChatSessionRetentionOptions | undefined,
-): Effect.Effect<unknown | null, ChatSessionStoreUnavailable> =>
+): Effect.Effect<unknown | null, ChatSessionStoreUnavailable | ChatSessionExpired> =>
   Effect.gen(function* () {
     const identityValues = [
       scope.namespace,
@@ -238,6 +250,9 @@ const loadSnapshot = (
     const row = yield* decodePersistedRow(rawRow).pipe(
       Effect.mapError(loadUnavailable),
     )
+    if (row.lifecycle === "expired") {
+      return yield* Effect.fail(new ChatSessionExpired({ reason: "expired" }))
+    }
     if (
       retention !== undefined &&
       matchesRetentionPrefix(
@@ -245,18 +260,18 @@ const loadSnapshot = (
         retention.expiringNamespacePrefixes,
       )
     ) {
-      const cutoff =
-        (yield* Clock.currentTimeMillis) - retention.retentionMillis
+      const now = yield* Clock.currentTimeMillis
+      const cutoff = now - retention.retentionMillis
       if (row.updated_at <= cutoff) {
-        const deleted = yield* runWriteStatement(
+        const expired = yield* runWriteStatement(
           database,
-          GuardedExpiryDeleteSql,
-          [...identityValues, row.updated_at],
+          GuardedExpirySql,
+          [...identityValues, row.revision, row.updated_at, now],
         )
-        if (deleted === 1) {
-          return null
+        if (expired === 1) {
+          return yield* Effect.fail(new ChatSessionExpired({ reason: "expired" }))
         }
-        // The compare-and-delete lost a refresh race: serve the fresh row.
+        // The guarded transition lost a race: classify the winning row.
         const refreshedRow = yield* readFirstRow(database, identityValues)
         if (refreshedRow === null) {
           return null
@@ -264,6 +279,9 @@ const loadSnapshot = (
         const refreshed = yield* decodePersistedRow(refreshedRow).pipe(
           Effect.mapError(loadUnavailable),
         )
+        if (refreshed.lifecycle === "expired") {
+          return yield* Effect.fail(new ChatSessionExpired({ reason: "expired" }))
+        }
         return yield* decodeSnapshotPayload(
           refreshed.revision,
           refreshed.state,
@@ -303,7 +321,7 @@ const parseOptionalRetention = (
  * The returned service performs strict JSON encoding and decoding, optimistic
  * integer revisions, and guarded retention expiry, and never throws: every
  * failure surfaces as `ChatSessionStoreUnavailable` or
- * `ChatSessionConflict`. Time always comes from the Effect Clock.
+ * `ChatSessionConflict` or `ChatSessionExpired`. Time always comes from the Effect Clock.
  *
  * @param database - Application-adapted D1 (or SQLite) binding port.
  * @param options - Optional behaviour; currently the retention policy.
@@ -380,15 +398,15 @@ export const makeD1ChatSessionStore = (
 }
 
 /**
- * Delete every expired session whose namespace matches one retention prefix.
+ * Erase every expired snapshot and retain its terminal identity whose namespace matches one retention prefix.
  *
  * Matching uses exact `substr` prefix comparison (no SQL wildcard escaping),
  * and only rows whose `updated_at` is at or before `now - retentionMillis`
- * are removed. The Effect resolves with the exact number of deleted rows.
+ * become tombstones. The Effect resolves with the number of newly expired rows.
  *
  * @param database - Application-adapted D1 (or SQLite) binding port.
  * @param retention - Prefixes and positive-integer age window for expiry.
- * @returns Deleted-row count, failing with `ChatSessionStoreUnavailable`.
+ * @returns Newly expired row count, failing with `ChatSessionStoreUnavailable`.
  */
 export const cleanupExpiredD1ChatSessions = (
   database: D1ChatSessionDatabase,
@@ -411,14 +429,16 @@ export const cleanupExpiredD1ChatSessions = (
   })
   const cutoffPlaceholder =
     parsedRetention.expiringNamespacePrefixes.length * 2 + 1
-  const query = `DELETE FROM ${SessionsTable} WHERE updated_at <= ?${cutoffPlaceholder} AND (${predicates.join(" OR ")})`
+  const expiredAtPlaceholder = cutoffPlaceholder + 1
+  const query = `${ExpireSnapshotSql}?${expiredAtPlaceholder} WHERE lifecycle = 'active' AND updated_at <= ?${cutoffPlaceholder} AND (${predicates.join(" OR ")})`
 
   return Effect.gen(function* () {
-    const cutoff =
-      (yield* Clock.currentTimeMillis) - parsedRetention.retentionMillis
+    const now = yield* Clock.currentTimeMillis
+    const cutoff = now - parsedRetention.retentionMillis
     return yield* runWriteStatement(database, query, [
       ...prefixValues,
       cutoff,
+      now,
     ])
   })
 }

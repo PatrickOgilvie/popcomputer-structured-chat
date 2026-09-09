@@ -350,11 +350,35 @@ describe("Repair.standard", () => {
   })
 
   test("clears confirmed answers, rewinds, reissues, and reconfirms", async () => {
-    const calls = await Effect.runPromise(Ref.make(0))
-    const model = Layer.succeed(Model.Service, {
-      requestTool: () =>
-        Ref.updateAndGet(calls, (count) => count + 1).pipe(
-          Effect.map((count) => {
+    const Economy = Model.profile("repair_economy")
+    const Deliberate = Model.profile("repair_deliberate")
+    const ProfiledBrief = Stage.collect({
+      name: "brief",
+      model: Economy,
+      fields: Brief.fields,
+    })
+    const ProfiledMatching = Stage.tools({
+      name: "matching",
+      model: Deliberate,
+      instructions: ["Search using the accepted brief."],
+      tools: [Search],
+    })
+    const ProfiledRepairableChat = Chat.define({
+      name: "profiled_repairable_chat",
+      version: 1,
+      stages: [ProfiledBrief, ProfiledMatching],
+      repair: Repair.standard(),
+    })
+    const calls = await Effect.runPromise(
+      Ref.make<ReadonlyArray<string>>([]),
+    )
+    const respond = (profile: "economy" | "deliberate") =>
+      Ref.updateAndGet(calls, (current) => [
+        ...current,
+        profile,
+      ]).pipe(
+        Effect.map((current) => {
+          const count = current.length
             switch (count) {
               case 1:
                 return initialAnswers
@@ -422,28 +446,47 @@ describe("Repair.standard", () => {
                 // cast keeps the impossible defect branch out of the fixture.
                 return Effect.die("unexpected request") as never
             }
-          }),
+        }),
+      )
+    const economy = Layer.succeed(Economy, {
+      requestTool: () => respond("economy"),
+    })
+    const deliberate = Layer.succeed(Deliberate, {
+      requestTool: () => respond("deliberate"),
+    })
+    const fallback = Layer.succeed(Model.Service, {
+      requestTool: () =>
+        Ref.update(calls, (current) => [
+          ...current,
+          "default",
+        ]).pipe(
+          Effect.andThen(Effect.die("unexpected default model")),
         ),
     })
-    const live = Layer.merge(model, inMemoryChatSessionStore)
+    const live = Layer.mergeAll(
+      economy,
+      deliberate,
+      fallback,
+      inMemoryChatSessionStore,
+    )
 
     const replies = await Effect.runPromise(
       Effect.gen(function* () {
-        const question = yield* Chat.turn(RepairableChat, {
+        const question = yield* Chat.turn(ProfiledRepairableChat, {
           sessionId: "confirmed-repair",
           message: "We need a public service website in Leeds.",
         })
-        const initial = yield* Chat.turn(RepairableChat, {
+        const initial = yield* Chat.turn(ProfiledRepairableChat, {
           sessionId: "confirmed-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
-        const correction = yield* Chat.turn(RepairableChat, {
+        const correction = yield* Chat.turn(ProfiledRepairableChat, {
           sessionId: "confirmed-repair",
           expectedRevision: initial.revision,
           message: "Actually, only local firms.",
         })
-        const reconfirmed = yield* Chat.turn(RepairableChat, {
+        const reconfirmed = yield* Chat.turn(ProfiledRepairableChat, {
           sessionId: "confirmed-repair",
           expectedRevision: correction.revision,
           message: "Yes, local only.",
@@ -457,9 +500,9 @@ describe("Repair.standard", () => {
     expect(replies.correction.turn.state.repair?.pendingStages).toEqual([0])
     expect(
       Chat.acceptedAnswer(
-        RepairableChat,
+        ProfiledRepairableChat,
         replies.correction.turn.state,
-        Brief,
+        ProfiledBrief,
         "localOnly",
       ),
     ).toBeUndefined()
@@ -485,9 +528,9 @@ describe("Repair.standard", () => {
     expect(replies.reconfirmed.turn.state.repair?.pendingStages).toEqual([])
     expect(
       Chat.acceptedAnswer(
-        RepairableChat,
+        ProfiledRepairableChat,
         replies.reconfirmed.turn.state,
-        Brief,
+        ProfiledBrief,
         "localOnly",
       ),
     ).toEqual({
@@ -509,6 +552,15 @@ describe("Repair.standard", () => {
     expect(replies.reconfirmed.revision).not.toBe(
       replies.correction.revision,
     )
+    expect(await Effect.runPromise(Ref.get(calls))).toEqual([
+      "economy",
+      "economy",
+      "deliberate",
+      "deliberate",
+      "economy",
+      "economy",
+      "deliberate",
+    ])
   })
 
   test("persists an ordered reconfirmation queue across collect stages", async () => {

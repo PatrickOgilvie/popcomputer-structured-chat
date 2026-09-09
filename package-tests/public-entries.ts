@@ -1,4 +1,12 @@
 import {
+  makeChatTurnClient,
+  makeChatDebugTurnClient,
+  makeChatExplorationClient,
+  type ChatTurnClient,
+  type ChatDebugTurnClient,
+  type ChatExplorationClient,
+} from "@popcomputer/structured-chat/client"
+import {
   Answer,
   Chat,
   Question,
@@ -28,7 +36,11 @@ import {
   createStructuredChatDebugStore,
   StructuredChatDebugPanel,
 } from "@popcomputer/structured-chat/assistant-ui/debug"
-import { Effect, Schema } from "effect"
+import {
+  StructuredChatAssistantProvider,
+  type StructuredChatAssistantProviderProps,
+} from "@popcomputer/structured-chat/assistant-ui/react"
+import { Effect, Layer, Schema } from "effect"
 
 const PackageView = View.define({
   name: "package_view",
@@ -47,6 +59,22 @@ const PackageTool = Tool.define({
   input: Schema.Struct({ value: Schema.String }),
   execute: ({ value }) => Effect.succeed({ value }),
 }).pipe(Tool.present(PackageView, ({ value }) => ({ value })))
+
+const PackageModelProfile = Root.Model.profile("package_profile")
+const PackageProfiledStage = Root.Stage.tools({
+  name: "package_profiled_stage",
+  model: PackageModelProfile,
+  instructions: ["Exercise the named package model profile."],
+  tools: [PackageTool],
+})
+const packageProfileLayer: Layer.Layer<typeof PackageModelProfile> =
+  OpenAI.layer(PackageModelProfile, {
+    timeoutMilliseconds: 1_000,
+    provider: OpenAI.Provider.cloudflareWorkersAI({
+      model: "@cf/openai/package-profile",
+      complete: () => Promise.resolve({}),
+    }),
+  })
 
 const packageAdapter: AssistantChatModelAdapter =
   makeAssistantChatModelAdapter({ endpoint: "/chat" })
@@ -84,8 +112,17 @@ const packageAnswerAdapter: AssistantChatModelAdapter =
     endpoint: "/chat",
     onAnswerSnapshot: packageAnswerStore.receive,
   })
+const packageProviderProps: StructuredChatAssistantProviderProps = {
+  chatKey: "package-chat",
+  endpoint: "/chat",
+  debug: true,
+  debugEndpoint: "/chat/debug",
+  children: null,
+}
 
 void PackageTool
+void PackageModelProfile
+void PackageProfiledStage
 void PackageVisibleAnswer
 void inMemoryChatSessionStore
 void Scenario.call(PackageTool, { value: "typed" })
@@ -112,7 +149,25 @@ void Debug.turn
 void CloudflareAI.classifyError
 void OpenAI.layer
 void StructuredChatDebugPanel
+void StructuredChatAssistantProvider
+void packageProviderProps
+void packageProfileLayer
 void useStructuredChatUserAnswers
 
 // @ts-expect-error flat constructors are intentionally absent from the root
 void Root.defineChat
+
+const plainClient: ChatTurnClient = makeChatTurnClient({ endpoint: "/chat" })
+const debugClient: ChatDebugTurnClient = makeChatDebugTurnClient({ endpoint: "/debug" })
+const explorationClient: ChatExplorationClient = makeChatExplorationClient({ endpoint: "/explore" })
+const expired: Root.Session.Expired = new Root.Session.Expired({ reason: "expired" })
+void plainClient
+void debugClient
+void explorationClient
+void expired
+
+
+const PackageMessage = Root.Message.define({ name: "package_message", input: Schema.String, text: (text) => text })
+const PackageComposedChat = Chat.define({ name: "package_composed", version: 1, messages: [PackageMessage], stages: [PackageProfiledStage] })
+void Chat.start(PackageComposedChat, { sessionId: "package", input: null })
+void Chat.post(PackageComposedChat, { sessionId: "package", expectedRevision: "1", messageId: "one", message: PackageMessage, input: "Hello" })

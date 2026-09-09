@@ -5,6 +5,39 @@ import { Effect, Layer, Ref, Result, Schema } from "effect"
 import { inMemoryChatSessionStore } from "../src/testing.js"
 
 describe("Stage.command", () => {
+  test.each([
+    [{ arguments: {} }, "invalid_envelope"],
+    [{ name: "outside", arguments: {} }, "unknown_tool"],
+    [{ name: "send", arguments: { recipient: 42 } }, "invalid_arguments"],
+  ] as const)("classifies a rejected command plan: %j", async (call, reason) => {
+    let executed = false
+    const Send = Tool.command({
+      name: "send",
+      description: "Send one message.",
+      input: Schema.Struct({ recipient: Schema.String }),
+      execute: () => Effect.sync(() => { executed = true }),
+    })
+    const stage = Stage.command({
+      name: "delivery",
+      instructions: ["Send the message."],
+      command: Send,
+    })
+    const result = await Effect.runPromise(
+      stage.plan([Model.Message.user("Send it")]).pipe(
+        Effect.provide(Layer.succeed(Model.Service, {
+          requestTool: () => Effect.succeed(call),
+        })),
+        Effect.result,
+      ),
+    )
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({ _tag: "InvalidToolCall", reason })
+    }
+    expect(executed).toBe(false)
+  })
+
   test("binds command identity to every documented tuple component", async () => {
     const base = {
       namespace: "account-one",
@@ -12,7 +45,6 @@ describe("Stage.command", () => {
       version: 1,
       sessionId: "delivery-session",
       expectedRevision: "4",
-      command: "send_proposal",
     } as const
 
     const ids = await Effect.runPromise(
@@ -24,7 +56,6 @@ describe("Stage.command", () => {
         Tool.deriveCommandId({ ...base, version: 2 }),
         Tool.deriveCommandId({ ...base, sessionId: "renewal-session" }),
         Tool.deriveCommandId({ ...base, expectedRevision: "5" }),
-        Tool.deriveCommandId({ ...base, command: "archive_proposal" }),
       ]),
     )
 
@@ -34,10 +65,10 @@ describe("Stage.command", () => {
     expect(ids[0]).not.toBe(ids[4])
     expect(ids[0]).not.toBe(ids[5])
     expect(ids[0]).not.toBe(ids[6])
-    expect(ids[0]).not.toBe(ids[7])
   })
 
   test("plans and executes exactly one command with an explicit identity", async () => {
+    const Deliberate = Model.profile("command_deliberate")
     const observed = await Effect.runPromise(
       Ref.make<string | undefined>(undefined),
     )
@@ -57,13 +88,14 @@ describe("Stage.command", () => {
     )
     const Delivery = Stage.command({
       name: "delivery",
+      model: Deliberate,
       instructions: ["Send the proposal to the named recipient."],
       command: Send,
     })
     const commandId = Schema.decodeSync(Tool.CommandIdSchema)(
       `cmd_${"a".repeat(64)}`,
     )
-    const model = Layer.succeed(Model.Service, {
+    const model = Layer.succeed(Deliberate, {
       requestTool: () =>
         Effect.succeed({
           name: "send_proposal",

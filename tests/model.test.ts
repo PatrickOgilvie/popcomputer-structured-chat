@@ -35,6 +35,7 @@ describe("Model.runToolStep", () => {
               messageCount: 2,
               messageCharacterCount: 27,
               instructionCount: 1,
+              modelProfile: "default",
               toolCount: 1,
             })
 
@@ -93,8 +94,14 @@ describe("Model.runToolStep", () => {
     )
   })
 
-  test("repairs one invalid call before executing the application tool once", async () => {
+  test("attributes both repair attempts to the selected model profile", async () => {
+    const Repair = Model.profile("repair")
     const requests: Array<Model.ToolRequest> = []
+    const requestSpans: Array<{
+      readonly attempt: unknown
+      readonly modelProfile: unknown
+      readonly name: string
+    }> = []
     const executions = await Effect.runPromise(Ref.make(0))
     const preCallGuards = await Effect.runPromise(Ref.make(0))
     const parsedCallGuards = await Effect.runPromise(Ref.make(0))
@@ -107,20 +114,29 @@ describe("Model.runToolStep", () => {
           Effect.as({ query }),
         ),
     })
-    const model = Layer.succeed(Model.Service, {
+    const model = Layer.succeed(Repair, {
       requestTool: (request) =>
-        Effect.sync(() => {
-          requests.push(request)
-          return requests.length === 1
-            ? {
-                name: "retried_search",
-                arguments: { query: 42 },
-              }
-            : {
-                name: "retried_search",
-                arguments: { query: "challenger drinks" },
-              }
-        }),
+        Effect.currentSpan.pipe(
+          Effect.orDie,
+          Effect.map((span) => {
+            const attributes = Object.fromEntries(span.attributes)
+            requestSpans.push({
+              attempt: attributes.attempt,
+              modelProfile: attributes.modelProfile,
+              name: span.name,
+            })
+            requests.push(request)
+            return requests.length === 1
+              ? {
+                  name: "retried_search",
+                  arguments: { query: 42 },
+                }
+              : {
+                  name: "retried_search",
+                  arguments: { query: "challenger drinks" },
+                }
+          }),
+        ),
     })
     const guard = Model.guard({
       name: "retry_boundary",
@@ -136,6 +152,7 @@ describe("Model.runToolStep", () => {
         messages: [Model.Message.user("Find an agency")],
         tools: Tool.set(RetriedSearch),
         guards: [guard],
+        model: Repair,
       }).pipe(Effect.provide(model)),
     )
 
@@ -150,6 +167,18 @@ describe("Model.runToolStep", () => {
     expect(requests[1]?.instructions[1]).toContain(
       "did not satisfy the required tool-call contract",
     )
+    expect(requestSpans).toEqual([
+      {
+        attempt: 1,
+        modelProfile: "repair",
+        name: "popcomputer.structured_chat.model.request",
+      },
+      {
+        attempt: 2,
+        modelProfile: "repair",
+        name: "popcomputer.structured_chat.model.request",
+      },
+    ])
     expect(await Effect.runPromise(Ref.get(executions))).toBe(1)
     expect(await Effect.runPromise(Ref.get(preCallGuards))).toBe(1)
     expect(await Effect.runPromise(Ref.get(parsedCallGuards))).toBe(1)
@@ -441,5 +470,20 @@ describe("Model.runToolStep", () => {
   test("rejects empty trusted instructions and messages", () => {
     expect(() => Model.Instruction.make(" ")).toThrow()
     expect(() => Model.Message.user(" ")).toThrow()
+  })
+
+  test("defines stable named profiles and rejects invalid names", () => {
+    const Deliberate = Model.profile("deliberate")
+    const DeliberateAgain = Model.profile("deliberate")
+
+    expect(Deliberate.profile).toBe("deliberate")
+    expect(Deliberate.key).toBe(DeliberateAgain.key)
+    expect(() => Model.profile("")).toThrow()
+    expect(() => Model.profile(" default ")).toThrow()
+    expect(() => Model.profile("default")).toThrow()
+    expect(() => Model.profile("not allowed")).toThrow()
+    expect(() =>
+      Schema.decodeSync(Model.ProfileNameSchema)("x".repeat(101)),
+    ).toThrow()
   })
 })

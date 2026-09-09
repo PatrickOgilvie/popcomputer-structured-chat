@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Function as Fn } from "effect"
 import type {
   AcceptedAnswer,
   CollectAnswers,
@@ -68,7 +68,25 @@ import {
   type StructuredChatUserAnswerSnapshot,
   type StructuredChatUserAnswerState,
 } from "./core/user-answer-projection.js"
-import { compile, read } from "./internal/chat/definition.js"
+import { read } from "./internal/chat/definition.js"
+import {
+  hasComposition,
+  readConversation,
+} from "./internal/chat/composition-definition.js"
+import type {
+  AnyComposedDefinition,
+  ConversationReply,
+  ConversationError,
+  ErrorsOf,
+  RequirementsOf,
+  StartConversationInput,
+  StartedConversation,
+  MessagesOf,
+  PostMessageInput,
+  PostedMessage,
+} from "./core/composition.js"
+import type { ConversationState } from "./core/conversation-state.js"
+import type { OutboundMessageContract } from "./core/outbound-message.js"
 import type { ToolTuple } from "./core/tool-set.js"
 
 /** Declarative definition of one sequential structured chat. */
@@ -106,182 +124,252 @@ export type StagesOf<Chat extends AnyDefinition> =
 
 /** Extract the exploration tuple carried by a chat definition. */
 export type ExplorationsOf<Chat extends AnyDefinition> =
-  Chat extends Definition<
-    string,
-    number,
-    ChatStageTuple,
-    infer Explorations
-  >
+  Chat extends Definition<string, number, ChatStageTuple, infer Explorations>
     ? Explorations
     : never
 
 /** Extract the persisted state carried by a chat definition. */
 export type State<Chat extends AnyDefinition> =
-  Chat extends Definition<
-    infer Name,
-    infer Version,
-    infer Stages,
-    ChatExplorationTuple
-  >
-    ? ChatState<Name, Version, Stages>
-    : never
+  Chat extends AnyComposedDefinition
+    ? ConversationState
+    : Chat extends Definition<
+          infer Name,
+          infer Version,
+          infer Stages,
+          ChatExplorationTuple
+        >
+      ? ChatState<Name, Version, Stages>
+      : never
 
 /** Extract one domain turn carried by a chat definition. */
 export type Turn<Chat extends AnyDefinition> =
-  Chat extends Definition<
-    infer Name,
-    infer Version,
-    infer Stages,
-    ChatExplorationTuple
-  >
-    ? ChatTurn<Name, Version, Stages>
-    : never
+  Chat extends AnyComposedDefinition
+    ? import("./core/composition.js").TurnsOf<Chat>
+    : Chat extends Definition<
+          infer Name,
+          infer Version,
+          infer Stages,
+          ChatExplorationTuple
+        >
+      ? ChatTurn<Name, Version, Stages>
+      : never
 
 /** Extract one persisted reply carried by a chat definition. */
 export type Reply<Chat extends AnyDefinition> =
-  Chat extends Definition<
-    infer Name,
-    infer Version,
-    infer Stages,
-    ChatExplorationTuple
-  >
-    ? ChatReply<Name, Version, Stages>
-    : never
+  Chat extends AnyComposedDefinition
+    ? ConversationReply<Chat>
+    : Chat extends Definition<
+          infer Name,
+          infer Version,
+          infer Stages,
+          ChatExplorationTuple
+        >
+      ? ChatReply<Name, Version, Stages>
+      : never
 
 /** Extract the expected turn failures carried by a chat definition. */
 export type TurnError<Chat extends AnyDefinition> =
-  Chat extends Definition<
-    string,
-    number,
-    infer Stages,
-    ChatExplorationTuple
-  >
-    ? ChatReplyError<Stages>
-    : never
+  Chat extends AnyComposedDefinition
+    ? ErrorsOf<Chat>
+    : Chat extends Definition<
+          string,
+          number,
+          infer Stages,
+          ChatExplorationTuple
+        >
+      ? ChatReplyError<Stages>
+      : never
 
 /** Extract the Effect services required by a chat definition. */
 export type Requirements<Chat extends AnyDefinition> =
-  Chat extends Definition<
-    string,
-    number,
-    infer Stages,
-    ChatExplorationTuple
+  Chat extends AnyComposedDefinition
+    ? RequirementsOf<Chat>
+    : Chat extends Definition<
+          string,
+          number,
+          infer Stages,
+          ChatExplorationTuple
+        >
+      ? ChatRequirements<Stages>
+      : never
+
+type CollectFields<Stage> =
+  Stage extends CollectStage<
+    infer _Name,
+    infer Fields,
+    infer _Guards,
+    infer _Profile
   >
-    ? ChatRequirements<Stages>
+    ? Fields
     : never
 
-type CollectFields<Stage> = Stage extends CollectStage<
-  infer _Name,
-  infer Fields,
-  infer _Guards
->
-  ? Fields
-  : never
-
 type PresentableTurn = Parameters<typeof presentChatReply>[0]["turn"]
-
-type PresentableChatTurn<
-  Name extends string,
-  Version extends number,
-  Stages extends ChatStageTuple,
-> = ChatTurn<Name, Version, Stages> & PresentableTurn
-
-type PresentableReply<
-  Name extends string,
-  Version extends number,
-  Stages extends ChatStageTuple,
-> = Omit<ChatReply<Name, Version, Stages>, "turn"> & {
-  readonly turn: PresentableChatTurn<Name, Version, Stages>
-}
 
 type PresentableExplorationRun<Explorations extends ToolTuple> =
   ChatExplorationRun<Explorations> & PresentableExploration
 
 /** Define one opaque sequential structured chat. */
-export const define = compile
+export { define, branch } from "./internal/chat/composition-definition.js"
+export {
+  chatInput as input,
+  ChatContextUnavailable,
+} from "./core/chat-context.js"
+export { returned } from "./core/branch.js"
+export type {
+  InputOf as Input,
+  OutputOf as Output,
+  Branch,
+  BranchContract,
+} from "./core/branch.js"
+export type { ChatOutcome as Outcome } from "./core/chat-context.js"
+export { InvalidConversation } from "./core/conversation-state.js"
+export type {
+  ConversationState,
+  Invocation,
+} from "./core/conversation-state.js"
+export type {
+  ComposedDefinition,
+  ConversationReply,
+  PostedMessage,
+  StartedConversation,
+} from "./core/composition.js"
 
 /**
  * Load, execute, and atomically replace one server-owned chat session.
  *
  * The returned Effect retains every stage requirement and expected failure.
  */
-export const turn: <
-  const Name extends string,
-  const Version extends number,
-  const Stages extends ChatStageTuple,
-  const Explorations extends ChatExplorationTuple,
->(
-  chat: Definition<Name, Version, Stages, Explorations>,
+export const turn = <C extends AnyDefinition>(
+  chat: C,
   input: ChatReplyInput,
-) => Effect.Effect<
-  ChatReply<Name, Version, Stages>,
-  ChatReplyError<Stages>,
-  import("./core/session.js").ChatSessionStore |
-    ChatRequirements<Stages>
-> = Effect.fn("Chat.turn")(function* <
-  const Name extends string,
-  const Version extends number,
-  const Stages extends ChatStageTuple,
-  const Explorations extends ChatExplorationTuple,
+): Effect.Effect<
+  Reply<C>,
+  TurnError<C>,
+  import("./core/session.js").ChatSessionStore | Requirements<C>
+> => {
+  const effect = hasComposition(chat)
+    ? readConversation(chat).reply(input)
+    : read(chat).reply(input)
+  // SAFETY: the opaque definition selects the runtime compiled from its exact stages and child contracts.
+  return Fn.cast<
+    typeof effect,
+    Effect.Effect<
+      Reply<C>,
+      TurnError<C>,
+      import("./core/session.js").ChatSessionStore | Requirements<C>
+    >
+  >(effect)
+}
+
+/** Initialize a standalone root invocation with its declared input; retries preserve the session. */
+export const start = <C extends AnyComposedDefinition>(
+  chat: C,
+  input: StartConversationInput<C>,
+): Effect.Effect<
+  StartedConversation,
+  ConversationError,
+  import("./core/session.js").ChatSessionStore
+> => {
+  const effect = readConversation(chat).start(input)
+  // SAFETY: start uses only input/state parsers and the session store, with failures classified by that runtime.
+  return Fn.cast<
+    typeof effect,
+    Effect.Effect<
+      StartedConversation,
+      ConversationError,
+      import("./core/session.js").ChatSessionStore
+    >
+  >(effect)
+}
+
+/** Persist an application-authored message and its reply hints without running a user turn. */
+export const post = <
+  C extends AnyComposedDefinition,
+  M extends MessagesOf<C> & OutboundMessageContract,
 >(
-  chat: Definition<Name, Version, Stages, Explorations>,
-  input: ChatReplyInput,
-) {
-  return yield* read(chat).reply(input)
-})
+  chat: C,
+  input: PostMessageInput<M>,
+): Effect.Effect<
+  PostedMessage,
+  ConversationError,
+  import("./core/session.js").ChatSessionStore
+> => {
+  const effect = readConversation(chat).post(input)
+  // SAFETY: post checks message membership and uses only message codecs and the session store.
+  return Fn.cast<
+    typeof effect,
+    Effect.Effect<
+      PostedMessage,
+      ConversationError,
+      import("./core/session.js").ChatSessionStore
+    >
+  >(effect)
+}
+
+type ExplorationError<C extends AnyDefinition> =
+  | ChatExploreError<ExplorationsOf<C>>
+  | (C extends AnyComposedDefinition ? ConversationError : never)
+type ExplorationRequirements<C extends AnyDefinition> =
+  | import("./core/session.js").ChatSessionStore
+  | (C extends AnyComposedDefinition
+      ? Exclude<
+          ChatExploreRequirements<ExplorationsOf<C>>,
+          import("./core/chat-context.js").ChatContext
+        >
+      : ChatExploreRequirements<ExplorationsOf<C>>)
 
 /** Load the latest session and run one configured read-only exploration. */
-export const explore: <
-  const Name extends string,
-  const Version extends number,
-  const Stages extends ChatStageTuple,
-  const Explorations extends ToolTuple,
+export const explore = <
+  C extends Definition<string, number, ChatStageTuple, ToolTuple>,
 >(
-  chat: Definition<Name, Version, Stages, Explorations>,
+  chat: C,
   input: ChatExploreInput,
-) => Effect.Effect<
-  ChatExplorationRun<Explorations>,
-  ChatExploreError<Explorations>,
-  import("./core/session.js").ChatSessionStore |
-    ChatExploreRequirements<Explorations>
-> = Effect.fn("Chat.explore")(function* <
-  const Name extends string,
-  const Version extends number,
-  const Stages extends ChatStageTuple,
-  const Explorations extends ToolTuple,
->(
-  chat: Definition<Name, Version, Stages, Explorations>,
-  input: ChatExploreInput,
-) {
-  return yield* read(chat).explore(input)
-})
+): Effect.Effect<
+  ChatExplorationRun<ExplorationsOf<C>>,
+  ExplorationError<C>,
+  ExplorationRequirements<C>
+> => {
+  const effect = hasComposition(chat)
+    ? readConversation(chat).explore(input)
+    : read(chat).explore(input)
+  // SAFETY: both runtimes execute only this definition's root exploration tuple.
+  return Fn.cast<
+    typeof effect,
+    Effect.Effect<
+      ChatExplorationRun<ExplorationsOf<C>>,
+      ExplorationError<C>,
+      ExplorationRequirements<C>
+    >
+  >(effect)
+}
 
 /** Build a reusable browser-protocol projection for one chat definition. */
-export const present = <
-  const Name extends string,
-  const Version extends number,
-  const Stages extends ChatStageTuple,
-  const Explorations extends ChatExplorationTuple,
->(
-  chat: Definition<Name, Version, Stages, Explorations>,
-  options: PresentChatReplyOptions<
-    PresentableChatTurn<Name, Version, Stages>
-  > = {},
+export const present = <C extends AnyDefinition>(
+  chat: C,
+  options: PresentChatReplyOptions<Turn<C> & PresentableTurn> = {},
 ) => {
   read(chat)
   return <Error, Requirements>(
-    effect: Effect.Effect<
-      PresentableReply<Name, Version, Stages>,
-      Error,
-      Requirements
-    >,
+    effect: Effect.Effect<Reply<C>, Error, Requirements>,
   ): Effect.Effect<
     StructuredChatPersistedTurnResponse,
     Error | InvalidChatPresentation,
     Requirements
   > =>
     effect.pipe(
-      Effect.flatMap((reply) => presentChatReply(reply, options)),
+      Effect.flatMap((reply) => {
+        // SAFETY: both compiled runtimes emit the same presentation variants; composition adds invocation scope and issued messages.
+        const presentable = Fn.cast<
+          typeof reply,
+          Parameters<typeof presentChatReply>[0]
+        >(reply)
+        // SAFETY: each callback receives the exact turn union carried by this opaque chat.
+        const projections = Fn.cast<
+          typeof options,
+          PresentChatReplyOptions<PresentableTurn>
+        >(options)
+        return presentChatReply(presentable, projections)
+      }),
     )
 }
 
@@ -309,9 +397,7 @@ export const presentExploration = <
     Error | InvalidChatPresentation,
     Requirements
   > =>
-    effect.pipe(
-      Effect.flatMap((run) => presentChatExploration(run, options)),
-    )
+    effect.pipe(Effect.flatMap((run) => presentChatExploration(run, options)))
 }
 
 /** Project one persisted reply directly into the browser protocol. */
@@ -326,19 +412,15 @@ export const acceptedAnswer = <
   const Version extends number,
   const Stages extends ChatStageTuple,
   const Explorations extends ChatExplorationTuple,
-  Stage extends Extract<
-    Stages[number],
-    CollectStageDefinitionContract
-  >,
+  Stage extends Extract<Stages[number], CollectStageDefinitionContract>,
   Field extends keyof CollectFields<Stage> & string,
 >(
   chat: Definition<Name, Version, Stages, Explorations>,
   state: ChatState<Name, Version, Stages>,
   stage: Stage,
   field: Field,
-):
-  | AcceptedAnswer<CollectAnswers<CollectFields<Stage>>[Field]>
-  | undefined => read(chat).getAcceptedAnswer(state, stage, field)
+): AcceptedAnswer<CollectAnswers<CollectFields<Stage>>[Field]> | undefined =>
+  read(chat).getAcceptedAnswer(state, stage, field)
 
 export {
   AssistantDataPartSchema,

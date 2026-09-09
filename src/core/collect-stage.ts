@@ -10,7 +10,9 @@ import {
   ChatModelUnavailable,
   Instruction,
   runToolStep,
-  StructuredChatModel,
+  type AnyModelProfile,
+  type ModelProfileInput,
+  type ModelRequirement,
   type UnsupportedModelToolSchema,
   type UntrustedMessage,
 } from "./model.js"
@@ -35,6 +37,7 @@ import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
+import type { RepairCorrection } from "./repair.js"
 import { recordDebugEvent } from "./debug-trace.js"
 
 /** Safe reason that a collect-stage model proposal was rejected. */
@@ -224,15 +227,6 @@ interface RuntimeCollectStageTurn {
   readonly question: RuntimeCollectStagePrompt | undefined
 }
 
-interface RuntimeCollectRepair {
-  readonly _tag: "ReplaceAcceptedAnswer" | "ReconfirmAnswer"
-  readonly field: string
-  readonly value?: RuntimeAnswerValue
-  readonly evidence: {
-    readonly quote: string
-  }
-}
-
 interface RuntimeCollectRepairResult {
   readonly state: RuntimeCollectStageState
   readonly requiresConfirmation: boolean
@@ -249,11 +243,11 @@ export interface CollectStageRuntime {
     messages: ReadonlyArray<UntrustedMessage>,
   ) => boolean
   readonly isComplete: (state: RuntimeCollectStageState) => boolean
-  readonly repairSchema: Schema.Codec<unknown, unknown>
+  readonly repairSchema: Schema.Codec<RepairCorrection, unknown>
   readonly applyRepairs: (
     state: RuntimeCollectStageState,
     messages: ReadonlyArray<UntrustedMessage>,
-    repairs: ReadonlyArray<RuntimeCollectRepair>,
+    repairs: ReadonlyArray<RepairCorrection>,
   ) => Effect.Effect<RuntimeCollectRepairResult, unknown, unknown>
   readonly run: (input: {
     readonly state: RuntimeCollectStageState
@@ -293,6 +287,7 @@ export interface CollectStageDefinitionContract
   extends StructuredDefinition<"collect_stage"> {
   readonly _tag: "CollectStage"
   readonly name: string
+  readonly guards: ModelGuardTuple
   readonly [collectStageRuntime]: CollectStageRuntime
   readonly [collectStageInspection]: CollectStageInspection
 }
@@ -321,22 +316,24 @@ interface MutableCollectQuestionPolicy {
 }
 
 /** Definition input for one schema-derived fact collection stage. */
-export interface DefineCollectStageInput<
+export type DefineCollectStageInput<
   Name extends string,
   Fields extends AnswerFields,
   Guards extends ModelGuardTuple,
-> {
+  Profile extends AnyModelProfile | undefined = undefined,
+> = {
   readonly name: Name
   readonly questions?: CollectQuestionPolicy
   readonly fields: Fields
   readonly guards?: Guards
-}
+} & ModelProfileInput<Profile>
 
 /** One schema-derived stage that is complete only when every fact is known. */
 export interface CollectStage<
   Name extends string,
   Fields extends AnswerFields,
   Guards extends ModelGuardTuple = readonly [],
+  Profile extends AnyModelProfile | undefined = undefined,
 > extends CollectStageDefinitionContract {
   readonly _tag: "CollectStage"
   readonly name: Name
@@ -383,7 +380,7 @@ export interface CollectStage<
     | InvalidCollectStageResponse
     | CollectAnswerValidationError<Fields>
     | ModelGuardError<Guards>,
-    | StructuredChatModel
+    | ModelRequirement<Profile>
     | CollectAnswerValidationRequirements<Fields>
     | ModelGuardRequirements<Guards>
   >
@@ -410,9 +407,15 @@ export const defineCollectStage = <
   const Name extends string,
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple = readonly [],
+  const Profile extends AnyModelProfile | undefined = undefined,
 >(
-  definition: DefineCollectStageInput<Name, Fields, Guards>,
-): CollectStage<Name, Fields, Guards> => {
+  definition: DefineCollectStageInput<
+    Name,
+    Fields,
+    Guards,
+    Profile
+  >,
+): CollectStage<Name, Fields, Guards, Profile> => {
   Schema.decodeSync(StageNameSchema)(definition.name)
   const questionGuidanceSchema = Schema.Trimmed.check(
     Schema.isNonEmpty(),
@@ -596,7 +599,7 @@ export const defineCollectStage = <
   // schemas and exact stage, field, and transition literals.
   const repairSchema = cast<
     typeof rawRepairSchema,
-    Schema.Codec<unknown, unknown>
+    Schema.Codec<RepairCorrection, unknown>
   >(rawRepairSchema)
   const acceptedFields = Object.fromEntries(
     fieldNames.map((field) => [
@@ -683,6 +686,15 @@ export const defineCollectStage = <
   // explicitly supplied tuple is returned unchanged.
   const guards =
     definition.guards ?? cast<readonly [], Guards>([])
+  // SAFETY: ModelProfileInput requires a concrete model whenever Profile is
+  // defined; when Profile is undefined, undefined is the only legal value.
+  const model = cast<typeof definition.model, Profile>(definition.model)
+  // SAFETY: the selected value above preserves the conditional input proof;
+  // this projection only restores that relationship for object construction.
+  const modelInput = cast<
+    { readonly model: Profile },
+    ModelProfileInput<Profile>
+  >({ model })
   // SAFETY: every entry is built from one registered AnyNoContext answer
   // schema and adds only the model-wire null representation for absence.
   const proposalAnswerSchemaEntries =
@@ -1019,7 +1031,7 @@ export const defineCollectStage = <
   const applyRepairs = (
     state: CollectStageState<Fields>,
     messages: ReadonlyArray<UntrustedMessage>,
-    repairs: ReadonlyArray<RuntimeCollectRepair>,
+    repairs: ReadonlyArray<RepairCorrection>,
   ): Effect.Effect<RuntimeCollectRepairResult, unknown, unknown> =>
     Effect.gen(function* () {
       const accepted = copyAcceptedAnswers(state)
@@ -1261,7 +1273,7 @@ export const defineCollectStage = <
     >(execution)
   }
 
-  const run: CollectStage<Name, Fields, Guards>["run"] = ({
+  const run: CollectStage<Name, Fields, Guards, Profile>["run"] = ({
     state,
     messages,
   }) => {
@@ -1269,11 +1281,16 @@ export const defineCollectStage = <
       return Effect.fail(invalidResponse())
     }
 
-    return runToolStep({
+    return runToolStep<
+      readonly [typeof submitAnswers],
+      Guards,
+      Profile
+    >({
       instructions,
       messages,
       tools: toolSet,
       guards,
+      ...modelInput,
     }).pipe(
       Effect.flatMap(({ serverResult }) =>
         mergeProposal(state, messages, serverResult),

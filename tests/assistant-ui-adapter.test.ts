@@ -670,6 +670,19 @@ describe("makeAssistantChatModelAdapter", () => {
     ])
   })
 
+  test("does not publish a debug success sent with a failed HTTP status", async () => {
+    const observed: unknown[] = []
+    const adapter = makeAssistantChatModelAdapter({
+      endpoint: "/api/chat/debug",
+      fetch: async () => Response.json(successfulDebugResponseBody, { status: 503 }),
+      onAnswerSnapshot: (update) => { observed.push(update) },
+      onDebugSnapshot: (update) => { observed.push(update) },
+      onDebugTurn: (update) => { observed.push(update) },
+    })
+    await expect(adapter.run(runOptions([userMessage("Continue")]))).rejects.toThrow("Structured chat is temporarily unavailable")
+    expect(observed).toEqual([])
+  })
+
   test("delivers an uncorrelated failed trace without inventing a session", async () => {
     const turns: Array<Debug.Turn> = []
     const responseBody = {

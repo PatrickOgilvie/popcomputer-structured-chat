@@ -1,5 +1,7 @@
 export {
   ChatSessionConflict as Conflict,
+  ChatSessionExpired as Expired,
+  ChatSessionExpiredReasonSchema as ExpiredReasonSchema,
   ChatSessionIdSchema as IdSchema,
   ChatSessionNamespaceSchema as NamespaceSchema,
   ChatSessionNotFound as NotFound,

@@ -64,3 +64,6 @@ export type {
   ToolSetRun as SetRun,
   ToolTuple as Tuple,
 } from "./core/tool-set.js"
+
+export { ToolContext as Context, acceptedAnswer, AcceptedAnswerUnavailable } from "./core/tool-context.js"
+export type { ToolContextService as ContextService } from "./core/tool-context.js"

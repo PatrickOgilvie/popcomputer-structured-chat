@@ -115,6 +115,54 @@ describe("OpenAI.layer", () => {
     )
   })
 
+  test("binds a named profile to its configured provider model", async () => {
+    const Deliberate = Model.profile("deliberate")
+    const captured: Array<OpenAI.ProviderRequest> = []
+    const layer: Layer.Layer<typeof Deliberate> = OpenAI.layer(
+      Deliberate,
+      {
+        timeoutMilliseconds: 1_000,
+        provider: OpenAI.Provider.cloudflareWorkersAI({
+          model: "@cf/openai/deliberate-model",
+          complete: (request) => {
+            captured.push(request)
+            return Promise.resolve({
+              choices: [
+                {
+                  message: {
+                    tool_calls: [
+                      {
+                        function: {
+                          name: "search",
+                          arguments: JSON.stringify({
+                            query: "profiled search",
+                          }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            })
+          },
+        }),
+      },
+    )
+
+    const result = await Effect.runPromise(
+      Model.runToolStep({
+        model: Deliberate,
+        instructions: [Model.Instruction.make("Call search once.")],
+        messages: [Model.Message.user("Find profiled work")],
+        tools: Tool.set(Search),
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(result.serverResult).toEqual({ query: "profiled search" })
+    expect(captured).toHaveLength(1)
+    expect(captured[0]?.model).toBe("@cf/openai/deliberate-model")
+  })
+
   test("requests strict provider decoding for compatible tools", async () => {
     const captured: Array<OpenAICompatibleInput> = []
     const layer = OpenAI.layer({

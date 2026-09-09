@@ -74,6 +74,15 @@ export class ChatSessionNotFound extends Schema.TaggedError<ChatSessionNotFound>
   { reason: ChatSessionNotFoundReasonSchema },
 ) {}
 
+/** Safe reason that a session identity can no longer be used. */
+export const ChatSessionExpiredReasonSchema = Schema.Literal("expired")
+
+/** A terminal session identity whose snapshot has been erased. */
+export class ChatSessionExpired extends Schema.TaggedError<ChatSessionExpired>()(
+  "ChatSessionExpired",
+  { reason: ChatSessionExpiredReasonSchema },
+) {}
+
 /** Safe reason that session input or persisted data was rejected. */
 export const InvalidChatSessionReasonSchema = Schema.Literals([
   "invalid_input",
@@ -106,10 +115,10 @@ export interface ReplaceChatSessionInput extends ChatSessionScope {
 
 /** Narrow persistence seam for server-owned structured chat sessions. */
 export interface ChatSessionStoreService {
-  /** Load one raw snapshot, or null when the session has not started. */
+  /** Load one raw snapshot, or null when the session has never started. */
   readonly load: (
     scope: ChatSessionScope,
-  ) => Effect.Effect<unknown | null, ChatSessionStoreUnavailable>
+  ) => Effect.Effect<unknown | null, ChatSessionStoreUnavailable | ChatSessionExpired>
 
   /** Atomically replace one complete session at its expected revision. */
   readonly replace: (

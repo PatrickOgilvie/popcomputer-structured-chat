@@ -1,17 +1,23 @@
-import { Effect, Result, Schema } from "effect"
-import type { Definition } from "./Chat.js"
+import { Effect, Function as Fn, Result, Schema } from "effect"
+import {
+  turn as runTurn,
+  type AnyDefinition,
+  type Reply as ReplyOf,
+  type TurnError,
+  type Requirements,
+  type Turn as TurnOf,
+  type State as StateOf,
+} from "./Chat.js"
 import type {
   ChatReply,
   ChatReplyInput,
-  ChatRequirements,
-  ChatExplorationTuple,
   ChatStageTuple,
   ChatState,
 } from "./core/chat.js"
 import {
   inspectChatState,
   type InspectChatStateOptions,
-  type InvalidChatDebugProjection,
+  InvalidChatDebugProjection,
   type StructuredChatDebugSnapshot,
 } from "./core/debug.js"
 import {
@@ -21,7 +27,18 @@ import {
   type StructuredChatDebugTurnResponse,
 } from "./core/debug-protocol.js"
 import { captureDebugEvents } from "./core/debug-trace.js"
-import type { InvalidChatPresentation } from "./core/protocol.js"
+import {
+  presentChatReply,
+  type PresentChatReplyOptions,
+  type InvalidChatPresentation,
+} from "./core/protocol.js"
+import type { StructuredChatDebugEvent } from "./core/debug-trace.js"
+import { StructuredChatDebugTurnResponseSchema } from "./core/debug-protocol.js"
+import {
+  hasComposition,
+  readConversation,
+} from "./internal/chat/composition-definition.js"
+import type { AnyComposedDefinition } from "./core/composition.js"
 import { ChatSessionIdSchema } from "./core/session.js"
 import { read } from "./internal/chat/definition.js"
 
@@ -42,19 +59,27 @@ export interface TurnOptions {
  * structured-chat session store. `modelPayloads: "literal"` is required
  * because prompts and responses can contain secrets or personal data.
  */
-export const turn = <
-  const Name extends string,
-  const Version extends number,
-  const Stages extends ChatStageTuple,
-  const Explorations extends ChatExplorationTuple,
->(
-  chat: Definition<Name, Version, Stages, Explorations>,
+export type CapturedOutcome<C extends AnyDefinition> =
+  | {
+      readonly _tag: "Succeeded"
+      readonly reply: ReplyOf<C>
+      readonly events: ReadonlyArray<StructuredChatDebugEvent>
+    }
+  | {
+      readonly _tag: "Failed"
+      readonly sessionId: string | null
+      readonly error: TurnError<C>
+      readonly events: ReadonlyArray<StructuredChatDebugEvent>
+    }
+
+export const turn = <C extends AnyDefinition>(
+  chat: C,
   input: ChatReplyInput,
   options: TurnOptions,
 ): Effect.Effect<
-  CapturedChatDebugOutcome<Name, Version, Stages>,
+  CapturedOutcome<C>,
   never,
-  import("./core/session.js").ChatSessionStore | ChatRequirements<Stages>
+  import("./core/session.js").ChatSessionStore | Requirements<C>
 > => {
   Schema.decodeSync(TurnOptionsSchema)(options, {
     onExcessProperty: "error",
@@ -63,7 +88,7 @@ export const turn = <
     ? input.sessionId
     : null
 
-  return captureDebugEvents(read(chat).reply(input)).pipe(
+  return captureDebugEvents(runTurn(chat, input)).pipe(
     Effect.map(({ result, events }) =>
       Result.isFailure(result)
         ? {
@@ -85,65 +110,142 @@ export const turn = <
 }
 
 /** Project one opaque chat state into safe inspector data. */
-export const inspect = <
-  const Name extends string,
-  const Version extends number,
-  const Stages extends ChatStageTuple,
->(
-  chat: Definition<Name, Version, Stages>,
-  state: ChatState<Name, Version, Stages>,
+export const inspect = <C extends AnyDefinition>(
+  chat: C,
+  state: StateOf<C>,
   options: InspectChatStateOptions = {},
-): Effect.Effect<StructuredChatDebugSnapshot, InvalidChatDebugProjection> =>
-  inspectChatState(read(chat), state, options)
+): Effect.Effect<StructuredChatDebugSnapshot, InvalidChatDebugProjection> => {
+  if (hasComposition(chat)) {
+    // SAFETY: composition membership selects this definition's conversation state contract.
+    const conversation = Fn.cast<
+      typeof state,
+      import("./core/conversation-state.js").ConversationState
+    >(state)
+    return inspectInvocation(chat, conversation, conversation.active, options)
+  }
+  // SAFETY: the ordinary definition owns the corresponding sequential state schema.
+  return inspectChatState(
+    read(chat),
+    Fn.cast<typeof state, ChatState<string, number, ChatStageTuple>>(state),
+    options,
+  )
+}
 
-/** Project one persisted reply or captured debug outcome into the protocol. */
-export const present = <
-  const Name extends string,
-  const Version extends number,
-  const Stages extends ChatStageTuple,
->(
-  chat: Definition<Name, Version, Stages>,
-  input:
-    | ChatReply<Name, Version, Stages>
-    | CapturedChatDebugOutcome<Name, Version, Stages>,
-  options: PresentChatDebugReplyOptions<Name, Version, Stages> = {},
+const inspectInvocation = (
+  chat: AnyDefinition,
+  state: import("./core/conversation-state.js").ConversationState,
+  id: number,
+  options: InspectChatStateOptions,
+) =>
+  readConversation(chat)
+    .getInvocation(state, id)
+    .pipe(
+      Effect.mapError(
+        () => new InvalidChatDebugProjection({ reason: "invalid_state" }),
+      ),
+      Effect.flatMap((invocation) =>
+        inspectChatState(invocation.definition, invocation.state, options),
+      ),
+    )
+
+type PresentationOptions<C extends AnyDefinition> = {
+  readonly presentation?: PresentChatReplyOptions<
+    TurnOf<C> & Parameters<typeof presentChatReply>[0]["turn"]
+  >
+  readonly inspection?: InspectChatStateOptions
+}
+
+/** Project a reply or captured outcome, inspecting the invocation that produced it. */
+export const present = <C extends AnyDefinition>(
+  chat: C,
+  input: ReplyOf<C> | CapturedOutcome<C>,
+  options: PresentationOptions<C> = {},
 ): Effect.Effect<
   StructuredChatDebugTurnResponse,
   InvalidChatPresentation | InvalidChatDebugProjection
-> =>
-  presentChatDebugReply(
-    read(chat),
-    input,
-    options,
+> => {
+  if (!hasComposition(chat)) {
+    // SAFETY: ordinary definitions retain the existing debug protocol and exact stage callbacks.
+    return presentChatDebugReply(
+      read(chat),
+      Fn.cast<
+        typeof input,
+        | ChatReply<string, number, ChatStageTuple>
+        | CapturedChatDebugOutcome<string, number, ChatStageTuple>
+      >(input),
+      Fn.cast<
+        typeof options,
+        PresentChatDebugReplyOptions<string, number, ChatStageTuple>
+      >(options),
+    )
+  }
+  const outcome =
+    "_tag" in input
+      ? input
+      : { _tag: "Succeeded" as const, reply: input, events: [] }
+  const trace = { schemaVersion: 1 as const, events: outcome.events }
+  const parse = Schema.decodeUnknownEffect(
+    StructuredChatDebugTurnResponseSchema,
   )
+  if (outcome._tag === "Failed")
+    return parse(
+      {
+        schemaVersion: 2,
+        outcome: "failure",
+        session: outcome.sessionId === null ? null : { id: outcome.sessionId },
+        trace,
+      },
+      { onExcessProperty: "error" },
+    ).pipe(
+      Effect.mapError(
+        () => new InvalidChatDebugProjection({ reason: "invalid_trace" }),
+      ),
+    )
+  return Effect.gen(function* () {
+    // SAFETY: the runtime membership check above identifies a composed reply with an invocation reference.
+    const reply = Fn.cast<typeof outcome.reply, ReplyOf<AnyComposedDefinition>>(
+      outcome.reply,
+    )
+    const response = yield* presentChatReply(
+      reply,
+      Fn.cast<
+        typeof options.presentation,
+        | PresentChatReplyOptions<
+            Parameters<typeof presentChatReply>[0]["turn"]
+          >
+        | undefined
+      >(options.presentation),
+    )
+    const debug = yield* inspectInvocation(
+      chat,
+      reply.turn.state,
+      reply.invocation.id,
+      options.inspection ?? {},
+    )
+    return yield* parse(
+      { ...response, outcome: "success", debug, trace },
+      { onExcessProperty: "error" },
+    ).pipe(
+      Effect.mapError(
+        () => new InvalidChatDebugProjection({ reason: "invalid_trace" }),
+      ),
+    )
+  })
+}
 
 /** Project an ordinary persisted reply into the state-only debug protocol. */
-export const presentState = <
-  const Name extends string,
-  const Version extends number,
-  const Stages extends ChatStageTuple,
->(
-  chat: Definition<Name, Version, Stages>,
-  reply: ChatReply<Name, Version, Stages>,
-  options: PresentChatDebugReplyOptions<Name, Version, Stages> = {},
-): Effect.Effect<
-  StructuredChatDebugTurnResponse,
-  InvalidChatPresentation | InvalidChatDebugProjection
-> =>
-  presentChatDebugReply(
-    read(chat),
-    reply,
-    options,
-  )
+export const presentState = <C extends AnyDefinition>(
+  chat: C,
+  reply: ReplyOf<C>,
+  options: PresentationOptions<C> = {},
+) => present(chat, reply, options)
 
 export {
   InvalidChatDebugProjection as InvalidProjection,
   StructuredChatDebugSnapshotSchema as SnapshotSchema,
 } from "./core/debug.js"
 
-export {
-  StructuredChatDebugTurnResponseSchema as TurnResponseSchema,
-} from "./core/debug-protocol.js"
+export { StructuredChatDebugTurnResponseSchema as TurnResponseSchema } from "./core/debug-protocol.js"
 
 export {
   StructuredChatDebugEventSchema as EventSchema,

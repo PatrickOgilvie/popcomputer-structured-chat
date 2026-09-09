@@ -103,7 +103,9 @@ not part of the normal test command.
 10. Session namespace and public session ID remain separate values at every
     package and persistence seam.
 11. Public errors and diagnostics contain stable reason, target, dependency,
-    stage, and attempt fields only; they never contain raw payloads or causes.
+    stage, and attempt fields only; they never contain raw payloads or transport
+    causes. Client cancellation alone retains the original reason in a
+    non-enumerable native Error.cause for framework translation.
 12. The chat state version changes when an application's persisted state shape
     changes incompatibly.
 
@@ -519,7 +521,7 @@ collect proposal
 ```txt
 persisted command turn
   -> load and validate snapshot/revision/history capacity
-  -> derive SHA-256 commandId from namespace/chat/version/session/revision/name
+  -> derive SHA-256 commandId from namespace/chat/version/session/revision
   -> plan exactly one call to the command stage's single command
   -> application executes through its durable idempotency endpoint
   -> command stage completes
@@ -527,8 +529,8 @@ persisted command turn
 
 retry after an ambiguous or failed replacement
   -> same persisted revision produces the same commandId
-  -> application replays the original outcome for identical input
-  -> application rejects the same commandId paired with different input
+  -> application replays the original outcome for identical command and input
+  -> application rejects the same commandId paired with a different command or input
 ```
 
 Commands are distinct from repeatable query tools. `Stage.tools` accepts only
@@ -539,6 +541,11 @@ durable command-journal seam. The application endpoint remains the necessary
 owner of atomic side-effect idempotency. `Chat.run` cannot supply persisted
 turn identity and therefore refuses command execution; `Chat.reply` is the
 safe command-chat entry point.
+
+Repeatable interaction stages also share one command ID per persisted turn.
+Their application receipts use a shared namespace across commands and include
+both the command name and input. This prevents a retry that replans a different
+command from bypassing the original receipt.
 
 Valid-flow tests may use the typed `Scenario` model layer from the testing entry
 point. `Scenario.answers(stage, ...)` encodes Type-side values through the
@@ -592,6 +599,53 @@ presentation callback or constructor rejects data
 persisted state fails decoding/encoding
   -> InvalidChatSession with safe boundary reason
 ```
+
+### Compiled capability dispatch
+
+Tool sets, singleton command stages, and interaction stages compose one private
+compiled registry. It owns the advertised definitions, strict envelope and
+argument parsing, membership checks, and correlated execution. Query execution
+never resolves command identity; command execution requires an explicit context
+source. Planning guards, model retries, completion, and projections stay with
+their existing semantic owners.
+
+Repair planning binds the generated repair tool to the final query registry
+once. The process receives a typed Repair-or-Query decision, preserving decoded
+replacement values and deferred application execution without string dispatch.
+
+### Terminal session expiry
+
+D1 stores one active snapshot or expired tombstone per full
+`(namespace, sessionId, chat, version)` tuple. Expiry atomically clears state,
+messages, revision, and update time while retaining that tuple and expiry time.
+The table CHECK constraint and strict row union enforce both legal shapes.
+
+`load` returns `Session.Expired` for tombstones, even without a retention policy.
+Both `Chat.turn` and `Chat.explore` propagate it before executing models or tools.
+A new conversation requires a new session ID. Load-time expiry compares the
+observed revision and timestamp, then rereads and classifies the winner if its
+guarded transition loses. Bulk cleanup transitions active rows only and counts
+each expiry once. Initial insertion cannot reuse a tombstone's key; replacement
+requires an active row at the expected revision and otherwise returns Conflict.
+
+This preserves one optimistic replacement per successful turn and the existing
+command-ID tuple. Application command receipts and retry-stable initial session
+allocation remain application-owned. An already-admitted command may finish
+while expiry makes its replacement conflict. No database transaction spans model
+or application I/O. Tombstones are retained indefinitely; purging them also
+removes the enforcement of terminal identity. The bundled SQL defines the target
+schema, without an existing-data conversion or rollout plan.
+
+### Protocol clients
+
+The React-free `/client` entry owns strict request encoding, POST construction,
+HTTP status policy, response decoding, and typed cancellation for ordinary,
+debug, and exploration requests. It introduces no retry or Effect runtime.
+Debug codecs load only for debug requests. Valid failure envelopes remain
+observable on failed HTTP statuses, while success envelopes require a 2xx status.
+The assistant-ui boundary owns messages, observer delivery, metadata, and
+translation to framework rejection. Cancellation retains native identity without
+serializing its arbitrary reason into the public error fields.
 
 ### Retry / Cancellation / Idempotency Flow
 

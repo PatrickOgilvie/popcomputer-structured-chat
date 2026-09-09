@@ -1,3 +1,5 @@
+import { ToolContext } from "./tool-context.js"
+import { readInteractionStageRuntime, type InteractionStage, type InteractionStageDefinitionContract } from "./interaction-stage.js"
 import { cast, Effect, Schema } from "effect"
 import type {
   AcceptedAnswer,
@@ -15,7 +17,6 @@ import {
   type UntrustedMessage,
 } from "./model.js"
 import {
-  readCommandStageRuntime,
   readToolStageRuntime,
   type CommandStage,
   type CommandStageDefinitionContract,
@@ -32,7 +33,7 @@ import type {
 import { defineToolSet } from "./tool-set.js"
 import { readToolExecutionModelContext } from "./tool.js"
 import { deriveCommandId } from "./command.js"
-import { defineTool, type QueryToolDefinitionContract } from "./tool.js"
+import { defineTool } from "./tool.js"
 import { JsonValueSchema, type JsonValue } from "./json-value.js"
 import { recordDebugEvent } from "./debug-trace.js"
 import {
@@ -44,9 +45,10 @@ import {
   projectUserAnswers,
   type StructuredChatUserAnswerSnapshot,
 } from "./user-answer-projection.js"
-import type { StandardRepair } from "./repair.js"
+import type { StandardRepair, RepairCorrection, RepairTool } from "./repair.js"
 import {
   ChatSessionConflict,
+  type ChatSessionExpired,
   ChatSessionIdSchema,
   ChatSessionNamespaceSchema,
   ChatSessionNotFound,
@@ -61,7 +63,6 @@ import {
 import {
   make as makeChatProcess,
   type RuntimeChatState,
-  type RuntimeRepairCorrection,
 } from "../internal/chat/process.js"
 
 export { ChatNameSchema, ChatVersionSchema } from "./chat-identity.js"
@@ -86,6 +87,7 @@ export type ChatStageDefinitionContract =
   | CollectStageDefinitionContract
   | ToolStageDefinitionContract
   | CommandStageDefinitionContract
+  | InteractionStageDefinitionContract
 
 /** Non-empty sequential stage tuple accepted by one chat definition. */
 export type ChatStageTuple = readonly [
@@ -105,7 +107,8 @@ type UnionToIntersection<Union> = (
 type CollectStateEntry<Stage> = Stage extends CollectStage<
   infer Name,
   infer Fields,
-  infer _Guards
+  infer _Guards,
+  infer _Profile
 >
   ? { readonly [Key in Name]: CollectStageState<Fields> }
   : never
@@ -118,7 +121,8 @@ type ChatCollectStage<Stages extends ChatStageTuple> = Extract<
 type CollectFields<Stage> = Stage extends CollectStage<
   infer _Name,
   infer Fields,
-  infer _Guards
+  infer _Guards,
+  infer _Profile
 >
   ? Fields
   : never
@@ -149,41 +153,51 @@ export interface ChatState<
 type ChatQuestion<Stage> = Stage extends CollectStage<
   infer _Name,
   infer Fields,
-  infer _Guards
+  infer _Guards,
+  infer _Profile
 >
   ? CollectStagePrompt<Fields>
   : never
 
-type ChatToolExecution<Stage> = Stage extends ToolStage<
+type ChatToolExecution<Stage> = Stage extends InteractionStage<infer _IName, infer ITools, infer _IGuards, infer _IProfile>
+  ? ToolSetExecution<ITools>
+  : Stage extends ToolStage<
   infer _Name,
   infer Tools,
-  infer _Guards
+  infer _Guards,
+  infer _Profile
 >
   ? ToolSetExecution<Tools>
   : Stage extends CommandStage<
         infer _Name,
         infer _Command,
-        infer _Guards
+        infer _Guards,
+        infer _Profile
       >
     ? Extract<Effect.Success<ReturnType<Stage["run"]>>, object>
     : never
 
-type StageEffect<Stage> = Stage extends CollectStage<
+type StageEffect<Stage> = Stage extends InteractionStage<infer _IName, infer _ITools, infer _IGuards, infer _IProfile>
+  ? ReturnType<Stage["run"]>
+  : Stage extends CollectStage<
   infer _CollectName,
   infer _Fields,
-  infer _CollectGuards
+  infer _CollectGuards,
+  infer _CollectProfile
 >
   ? ReturnType<Stage["run"]>
   : Stage extends ToolStage<
         infer _ToolName,
         infer _Tools,
-        infer _ToolGuards
+        infer _ToolGuards,
+        infer _ToolProfile
       >
     ? ReturnType<Stage["run"]>
     : Stage extends CommandStage<
           infer _CommandName,
           infer _Command,
-          infer _CommandGuards
+          infer _CommandGuards,
+          infer _CommandProfile
         >
       ? ReturnType<Stage["run"]>
     : never
@@ -195,7 +209,7 @@ export type ChatError<Stages extends ChatStageTuple> =
 
 /** Effect service union required by any stage in one chat. */
 export type ChatRequirements<Stages extends ChatStageTuple> =
-  Effect.Services<StageEffect<Stages[number]>>
+  Exclude<Effect.Services<StageEffect<Stages[number]>>, ToolContext>
 
 /** Question, ongoing tool result, or terminal result emitted by one turn. */
 export type ChatTurn<
@@ -247,6 +261,7 @@ export interface ChatReply<
 export type ChatReplyError<Stages extends ChatStageTuple> =
   | ChatError<Stages>
   | ChatSessionStoreUnavailable
+  | ChatSessionExpired
   | ChatSessionConflict
   | InvalidChatSession
   | InvalidChatUserAnswerProjection
@@ -268,6 +283,7 @@ export type ChatExploreError<
   Explorations extends ChatExplorationTuple,
 > =
   | ChatSessionStoreUnavailable
+  | ChatSessionExpired
   | ChatSessionNotFound
   | InvalidChatSession
   | (Explorations extends ToolTuple
@@ -278,7 +294,7 @@ export type ChatExploreError<
 export type ChatExploreRequirements<
   Explorations extends ChatExplorationTuple,
 > = Explorations extends ToolTuple
-  ? ToolSetRequirements<Explorations>
+  ? Exclude<ToolSetRequirements<Explorations>, ToolContext>
   : never
 
 /** Definition input for one sequential structured chat. */
@@ -341,6 +357,13 @@ export interface ChatDefinition<
     ChatError<Stages>,
     ChatRequirements<Stages>
   >
+
+  /** @internal Execute inside the owning session's command and persistence scope. */
+  readonly runScoped: (
+    state: RuntimeChatState,
+    messages: ReadonlyArray<UntrustedMessage>,
+    commandContext: () => Effect.Effect<import("./tool.js").CommandExecutionContext>,
+  ) => Effect.Effect<unknown, unknown, unknown>
 
   /** Load, run, and atomically replace one server-owned chat session. */
   readonly reply: (
@@ -414,7 +437,8 @@ export const defineChat = <
   const finalStage = definition.stages.at(-1)
   if (
     finalStage?._tag !== "ToolStage" &&
-    finalStage?._tag !== "CommandStage"
+    finalStage?._tag !== "CommandStage" &&
+    finalStage?._tag !== "InteractionStage"
   ) {
     throw new Error(
       "Structured chats require one final tool or command stage",
@@ -482,7 +506,7 @@ export const defineChat = <
   ) {
     throw new Error(`Tool name is reserved for repair: ${repairToolName}`)
   }
-  const repairTool: QueryToolDefinitionContract | undefined = (() => {
+  const repairTool: RepairTool | undefined = (() => {
     if (repair === undefined) {
       return undefined
     }
@@ -550,7 +574,8 @@ export const defineChat = <
       }
       if (
         (finalStage._tag === "ToolStage" &&
-          readToolStageRuntime(finalStage).afterExecution !== "complete")
+          readToolStageRuntime(finalStage).afterExecution !== "complete") ||
+        (finalStage._tag === "InteractionStage" && readInteractionStageRuntime(finalStage).completeOn.length === 0)
       ) {
         return false
       }
@@ -706,10 +731,10 @@ export const defineChat = <
   const applyConversationRepairs = (
     state: RuntimeChatState,
     messages: ReadonlyArray<UntrustedMessage>,
-    corrections: ReadonlyArray<RuntimeRepairCorrection>,
+    corrections: ReadonlyArray<RepairCorrection>,
   ): Effect.Effect<RuntimeChatState, unknown, unknown> =>
     Effect.gen(function* () {
-      const grouped = new Map<string, Array<RuntimeRepairCorrection>>()
+      const grouped = new Map<string, Array<RepairCorrection>>()
       for (const correction of corrections) {
         const current = grouped.get(correction.stage) ?? []
         current.push(correction)
@@ -758,8 +783,9 @@ export const defineChat = <
     chat: definition.name,
     stages: definition.stages,
     finalStageIndex,
-    repairTool,
-    repairToolName,
+    planRepair: repairTool !== undefined && finalStage?._tag === "ToolStage"
+      ? readToolStageRuntime(finalStage).withRepair(repairTool)
+      : undefined,
     invalidTransition: (reason) =>
       invalidTransition(definition.name, reason),
     isValidState: isValidRuntimeState,
@@ -884,22 +910,17 @@ export const defineChat = <
         Effect.mapError(() => invalidSession("invalid_input")),
       )
       const messages = [...previousMessages, userMessage]
-      const commandContext =
-        finalStage?._tag === "CommandStage"
-          ? {
-              commandId: yield* deriveCommandId({
-                namespace: scope.namespace,
-                chat: definition.name,
-                version: definition.version,
-                sessionId: scope.sessionId,
-                expectedRevision: snapshot?.revision ?? null,
-                command: readCommandStageRuntime(finalStage).commandName,
-              }),
-            }
-          : undefined
+      const commandContext = () =>
+        deriveCommandId({
+          namespace: scope.namespace,
+          chat: definition.name,
+          version: definition.version,
+          sessionId: scope.sessionId,
+          expectedRevision: snapshot?.revision ?? null,
+        }).pipe(Effect.map((commandId) => ({ commandId })))
       // SAFETY: stateSchema has parsed the definition-owned state and the
       // explicit check above grounded it against these exact messages.
-      // Reply supplies command identity only to the active terminal command.
+      // Reply supplies one turn identity for any selected command.
       const trustedTurn = process.runTrusted(
         runtimeState,
         messages,
@@ -1035,8 +1056,8 @@ export const defineChat = <
         )
       }
       const snapshot = yield* parseSessionSnapshot(loaded)
-      yield* parseStoredSession(snapshot)
-      const executed = yield* explorationToolSet.runCall(parsedInput.call)
+      const stored = yield* parseStoredSession(snapshot)
+      const executed = yield* explorationToolSet.runCall(parsedInput.call).pipe(Effect.provideService(ToolContext, { stages: stored.runtimeState.stages }))
 
       // SAFETY: explorationToolSet was compiled from Explorations after the
       // non-empty branch, and runCall preserves each member's correlation.
@@ -1105,6 +1126,9 @@ export const defineChat = <
         onExcessProperty: "error",
       }),
     run,
+    runScoped: (state, messages, commandContext) =>
+      process.runChecked(state, messages, commandContext,
+        repair !== undefined && state.stage === finalStageIndex),
     reply,
     explore,
   }

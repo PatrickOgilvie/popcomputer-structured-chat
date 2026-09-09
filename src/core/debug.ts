@@ -1,3 +1,4 @@
+import { readInteractionStageRuntime } from "./interaction-stage.js"
 import { cast, Effect, Schema } from "effect"
 import { AnswerModeSchema } from "./answer.js"
 import {
@@ -100,6 +101,13 @@ const DebugStageBaseFields = {
 
 const DebugStageSchema = Schema.Union([
   Schema.Struct({
+    _tag: Schema.Literal("InteractionStage"),
+    ...DebugStageBaseFields,
+    tools: Schema.Array(ToolNameSchema),
+    commands: Schema.Array(ToolNameSchema),
+    completeOn: Schema.Array(ToolNameSchema),
+  }),
+  Schema.Struct({
     _tag: Schema.Literal("CollectStage"),
     ...DebugStageBaseFields,
     satisfiedFields: Schema.Natural,
@@ -130,7 +138,7 @@ export const StructuredChatDebugSnapshotSchema = Schema.Struct({
   currentStage: Schema.Struct({
     index: DebugIndexSchema,
     name: StageNameSchema,
-    kind: Schema.Literals(["collect", "tool", "command"]),
+    kind: Schema.Literals(["collect", "tool", "command", "interaction"]),
   }),
   stages: Schema.Array(DebugStageSchema),
 })
@@ -220,6 +228,8 @@ const stageKind = (
       return "collect"
     case "ToolStage":
       return "tool"
+    case "InteractionStage":
+      return "interaction"
     case "CommandStage":
       return "command"
   }
@@ -247,7 +257,7 @@ export const inspectChatState = <
   const Version extends number,
   const Stages extends ChatStageTuple,
 >(
-  chat: ChatDefinition<Name, Version, Stages>,
+  chat: ChatDefinition<Name, Version, Stages, import("./chat.js").ChatExplorationTuple>,
   state: ChatState<Name, Version, Stages>,
   options: InspectChatStateOptions = {},
 ): Effect.Effect<
@@ -291,6 +301,11 @@ export const inspectChatState = <
     for (const [index, stage] of chat.stages.entries()) {
       const repairPending =
         runtimeState.repair?.pendingStages.includes(index) ?? false
+      if (stage._tag === "InteractionStage") {
+        const runtime = readInteractionStageRuntime(stage)
+        stages.push({ _tag: "InteractionStage", index, name: stage.name, status: stageStatus(runtimeState, index), repairPending, tools: runtime.toolNames, commands: runtime.commandNames, completeOn: runtime.completeOn })
+        continue
+      }
       if (stage._tag === "ToolStage") {
         const runtime = readToolStageRuntime(stage)
         stages.push({

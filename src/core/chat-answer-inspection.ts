@@ -46,7 +46,7 @@ export interface TrustedChatAnswerState {
 type ChatAnswerInspectionStage =
   | CollectStageDefinitionContract
   | {
-      readonly _tag: "ToolStage" | "CommandStage"
+      readonly _tag: "ToolStage" | "CommandStage" | "InteractionStage"
       readonly name: string
     }
 

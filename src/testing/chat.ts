@@ -9,6 +9,7 @@ import type {
   ChatTurn,
 } from "../core/chat.js"
 import type { UntrustedMessage } from "../core/model.js"
+import { readConversation } from "../internal/chat/composition-definition.js"
 import { read } from "../internal/chat/definition.js"
 
 /** Read the valid initial state for an opaque chat definition. */
@@ -51,3 +52,14 @@ export const run = <
   ChatError<Stages>,
   ChatRequirements<Stages>
 > => read(chat).run(input)
+
+/** Decode a complete conversation snapshot, including per-invocation evidence grounding. */
+export const parseConversationState = (
+  chat: import("../core/composition.js").AnyComposedDefinition,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- specialist persistence parser validates malformed snapshots
+  state: unknown,
+  messages: ReadonlyArray<UntrustedMessage>,
+): Effect.Effect<
+  import("../core/conversation-state.js").ConversationState,
+  import("../core/conversation-state.js").InvalidConversation
+> => readConversation(chat).parseState(state, messages)

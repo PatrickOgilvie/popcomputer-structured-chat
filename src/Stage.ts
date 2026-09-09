@@ -49,3 +49,7 @@ export type {
   ToolStage as Tools,
   ToolStageAfterExecution as AfterExecution,
 } from "./core/stage.js"
+
+/** Define one repeatable query and command interaction. */
+export const interact = Stage.interact
+export type { InteractionStage as Interaction, DefineInteractionStageInput as DefineInteractionInput, InteractionCommandContext } from "./core/interaction-stage.js"

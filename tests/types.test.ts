@@ -202,6 +202,129 @@ const commandStage = Stage.command({
   instructions: ["Perform one write."],
   command,
 })
+const extractionModel = Model.profile("extraction")
+const reasoningModel = Model.profile("reasoning")
+const actionModel = Model.profile("action")
+const profiledBrief = Stage.collect({
+  name: "profiled_brief",
+  model: extractionModel,
+  fields: typedBrief.fields,
+})
+const profiledMatching = Stage.tools({
+  name: "profiled_matching",
+  model: reasoningModel,
+  instructions: ["Use one tool."],
+  tools: [tool],
+})
+const profiledReasoningBrief = Stage.collect({
+  name: "profiled_reasoning_brief",
+  model: reasoningModel,
+  fields: typedBrief.fields,
+})
+const profiledCommandStage = Stage.command({
+  name: "profiled_command",
+  model: actionModel,
+  instructions: ["Perform one write."],
+  command,
+})
+const profiledBriefExecution = profiledBrief.run({
+  state: profiledBrief.initialState,
+  messages: [Model.Message.user("Find a match")],
+})
+const profiledMatchingExecution = profiledMatching.run([
+  Model.Message.user("Find a match"),
+])
+const profiledCommandExecution = profiledCommandStage.run(
+  [Model.Message.user("Perform the write")],
+  {
+    commandId: Schema.decodeSync(Tool.CommandIdSchema)(
+      `cmd_${"b".repeat(64)}`,
+    ),
+  },
+)
+const mixedModelChat = Chat.define({
+  name: "mixed_model_chat",
+  version: 1,
+  stages: [
+    profiledBrief,
+    profiledReasoningBrief,
+    profiledCommandStage,
+  ],
+})
+const assertModelProfileInputs = (): void => {
+  const rejectDynamicProfileNames = (
+    dynamic: string,
+    union: "economy" | "reasoning",
+    pattern: `tenant_${string}`,
+  ): void => {
+    // @ts-expect-error profile identity requires one concrete literal name
+    Model.profile(dynamic)
+    // @ts-expect-error a runtime union cannot identify one Effect service key
+    Model.profile(union)
+    // @ts-expect-error an infinite template type cannot identify one service
+    Model.profile(pattern)
+  }
+
+  const selectedProfile =
+    Math.random() > 0.5 ? extractionModel : reasoningModel
+  const directStep = {
+    instructions: [Model.Instruction.make("Use one tool.")],
+    messages: [Model.Message.user("Run the tool")],
+    tools: Tool.set(tool),
+  }
+
+  // @ts-expect-error explicitly named profile inputs require their model key
+  const missingModel: Stage.DefineToolsInput<
+    "missing_profile_model",
+    readonly [typeof tool],
+    readonly [],
+    typeof reasoningModel
+  > = {
+    name: "missing_profile_model",
+    instructions: ["Use one tool."],
+    tools: [tool],
+  }
+
+  // @ts-expect-error model selection requires an authentic Model.profile key
+  Stage.tools({
+    name: "raw_profile_model",
+    instructions: ["Use one tool."],
+    tools: [tool],
+    model: "reasoning",
+  })
+
+  // @ts-expect-error one stage cannot select a union of service identities
+  Stage.tools({
+    name: "union_profile_model",
+    instructions: ["Use one tool."],
+    tools: [tool],
+    model: selectedProfile,
+  })
+
+  // @ts-expect-error a direct step also requires one exact profile identity
+  Model.runToolStep({
+    ...directStep,
+    model: selectedProfile,
+  })
+
+  // @ts-expect-error optional unions are not one exact model selection
+  const optionalProfileInput: Model.RunToolStepInput<
+    readonly [typeof tool],
+    readonly [],
+    typeof extractionModel | undefined
+  > = {
+    ...directStep,
+    model: extractionModel,
+  }
+
+  // @ts-expect-error Context.Service identity is invariant in its literal name
+  const widenedProfile: Model.Profile<string> = extractionModel
+
+  void missingModel
+  void optionalProfileInput
+  void rejectDynamicProfileNames
+  void widenedProfile
+}
 const assertCommandBoundaries = (): void => {
   // @ts-expect-error commands cannot enter repeatable query stages
   Stage.tools({ name: "unsafe_command", instructions: ["Run."], tools: [command] })
@@ -347,6 +470,38 @@ const cloudflareProvider = OpenAI.Provider.cloudflareWorkersAI({
   complete: () => Promise.resolve({}),
 })
 
+const defaultModelServiceLayer = OpenAI.layer({
+  provider: cloudflareProvider,
+  timeoutMilliseconds: 1_000,
+})
+const reasoningModelLayer = OpenAI.layer(reasoningModel, {
+  provider: cloudflareProvider,
+  timeoutMilliseconds: 1_000,
+})
+const defaultProvidedProfiledExecution = profiledMatchingExecution.pipe(
+  Effect.provide(defaultModelServiceLayer),
+  Effect.provideService(Dependency, { value: "provided" }),
+)
+const namedProvidedProfiledExecution = profiledMatchingExecution.pipe(
+  Effect.provide(reasoningModelLayer),
+  Effect.provideService(Dependency, { value: "provided" }),
+)
+const assertModelProfileProvision = (): void => {
+  const selectedProfile =
+    Math.random() > 0.5 ? reasoningModel : actionModel
+
+  void Effect.runPromise(namedProvidedProfiledExecution)
+
+  // @ts-expect-error Model.Service does not satisfy the named reasoning profile
+  void Effect.runPromise(defaultProvidedProfiledExecution)
+
+  // @ts-expect-error a named layer must bind one exact service identity
+  OpenAI.layer(selectedProfile, {
+    provider: cloudflareProvider,
+    timeoutMilliseconds: 1_000,
+  })
+}
+
 const assertProviderAuthenticity = (): void => {
   const forgedProvider = {
     id: cloudflareProvider.id,
@@ -474,6 +629,51 @@ type _CommandRequirementsAreExact = Expect<
   >
 >
 
+type _ProfiledCollectRequirementsAreExact = Expect<
+  Equal<
+    Effect.Services<typeof profiledBriefExecution>,
+    typeof extractionModel
+  >
+>
+
+type _ProfiledToolRequirementsAreExact = Expect<
+  Equal<
+    Effect.Services<typeof profiledMatchingExecution>,
+    typeof reasoningModel | Dependency
+  >
+>
+
+type _ProfiledCommandRequirementsAreExact = Expect<
+  Equal<
+    Effect.Services<typeof profiledCommandExecution>,
+    typeof actionModel | Dependency
+  >
+>
+
+type _MixedModelChatRequirementsAreExact = Expect<
+  Equal<
+    Chat.Requirements<typeof mixedModelChat>,
+    | typeof extractionModel
+    | typeof reasoningModel
+    | typeof actionModel
+    | Dependency
+  >
+>
+
+type _DefaultModelLayerLeavesNamedRequirement = Expect<
+  Equal<
+    Effect.Services<typeof defaultProvidedProfiledExecution>,
+    typeof reasoningModel
+  >
+>
+
+type _NamedModelLayerSatisfiesNamedRequirement = Expect<
+  Equal<
+    Effect.Services<typeof namedProvidedProfiledExecution>,
+    never
+  >
+>
+
 type ExpectedToolSetError =
   | DomainError
   | Tool.InvalidCall
@@ -488,6 +688,7 @@ type ExpectedExplorationError =
   | Tool.InvalidCall
   | Tool.InvalidProjection
   | Session.StoreUnavailable
+  | Session.Expired
   | Session.NotFound
   | Session.Invalid
 
@@ -546,7 +747,12 @@ void _guardedEffect
 void _stageEffect
 void validatedExecution
 void commandExecution
+void profiledBriefExecution
+void profiledMatchingExecution
+void profiledCommandExecution
 void assertCommandBoundaries
+void assertModelProfileInputs
+void assertModelProfileProvision
 void assertExplorationBoundaries
 void assertScenarioTypes
 void assertEscapeValueTypes

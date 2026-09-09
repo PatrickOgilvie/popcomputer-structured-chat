@@ -331,7 +331,9 @@ const program = Effect.gen(function* () {
 
 `Session.Store` is a two-operation Effect service: load a complete snapshot, then
 atomically replace it at an expected revision. A stale or concurrent turn
-fails with `Session.Conflict`. The package includes an in-memory adapter at
+fails with `Session.Conflict`. An expired identity fails with `Session.Expired`
+before any model or tool work; start a new conversation with a new session ID.
+The package includes an in-memory adapter at
 `@popcomputer/structured-chat/testing`; production applications should provide
 a durable database adapter, such as the shipped Cloudflare D1 adapter below.
 
@@ -384,21 +386,64 @@ Rows are keyed by the full `(namespace, session_id, chat, version)` tuple and
 replaced optimistically at an integer revision: a stale `expectedRevision`
 fails with `Session.Conflict` and never overwrites newer state. With
 retention configured, a load of an expired row in a matching namespace
-performs a guarded compare-and-delete before returning nothing, and aged rows
-can be removed in bulk. Retention accepts at most 49 non-empty prefixes using
+atomically erases its snapshot and retains a terminal identity tombstone.
+Loading a tombstone fails with `Session.Expired`, including when retention is
+later disabled. Initial insertion and stale replacement cannot revive that
+scope. The expiry guard checks both revision and timestamp, so a concurrent
+refresh in the same millisecond survives. Bulk cleanup also keeps tombstones
+and returns the number of newly expired rows; repeating it counts each row
+only once. Tombstones retain identity metadata indefinitely. Deleting them
+would remove the protection against reusing historical command identities.
+An application command already admitted from an active snapshot may finish
+while cleanup causes its final replacement to fail with `Session.Conflict`. Retention accepts at most 49 non-empty prefixes using
 the session-namespace alphabet; an empty prefix is rejected rather than
 implicitly selecting every namespace:
 
 ```ts
 import { cleanupExpiredD1ChatSessions } from "@popcomputer/structured-chat/d1"
 
-const removed = yield* cleanupExpiredD1ChatSessions(env.SESSIONS_DB, {
+const expired = yield* cleanupExpiredD1ChatSessions(env.SESSIONS_DB, {
   expiringNamespacePrefixes: ["tenant:"],
   retentionMillis: 30 * 24 * 60 * 60 * 1000,
 })
 ```
 
 ### Non-browser clients and bounded requests
+
+`@popcomputer/structured-chat/client` provides React-free clients for ordinary
+turns, explicit debug turns, and explorations. Each client accepts an endpoint
+and optional `fetch` dependency, validates requests before sending, strictly
+parses responses, and returns expected failures through `Result`:
+
+```ts
+import { makeChatTurnClient } from "@popcomputer/structured-chat/client"
+import { Result } from "effect"
+
+const client = makeChatTurnClient({ endpoint: "https://example.com/api/chat" })
+const result = await client.run({ message: "Find mentoring resources" })
+if (Result.isSuccess(result)) {
+  const response = result.success
+  // Retain response.session and pass it with the next message.
+} else {
+  // reason: invalid_request, request_failed, invalid_response, or cancelled
+  const reason = result.failure.reason
+}
+```
+
+Pass `{ signal }` as the second `run` argument for cancellation. The clients
+make one POST with same-origin credentials and do not retry. Transport errors
+contain only a safe operation and reason; cancellation keeps its original
+reason as a non-enumerable `Error.cause` for framework translation.
+
+`makeChatDebugTurnClient` loads the debug codec on demand. A valid debug failure
+envelope is returned as a successful transport result, even on a non-2xx HTTP
+status, so callers can display its trace. Its `outcome` still indicates that
+the turn failed. A debug success requires a 2xx response. Ordinary clients
+reject debug envelopes.
+
+`makeChatExplorationClient` accepts `{ session: { id }, call }` and never sends
+a turn revision. The existing assistant-ui factories use these clients while
+retaining message extraction, session metadata, and observer behavior.
 
 The turn contract is plain JSON over one endpoint, so non-browser clients can
 drive it directly. Parse requests through the parameterized factory when the
@@ -426,6 +471,129 @@ const results = Chat.findTurnParts(response, ResultCards).map(
   (data) => data.results,
 )
 ```
+
+## Compose chats and send messages with reply hints
+
+A chat can declare its own input and output and still run independently. Use
+`Chat.branch` to call that same definition from another chat. The branch owns
+an Effectful binding from model arguments to the child's trusted input; use
+application services there to resolve identifiers and check ownership.
+
+```ts
+const Dispute = Chat.branch({
+  name: "dispute_notice",
+  description: "The tenant wants to dispute a notice.",
+  chat: DisputeChat,
+  arguments: Schema.Struct({ noticeId: Schema.String }),
+  input: ({ noticeId }) => Effect.gen(function* () {
+    const { tenantId } = yield* Chat.input(SupportInput)
+    const notices = yield* Notices
+    const input = { tenantId, noticeId }
+    yield* notices.authorize(input)
+    return input
+  }),
+})
+
+const TerminationNotice = Message.define({
+  name: "termination_notice",
+  input: Schema.Struct({ noticeId: Schema.String }),
+  text: ({ noticeId }) =>
+    `Your notice reference is ${noticeId}. Would you like to dispute it?`,
+  replies: (input) => [
+    Message.hint(Dispute, input, {
+      when: "The tenant wants to dispute this notice",
+    }),
+    Message.hint(Acknowledge, input, {
+      when: "The tenant acknowledges receipt without requesting a dispute",
+    }),
+  ],
+})
+```
+
+Register `branches: [Dispute]` and `messages: [TerminationNotice]` on the
+support chat. A hint may target a registered branch or a tool in the active
+stage, including a command in `Stage.interact`. Its arguments are fully bound
+by the application. The model selects a conditional handler without rewriting
+those arguments. Declining the dispute leaves the tenant in support; merely
+issuing the notice does not enter the dispute or record receipt.
+
+Initialize a composed session explicitly, then post an application message:
+
+```ts
+const started = yield* Chat.start(SupportChat, {
+  sessionId,
+  input: { tenantId },
+})
+const posted = yield* Chat.post(SupportChat, {
+  sessionId,
+  expectedRevision: started.revision,
+  messageId: `notice:${noticeId}`,
+  message: TerminationNotice,
+  input: { noticeId },
+})
+// Publish posted.message through the application's delivery channel.
+const response = yield* Chat.turn(SupportChat, {
+  sessionId,
+  expectedRevision: posted.session.revision,
+  message: userReply,
+}).pipe(Chat.present(SupportChat))
+```
+
+`Chat.start` takes decoded input, including transformed values such as Dates.
+Retrying it with the same input returns the existing session. `Chat.post`
+records text and hints in one revision. Retrying the same `messageId` and
+payload returns the recorded text and current revision without rendering or
+rearming its hints. Reusing the identity for a different payload fails.
+Messages registered on a child can be posted while that child is active.
+
+Inside a tool or branch binding, `yield* Message.emit(Definition, payload)`
+joins the enclosing turn's atomic write. Emitted text is included by
+`Chat.present`. Hints expire after the next successfully committed reply in
+their owning invocation, whether selected or declined. Failed turns leave
+both the message journal and hints unchanged. Message definitions should use
+pure wording and hint projections; routing rebuilds registered hints from the
+stored payload without rendering the text again.
+
+A child receives its declared input, its own stages and accepted answers, and
+the triggering message (plus the referenced outbound message for a hinted
+call). It does not inherit its caller's accumulated transcript or accepted
+answers. Completion validates the child's declared output and reactivates its
+caller. `Chat.returned(Dispute)` reads the latest `Completed` or `Cancelled`
+outcome from a caller tool; it fails with `ChatContextUnavailable` before a
+return exists. The caller executes on a later user turn, so one turn never
+runs a child command and a caller command together.
+
+The same child can itself declare branches or start as a root with
+`Chat.start(DisputeChat, { sessionId, input })`. A topic change can suspend an
+unfinished child, let the parent handle that message, and resume the saved
+child later. Explicit cancellation returns to the parent without a completed
+output. The declared call tree must be finite. Defaults bound it to eight
+simultaneously nested invocations and sixteen routing transitions per turn;
+set `limits.maximumDepth` and `limits.maximumTransitionsPerTurn` on the root
+to adjust those bounds. Sessions retain at most 100 invocations and 200
+messages.
+
+Composition routing uses `Model.Service` and the active stage's guards;
+ordinary stage execution retains its configured model profile. Hints guide
+model selection, while guards and tool implementations enforce business
+policy. Scripted tests verify dispatch and persistence; evaluate natural
+language routing with the provider used by the application.
+
+Composed replies retain typed tool results and transitive Effect services and
+errors. They include an `invocation` reference and an optional root `outcome`.
+Browser presentation sends invocation identity alongside the current answer
+snapshot, omitting branch arguments and server input/output. `Debug.turn`
+captures routing and stage model calls; `Debug.present` inspects the invocation
+that produced the response. Root explorations keep reading root input and
+answers even while a child is active. The testing entry's
+`Chat.parseConversationState(chat, state, messages)` checks a full persisted
+snapshot, including evidence grounding within each invocation; its existing
+`initialState`, `run`, and `parseState` helpers exercise a definition's local
+sequential stages.
+
+See [the complete tenant-support example](examples/composable-support.ts) for
+an independently runnable dispute chat, authenticated branch binding, receipt
+command, and outbound notice.
 
 ## Explore without interrupting the conversation
 
@@ -587,12 +755,13 @@ The unscoped transition process is available only from the testing entrypoint
 because it has no session/revision identity.
 
 The command ID is an opaque SHA-256 identity derived from `(namespace, chat,
-version, sessionId, expectedRevision, commandName)`. A retry after a failed
-session-store write therefore reaches the application with the same ID. The
-application's durable idempotent endpoint must:
+version, sessionId, expectedRevision)`. A retry after a failed session-store
+write reaches the application with the same ID even if the model selects a
+different command. The application's durable idempotent endpoint must:
 
-- return the original outcome when the same ID and input are retried;
-- reject reuse of one ID with different input; and
+- share a receipt namespace across all commands in the chat;
+- return the original outcome when the same ID, command and input are retried;
+- reject reuse of one ID with a different command or input; and
 - commit its idempotency record atomically with the side effect.
 
 This v1 design preserves the session store's single optimistic replacement per
@@ -663,6 +832,47 @@ const ModelLive = OpenAICompatible.layer({
   },
 })
 ```
+
+The one-argument layer remains the application-wide default. Stages that need
+a different capability or cost profile can select an additional named model:
+
+```ts
+import { Layer } from "effect"
+import { Model, Stage } from "@popcomputer/structured-chat"
+
+const Deliberate = Model.profile("deliberate")
+
+const Recommendation = Stage.tools({
+  name: "recommendation",
+  model: Deliberate,
+  instructions: ["Produce the final recommendation."],
+  tools: [Recommend],
+})
+
+const ModelsLive = Layer.mergeAll(
+  ModelLive,
+  OpenAICompatible.layer(Deliberate, {
+    provider: OpenAICompatible.Provider.openAI({
+      model: "gpt-5.6-sol",
+      complete: ({ model, input }, signal) =>
+        openAI.chat.completions.create(
+          { ...input, model },
+          { signal },
+        ),
+    }),
+    timeoutMilliseconds: 30_000,
+  }),
+)
+```
+
+Omitting `model` continues to require `Model.Service`. A named profile is a
+distinct Effect requirement backed by a complete model service configuration,
+including provider, model, request policy, timeout, retries, and schema
+dialect. An explicitly selected profile never falls back to the default. The
+selection is evaluated for each stage model step, so one user turn may finish
+an economical collect stage and immediately enter a deliberate final stage.
+Profiles remain trusted application definitions and are not stored in chat
+state or accepted from browser turn input.
 
 The built-in Cloudflare classifier walks the provider's cause chains (bounded
 depth, cycle-safe) and reports `response_blocked` for security-blocked
@@ -921,22 +1131,33 @@ return yield* Chat.presentReply(reply)
 Connect that endpoint to the inspector store:
 
 ```tsx
-import { makeAssistantChatModelAdapter } from "@popcomputer/structured-chat/assistant-ui"
-import {
-  createStructuredChatDebugStore,
-  StructuredChatDebugPanel,
-} from "@popcomputer/structured-chat/assistant-ui/debug"
+import { StructuredChatAssistantProvider } from "@popcomputer/structured-chat/assistant-ui/react"
 
-const debugStore = createStructuredChatDebugStore({ maximumTurns: 100 })
-const model = makeAssistantChatModelAdapter({
-  endpoint: "/api/resource-finder/debug/turn",
-  onDebugTurn: debugStore.receiveTurn,
-})
-
-export function ResourceFinderDebugPanel() {
-  return <StructuredChatDebugPanel store={debugStore} />
+export function ResourceFinderRuntime({ children, chatKey }) {
+  return (
+    <StructuredChatAssistantProvider
+      chatKey={chatKey}
+      endpoint="/api/resource-finder/turn"
+      debugEndpoint="/api/resource-finder/debug/turn"
+      debug={import.meta.env.DEV}
+    >
+      {children}
+    </StructuredChatAssistantProvider>
+  )
 }
 ```
+
+`chatKey` is the stable, opaque identity of one browser chat. Change it before
+switching chats, accounts, or authentication contexts; changing it or the base
+`endpoint` starts a fresh local runtime and immediately clears retained debug
+data. `debug` is the only ongoing display and transport switch, so toggling it
+does not discard the current conversation. The provider owns the local
+assistant runtime, an isolated debug store, response wiring, sensitive-data
+cleanup, and the lazily loaded inspector window. `debugEndpoint` defaults to
+`endpoint` for applications that select the response contract on one authorized
+route. Use `debugWindow` to set `maximumTurns`, panel position, theme, initial
+tab, or initial open state. The lower-level adapter, store, and panel exports
+remain available when an application owns a custom assistant-ui runtime.
 
 `Debug.turn` installs an isolated Effect recorder for that turn. The built-in
 OpenAI-compatible adapter captures the exact `{ model, input }` value passed to
@@ -1165,3 +1386,30 @@ the tool or coordinate provider, application, and eval changes together.
 These constraints keep the default path legible while leaving provider,
 persistence, guards, tools, views, and Effect services independently
 composable.
+
+
+### Authoring and other repeatable command conversations
+
+Use `Stage.interact({ name, instructions, tools })` when one conversation needs
+both read-only tools and side-effecting commands over many turns. It accepts a
+closed tuple of `Tool.define` and `Tool.command` definitions. Queries never
+receive a command ID; commands receive a deterministic identity scoped to the
+chat, version, namespace, session ID and revision. Persist application receipts
+in a shared namespace keyed by that ID, recording the selected command name and
+arguments. Reject a retry that selects a different command or changes arguments.
+The application remains responsible for transactional writes and idempotency.
+
+Interactions remain active unless a tool listed in `completeOn` executes.
+Unknown tools fail before execution. `Stage.tools` remains query-only and
+`Stage.command` remains terminal. Interaction chats execute through persisted
+`Chat.turn`; unscoped test runs cannot execute interaction commands.
+
+Tool execution can read a collected fact with
+`Tool.acceptedAnswer({ stage: "requirements", field: "budget", schema: Schema.Number })`.
+The chat supplies `Tool.Context` to stage guards, validators and tools using the
+most recently accepted server state, including collection or repair completed
+in the same turn and explicit explorations. The helper checks the schema's
+decoded value contract, so the original answer schema can be reused even when
+it transforms a wire value, such as `Schema.DateFromString`.
+Missing or incompatible values fail with `Tool.AcceptedAnswerUnavailable`.
+This context does not disclose answers to the model or browser automatically.
