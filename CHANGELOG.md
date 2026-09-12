@@ -8,6 +8,67 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-12
+
+Durable Live client delegation connects voice conversations to the existing
+structured-chat workflow through ordinary, composable Effect actions.
+
+### Breaking changes
+
+- Persisted conversation messages now carry explicit `Submitted`, `Authored`,
+  or `Observed` provenance. Older untagged snapshots are rejected; there is no
+  automatic stored-data migration. Custom session adapters and low-level
+  callers must use source-bearing messages, available through
+  `Session.Message.submitted`, `Session.Message.authored`, and
+  `Session.Message.observed`.
+- Observed user speech can ground semantic and explicit answers, but cannot
+  confirm an answer. Observed assistant speech cannot acquire the authority
+  of an application-issued question or reply hint.
+
+### Added
+
+- Added the optional, React-free `/live` entry point with `Live.run`,
+  `Live.turn`, `Live.present`, and `Live.say`. Actions retain their precise
+  application service requirements and typed failures.
+- Added `Chat.advance` and `Chat.TurnControl` for controlled submitted or
+  observed turns, exact observation-batch replay detection, and cooperative
+  command admission in sequential and composed chats.
+- Added a durable Live journal backed by `Session.Store`, exclusive workflow
+  ownership, revisable transcript candidates, explicit readiness and
+  supersession policy, and separate speech/browser presentation.
+- Added `/live/openai` with WebRTC session bootstrap through Effect
+  `HttpClient`, scoped authenticated Socket integration, strict event parsing,
+  and application-supplied token-count preflight. The OpenAI SDK is not
+  required, and importing either Live entry point opens no connection.
+- Added the [Live integration guide](https://github.com/PatrickOgilvie/popcomputer-structured-chat/blob/v0.6.0/docs/live.md)
+  and a [compiled action example](https://github.com/PatrickOgilvie/popcomputer-structured-chat/blob/v0.6.0/examples/live-lookup.ts).
+
+### Fixed
+
+- Kept receiving provider events while publication and close writes are
+  pending, and retained provider finalization and final usage independently
+  of later application failures.
+- Retained durable recovery claims after uncertain workflow writes,
+  post-commit failures, and ambiguous commentary delivery, without blindly
+  replaying application commands or resending unknown deliveries.
+- Tightened provider response validation, command planning guards, persisted
+  evidence checks, D1 retention configuration, and browser failure and
+  cancellation boundaries.
+- Preserved existing command-identity digests while using portable Web Crypto.
+
+### Maintenance and verification
+
+- Refined Effect state construction and module contracts, consolidated
+  repeated provider/model-selection test setup, and replaced encoder-call-count
+  coupling with deterministic projection-failure coverage.
+- Verified 432 Bun tests, 2 Cloudflare workerd tests, lint, TypeScript and
+  architecture checks, package entry points, and Node/React-free ESM smoke
+  tests. The revised tests also caught six deliberate regressions in isolated
+  mutation checks.
+- Live transport and workflow tests use local seams. Real microphone/playback,
+  provider event timing, and application readiness quality still require an
+  authenticated end-to-end acceptance test before production use.
+
 ## [0.5.0] - 2026-09-09
 
 ### Breaking changes
@@ -214,7 +275,8 @@ const reply = Chat.turn(chat, input)
   questions, tools, commands, session persistence, browser presentation,
   assistant-ui integration, and transcript scenarios.
 
-[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.3.0...v0.3.1
