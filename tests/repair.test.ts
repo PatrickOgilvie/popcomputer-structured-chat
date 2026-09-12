@@ -1,4 +1,12 @@
-import { Answer, Chat, Model, Question, Repair, Stage, Tool } from "../src/index.js"
+import {
+  Answer,
+  Chat,
+  Model,
+  Question,
+  Repair,
+  Stage,
+  Tool,
+} from "../src/index.js"
 import { Chat as ChatTest } from "../src/testing.js"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref, Result, Schema } from "effect"
@@ -42,10 +50,9 @@ const RepairableChat = Chat.define({
   repair: Repair.standard(),
 })
 
-class BudgetTooLow extends Schema.TaggedError<BudgetTooLow>()(
-  "BudgetTooLow",
-  { minimum: Schema.Number },
-) {}
+class BudgetTooLow extends Schema.TaggedError<BudgetTooLow>()("BudgetTooLow", {
+  minimum: Schema.Number,
+}) {}
 
 const initialAnswers = {
   name: "submit_answers",
@@ -91,10 +98,13 @@ describe("Repair.standard", () => {
       version: 1,
       stages: [Brief, Matching],
     })
+
     const requests = await Effect.runPromise(
       Ref.make<ReadonlyArray<Model.ToolRequest>>([]),
     )
+
     const calls = await Effect.runPromise(Ref.make(0))
+
     const model = Layer.succeed(Model.Service, {
       requestTool: (request) =>
         Ref.update(requests, (current) => [...current, request]).pipe(
@@ -111,6 +121,7 @@ describe("Repair.standard", () => {
           ),
         ),
     })
+
     const live = Layer.merge(model, inMemoryChatSessionStore)
 
     await Effect.runPromise(
@@ -119,11 +130,13 @@ describe("Repair.standard", () => {
           sessionId: "plain-chat",
           message: "We need a public service website in Leeds.",
         })
+
         const initial = yield* Chat.turn(PlainChat, {
           sessionId: "plain-chat",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
+
         yield* Chat.turn(PlainChat, {
           sessionId: "plain-chat",
           expectedRevision: initial.revision,
@@ -146,7 +159,9 @@ describe("Repair.standard", () => {
       stages: [Brief, Matching],
       repair: Repair.standard({ maximumCorrections: 1 }),
     })
+
     const calls = await Effect.runPromise(Ref.make(0))
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
@@ -187,6 +202,7 @@ describe("Repair.standard", () => {
           }),
         ),
     })
+
     const live = Layer.merge(model, inMemoryChatSessionStore)
 
     const result = await Effect.runPromise(
@@ -195,32 +211,36 @@ describe("Repair.standard", () => {
           sessionId: "bounded-repair",
           message: "We need a public service website in Leeds.",
         })
+
         const initial = yield* Chat.turn(BoundedRepairChat, {
           sessionId: "bounded-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
+
         return yield* Effect.result(
           Chat.turn(BoundedRepairChat, {
             sessionId: "bounded-repair",
             expectedRevision: initial.revision,
-            message:
-              "Actually, make it a mobile app based in Manchester.",
+            message: "Actually, make it a mobile app based in Manchester.",
           }),
         )
       }).pipe(Effect.provide(live)),
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Tool.InvalidCall)
-      if (result.failure instanceof Tool.InvalidCall) {
+
+      if (Schema.is(Tool.InvalidCall)(result.failure)) {
         expect(result.failure).toMatchObject({
           tool: "apply_conversation_repairs",
           reason: "invalid_arguments",
         })
       }
     }
+
     expect(await Effect.runPromise(Ref.get(calls))).toBe(5)
   })
 
@@ -228,13 +248,13 @@ describe("Repair.standard", () => {
     const requests = await Effect.runPromise(
       Ref.make<ReadonlyArray<Model.ToolRequest>>([]),
     )
+
     const calls = await Effect.runPromise(Ref.make(0))
+
     const model = Layer.succeed(Model.Service, {
       requestTool: (request) =>
         Ref.update(requests, (current) => [...current, request]).pipe(
-          Effect.andThen(
-            Ref.updateAndGet(calls, (count) => count + 1),
-          ),
+          Effect.andThen(Ref.updateAndGet(calls, (count) => count + 1)),
           Effect.map((count) => {
             switch (count) {
               case 1:
@@ -277,6 +297,7 @@ describe("Repair.standard", () => {
           }),
         ),
     })
+
     const live = Layer.merge(model, inMemoryChatSessionStore)
 
     const replies = await Effect.runPromise(
@@ -285,21 +306,25 @@ describe("Repair.standard", () => {
           sessionId: "replace-repair",
           message: "We need a public service website in Leeds.",
         })
+
         const initial = yield* Chat.turn(RepairableChat, {
           sessionId: "replace-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
+
         const corrected = yield* Chat.turn(RepairableChat, {
           sessionId: "replace-repair",
           expectedRevision: initial.revision,
           message: "Actually, we are in Manchester.",
         })
+
         const followUp = yield* Chat.turn(RepairableChat, {
           sessionId: "replace-repair",
           expectedRevision: corrected.revision,
           message: "Prefer teams with accessibility experience.",
         })
+
         return { corrected, followUp }
       }).pipe(Effect.provide(live)),
     )
@@ -334,9 +359,7 @@ describe("Repair.standard", () => {
         ],
       },
     ])
-    expect(replies.followUp.userAnswers).toEqual(
-      replies.corrected.userAnswers,
-    )
+    expect(replies.followUp.userAnswers).toEqual(replies.corrected.userAnswers)
     expect(await Effect.runPromise(Ref.get(calls))).toBe(6)
     const observed = await Effect.runPromise(Ref.get(requests))
     expect(observed[3]?.tools.map(({ name }) => name)).toEqual([
@@ -352,117 +375,119 @@ describe("Repair.standard", () => {
   test("clears confirmed answers, rewinds, reissues, and reconfirms", async () => {
     const Economy = Model.profile("repair_economy")
     const Deliberate = Model.profile("repair_deliberate")
+
     const ProfiledBrief = Stage.collect({
       name: "brief",
       model: Economy,
       fields: Brief.fields,
     })
+
     const ProfiledMatching = Stage.tools({
       name: "matching",
       model: Deliberate,
       instructions: ["Search using the accepted brief."],
       tools: [Search],
     })
+
     const ProfiledRepairableChat = Chat.define({
       name: "profiled_repairable_chat",
       version: 1,
       stages: [ProfiledBrief, ProfiledMatching],
       repair: Repair.standard(),
     })
-    const calls = await Effect.runPromise(
-      Ref.make<ReadonlyArray<string>>([]),
-    )
+
+    const calls = await Effect.runPromise(Ref.make<ReadonlyArray<string>>([]))
+
     const respond = (profile: "economy" | "deliberate") =>
-      Ref.updateAndGet(calls, (current) => [
-        ...current,
-        profile,
-      ]).pipe(
+      Ref.updateAndGet(calls, (current) => [...current, profile]).pipe(
         Effect.map((current) => {
           const count = current.length
-            switch (count) {
-              case 1:
-                return initialAnswers
-              case 2:
-                return confirmedAnswer
-              case 3:
-                return {
-                  name: "repair_search",
-                  arguments: { location: "Leeds" },
-                }
-              case 4:
-                return {
-                  name: "apply_conversation_repairs",
-                  arguments: {
-                    corrections: [
-                      {
-                        _tag: "ReconfirmAnswer",
-                        stage: "brief",
-                        field: "localOnly",
-                        evidence: {
-                          quote: "only local firms",
-                        },
+
+          switch (count) {
+            case 1:
+              return initialAnswers
+            case 2:
+              return confirmedAnswer
+            case 3:
+              return {
+                name: "repair_search",
+                arguments: { location: "Leeds" },
+              }
+            case 4:
+              return {
+                name: "apply_conversation_repairs",
+                arguments: {
+                  corrections: [
+                    {
+                      _tag: "ReconfirmAnswer",
+                      stage: "brief",
+                      field: "localOnly",
+                      evidence: {
+                        quote: "only local firms",
                       },
-                    ],
-                  },
-                }
-              case 5:
-                return {
-                  name: "submit_answers",
-                  arguments: {
-                    answers: {
-                      project: null,
-                      location: null,
-                      localOnly: null,
                     },
-                    evidence: [],
-                    nextQuestion: null,
+                  ],
+                },
+              }
+            case 5:
+              return {
+                name: "submit_answers",
+                arguments: {
+                  answers: {
+                    project: null,
+                    location: null,
+                    localOnly: null,
                   },
-                }
-              case 6:
-                return {
-                  name: "submit_answers",
-                  arguments: {
-                    answers: {
-                      project: null,
-                      location: null,
-                      localOnly: true,
+                  evidence: [],
+                  nextQuestion: null,
+                },
+              }
+            case 6:
+              return {
+                name: "submit_answers",
+                arguments: {
+                  answers: {
+                    project: null,
+                    location: null,
+                    localOnly: true,
+                  },
+                  evidence: [
+                    {
+                      field: "localOnly",
+                      quote: "Yes, local only",
                     },
-                    evidence: [
-                      {
-                        field: "localOnly",
-                        quote: "Yes, local only",
-                      },
-                    ],
-                    nextQuestion: null,
-                  },
-                }
-              case 7:
-                return {
-                  name: "repair_search",
-                  arguments: { location: "Leeds" },
-                }
-              default:
-                // SAFETY: every expected request index is handled above; the
-                // cast keeps the impossible defect branch out of the fixture.
-                return Effect.die("unexpected request") as never
-            }
+                  ],
+                  nextQuestion: null,
+                },
+              }
+            case 7:
+              return {
+                name: "repair_search",
+                arguments: { location: "Leeds" },
+              }
+            default:
+              // SAFETY: every expected request index is handled above; the
+              // cast keeps the impossible defect branch out of the fixture.
+              return Effect.die("unexpected request") as never
+          }
         }),
       )
+
     const economy = Layer.succeed(Economy, {
       requestTool: () => respond("economy"),
     })
+
     const deliberate = Layer.succeed(Deliberate, {
       requestTool: () => respond("deliberate"),
     })
+
     const fallback = Layer.succeed(Model.Service, {
       requestTool: () =>
-        Ref.update(calls, (current) => [
-          ...current,
-          "default",
-        ]).pipe(
+        Ref.update(calls, (current) => [...current, "default"]).pipe(
           Effect.andThen(Effect.die("unexpected default model")),
         ),
     })
+
     const live = Layer.mergeAll(
       economy,
       deliberate,
@@ -476,21 +501,25 @@ describe("Repair.standard", () => {
           sessionId: "confirmed-repair",
           message: "We need a public service website in Leeds.",
         })
+
         const initial = yield* Chat.turn(ProfiledRepairableChat, {
           sessionId: "confirmed-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
+
         const correction = yield* Chat.turn(ProfiledRepairableChat, {
           sessionId: "confirmed-repair",
           expectedRevision: initial.revision,
           message: "Actually, only local firms.",
         })
+
         const reconfirmed = yield* Chat.turn(ProfiledRepairableChat, {
           sessionId: "confirmed-repair",
           expectedRevision: correction.revision,
           message: "Yes, local only.",
         })
+
         return { correction, reconfirmed }
       }).pipe(Effect.provide(live)),
     )
@@ -549,9 +578,7 @@ describe("Repair.standard", () => {
         state: { _tag: "Accepted", value: true },
       },
     ])
-    expect(replies.reconfirmed.revision).not.toBe(
-      replies.correction.revision,
-    )
+    expect(replies.reconfirmed.revision).not.toBe(replies.correction.revision)
     expect(await Effect.runPromise(Ref.get(calls))).toEqual([
       "economy",
       "economy",
@@ -573,6 +600,7 @@ describe("Repair.standard", () => {
         }),
       },
     })
+
     const Second = Stage.collect({
       name: "second_confirmation",
       fields: {
@@ -582,13 +610,16 @@ describe("Repair.standard", () => {
         }),
       },
     })
+
     const QueuedChat = Chat.define({
       name: "queued_repair",
       version: 1,
       stages: [First, Second, Matching],
       repair: Repair.standard(),
     })
+
     const calls = await Effect.runPromise(Ref.make(0))
+
     const emptyFirstAnswers = {
       name: "submit_answers",
       arguments: {
@@ -597,6 +628,7 @@ describe("Repair.standard", () => {
         nextQuestion: null,
       },
     } as const
+
     const emptySecondAnswers = {
       name: "submit_answers",
       arguments: {
@@ -605,6 +637,7 @@ describe("Repair.standard", () => {
         nextQuestion: null,
       },
     } as const
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
@@ -710,6 +743,7 @@ describe("Repair.standard", () => {
           }),
         ),
     })
+
     const live = Layer.merge(model, inMemoryChatSessionStore)
 
     const result = await Effect.runPromise(
@@ -718,31 +752,37 @@ describe("Repair.standard", () => {
           sessionId: "queued-repair",
           message: "Start approvals.",
         })
+
         const secondQuestion = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           expectedRevision: firstQuestion.revision,
           message: "First confirmed.",
         })
+
         const initial = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           expectedRevision: secondQuestion.revision,
           message: "Second confirmed.",
         })
+
         const repair = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           expectedRevision: initial.revision,
           message: "Change both approvals.",
         })
+
         const first = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           expectedRevision: repair.revision,
           message: "First changed: no.",
         })
+
         const second = yield* Chat.turn(QueuedChat, {
           sessionId: "queued-repair",
           expectedRevision: first.revision,
           message: "Second changed: no.",
         })
+
         return { repair, first, second }
       }).pipe(Effect.provide(live)),
     )
@@ -756,6 +796,7 @@ describe("Repair.standard", () => {
 
   test("rejects repair evidence that does not come from the current user message", async () => {
     const calls = await Effect.runPromise(Ref.make(0))
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
@@ -788,6 +829,7 @@ describe("Repair.standard", () => {
           ),
         ),
     })
+
     const live = Layer.merge(model, inMemoryChatSessionStore)
 
     const result = await Effect.runPromise(
@@ -796,11 +838,13 @@ describe("Repair.standard", () => {
           sessionId: "invalid-repair",
           message: "We need a public service website in Leeds.",
         })
+
         const initial = yield* Chat.turn(RepairableChat, {
           sessionId: "invalid-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
+
         return yield* Effect.result(
           Chat.turn(RepairableChat, {
             sessionId: "invalid-repair",
@@ -812,9 +856,11 @@ describe("Repair.standard", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Stage.InvalidResponse)
-      if (result.failure instanceof Stage.InvalidResponse) {
+
+      if (Schema.is(Stage.InvalidResponse)(result.failure)) {
         expect(result.failure.reason).toBe("invalid_repair")
       }
     }
@@ -822,6 +868,7 @@ describe("Repair.standard", () => {
 
   test("classifies duplicate field corrections as an invalid repair", async () => {
     const calls = await Effect.runPromise(Ref.make(0))
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
@@ -870,6 +917,7 @@ describe("Repair.standard", () => {
           }),
         ),
     })
+
     const live = Layer.merge(model, inMemoryChatSessionStore)
 
     const result = await Effect.runPromise(
@@ -878,11 +926,13 @@ describe("Repair.standard", () => {
           sessionId: "duplicate-repair",
           message: "We need a public service website in Leeds.",
         })
+
         const initial = yield* Chat.turn(RepairableChat, {
           sessionId: "duplicate-repair",
           expectedRevision: question.revision,
           message: "No, search anywhere.",
         })
+
         return yield* Effect.result(
           Chat.turn(RepairableChat, {
             sessionId: "duplicate-repair",
@@ -894,9 +944,11 @@ describe("Repair.standard", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Stage.InvalidResponse)
-      if (result.failure instanceof Stage.InvalidResponse) {
+
+      if (Schema.is(Stage.InvalidResponse)(result.failure)) {
         expect(result.failure.reason).toBe("invalid_repair")
       }
     }
@@ -919,13 +971,16 @@ describe("Repair.standard", () => {
         }),
       },
     })
+
     const BudgetChat = Chat.define({
       name: "budget_repair",
       version: 1,
       stages: [Budget, Matching],
       repair: Repair.standard(),
     })
+
     const calls = await Effect.runPromise(Ref.make(0))
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
@@ -968,6 +1023,7 @@ describe("Repair.standard", () => {
           ),
         ),
     })
+
     const live = Layer.merge(model, inMemoryChatSessionStore)
 
     const result = await Effect.runPromise(
@@ -976,6 +1032,7 @@ describe("Repair.standard", () => {
           sessionId: "budget-repair",
           message: "The budget is £6,000.",
         })
+
         return yield* Effect.result(
           Chat.turn(BudgetChat, {
             sessionId: "budget-repair",
@@ -987,12 +1044,15 @@ describe("Repair.standard", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Stage.AnswerValidationRejected)
+
       if (result.failure instanceof Stage.AnswerValidationRejected) {
         expect(result.failure.error).toBeInstanceOf(BudgetTooLow)
       }
     }
+
     expect(await Effect.runPromise(Ref.get(calls))).toBe(3)
   })
 
@@ -1003,6 +1063,7 @@ describe("Repair.standard", () => {
       input: Schema.Struct({}),
       execute: () => Effect.succeed({ done: true }),
     })
+
     const terminal = Stage.command({
       name: "repair_forbidden",
       instructions: ["Run once."],

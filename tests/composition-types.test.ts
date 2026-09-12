@@ -1,21 +1,26 @@
 import { Context, Effect, Schema } from "effect"
-import { Chat, Message, Model, Session, Stage, Tool } from "../src/index.js"
+import type { Model, Session } from "../src/index.js"
+import { Chat, Message, Stage, Tool } from "../src/index.js"
 
 class ChildService extends Context.Service<
   ChildService,
   { readonly value: number }
 >()("ChildService") {}
+
 class BindingService extends Context.Service<
   BindingService,
   { readonly id: string }
 >()("BindingService") {}
+
 class ChildError extends Schema.TaggedError<ChildError>()("ChildError", {}) {}
+
 class BindingError extends Schema.TaggedError<BindingError>()(
   "BindingError",
   {},
 ) {}
 
 const Input = Schema.Struct({ id: Schema.String })
+
 const Finish = Tool.define({
   name: "finish",
   description: "Finish",
@@ -23,6 +28,7 @@ const Finish = Tool.define({
   execute: (): Effect.Effect<number, ChildError, ChildService> =>
     ChildService.pipe(Effect.map(({ value }) => value)),
 })
+
 const Child = Chat.define({
   name: "typed_child",
   version: 1,
@@ -40,6 +46,7 @@ const Child = Chat.define({
     }),
   ],
 })
+
 const Branch = Chat.branch({
   name: "child",
   description: "Call child",
@@ -51,6 +58,7 @@ const Branch = Chat.branch({
     BindingService
   > => BindingService.pipe(Effect.map(({ id }) => ({ id }))),
 })
+
 const Notice = Message.define({
   name: "notice",
   input: Input,
@@ -59,12 +67,14 @@ const Notice = Message.define({
     Message.hint(Branch, { accepted: true }, { when: "The user accepts" }),
   ],
 })
+
 const ParentTool = Tool.define({
   name: "parent",
   description: "Continue",
   input: Schema.Struct({}),
   execute: () => Chat.returned(Branch),
 })
+
 const Parent = Chat.define({
   name: "typed_parent",
   version: 1,
@@ -78,6 +88,7 @@ const Parent = Chat.define({
     }),
   ],
 })
+
 const execution = Chat.turn(Parent, {
   sessionId: "types",
   expectedRevision: "1",
@@ -88,23 +99,30 @@ type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
     ? true
     : false
+
 type Assert<T extends true> = T
+
 export type PreservesTransitiveServices = Assert<
   Equal<
     Effect.Services<typeof execution>,
     Session.Store | Model.Service | ChildService | BindingService
   >
 >
+
 export type PreservesChildError = Assert<
   Equal<Extract<Effect.Error<typeof execution>, ChildError>, ChildError>
 >
+
 export type PreservesBindingError = Assert<
   Equal<Extract<Effect.Error<typeof execution>, BindingError>, BindingError>
 >
+
 export type PreservesInput = Assert<
   Equal<Chat.Input<typeof Child>, { readonly id: string }>
 >
+
 export type PreservesOutput = Assert<Equal<Chat.Output<typeof Child>, number>>
+
 export type PreservesResult = Assert<
   Equal<
     Extract<
@@ -151,4 +169,5 @@ const assertBoundaries = () => {
     input: { id: "one" },
   })
 }
+
 void assertBoundaries

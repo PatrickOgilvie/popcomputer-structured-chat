@@ -1,3 +1,4 @@
+import { Predicate } from "effect"
 import { describe, expect, test } from "bun:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -213,6 +214,7 @@ describe("createStructuredChatDebugStore", () => {
     const store = createStructuredChatDebugStore()
     const otherStore = createStructuredChatDebugStore()
     let notifications = 0
+
     const unsubscribe = store.subscribe(() => {
       notifications += 1
     })
@@ -333,22 +335,27 @@ describe("StructuredChatDebugPanel", () => {
       )
     })
     const renderer = mounted.renderer
+
     if (renderer === undefined) {
       throw new Error("React debug-panel test renderer did not mount")
     }
 
     const readTabs = (): ReadonlyArray<ReactTestInstance> =>
       renderer.root.findAllByProps({ role: "tab" })
+
     const selectedTabIndex = (): number =>
       readTabs().findIndex((tab) => tab.props["aria-selected"] === true)
+
     const pressTabKey = async (
       tabIndex: number,
       key: "ArrowLeft" | "ArrowRight" | "Home" | "End",
     ): Promise<void> => {
       const tab = readTabs()[tabIndex]
+
       if (tab === undefined) {
         throw new Error(`Debug-panel tab ${tabIndex} was not rendered`)
       }
+
       let defaultPrevented = false
       await act(() => {
         tab.props.onKeyDown({
@@ -441,10 +448,11 @@ describe("StructuredChatDebugPanel", () => {
 
   test("opens only the most recently first-issued unresolved field", () => {
     const store = createStructuredChatDebugStore()
+
     const multipleAskedSnapshot: StructuredChatDebugSnapshot = {
       ...snapshot,
       stages: snapshot.stages.map((stage) =>
-        stage._tag === "CollectStage"
+        Predicate.isTagged(stage, "CollectStage")
           ? {
               ...stage,
               satisfiedFields: 3,
@@ -466,6 +474,7 @@ describe("StructuredChatDebugPanel", () => {
           : stage,
       ),
     }
+
     store.receive(multipleAskedSnapshot)
 
     const html = renderToStaticMarkup(
@@ -485,6 +494,7 @@ describe("StructuredChatDebugPanel", () => {
 
   test("renders an accessible collapsed waiting state", () => {
     const store = createStructuredChatDebugStore()
+
     const html = renderToStaticMarkup(
       createElement(StructuredChatDebugPanel, {
         store,

@@ -1,4 +1,12 @@
-import { Answer, Chat, Model, Question, Session, Stage, Tool } from "../src/index.js"
+import {
+  Answer,
+  Chat,
+  Model,
+  Question,
+  Session,
+  Stage,
+  Tool,
+} from "../src/index.js"
 import { Chat as ChatTest } from "../src/testing.js"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref, Result, Schema } from "effect"
@@ -9,34 +17,50 @@ describe("Stage.command", () => {
     [{ arguments: {} }, "invalid_envelope"],
     [{ name: "outside", arguments: {} }, "unknown_tool"],
     [{ name: "send", arguments: { recipient: 42 } }, "invalid_arguments"],
-  ] as const)("classifies a rejected command plan: %j", async (call, reason) => {
-    let executed = false
-    const Send = Tool.command({
-      name: "send",
-      description: "Send one message.",
-      input: Schema.Struct({ recipient: Schema.String }),
-      execute: () => Effect.sync(() => { executed = true }),
-    })
-    const stage = Stage.command({
-      name: "delivery",
-      instructions: ["Send the message."],
-      command: Send,
-    })
-    const result = await Effect.runPromise(
-      stage.plan([Model.Message.user("Send it")]).pipe(
-        Effect.provide(Layer.succeed(Model.Service, {
-          requestTool: () => Effect.succeed(call),
-        })),
-        Effect.result,
-      ),
-    )
+  ] as const)(
+    "classifies a rejected command plan: %j",
+    async (call, reason) => {
+      let executed = false
 
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) {
-      expect(result.failure).toMatchObject({ _tag: "InvalidToolCall", reason })
-    }
-    expect(executed).toBe(false)
-  })
+      const Send = Tool.command({
+        name: "send",
+        description: "Send one message.",
+        input: Schema.Struct({ recipient: Schema.String }),
+        execute: () =>
+          Effect.sync(() => {
+            executed = true
+          }),
+      })
+
+      const stage = Stage.command({
+        name: "delivery",
+        instructions: ["Send the message."],
+        command: Send,
+      })
+
+      const result = await Effect.runPromise(
+        stage.plan([Model.Message.user("Send it")]).pipe(
+          Effect.provide(
+            Layer.succeed(Model.Service, {
+              requestTool: () => Effect.succeed(call),
+            }),
+          ),
+          Effect.result,
+        ),
+      )
+
+      expect(Result.isFailure(result)).toBe(true)
+
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: "InvalidToolCall",
+          reason,
+        })
+      }
+
+      expect(executed).toBe(false)
+    },
+  )
 
   test("binds command identity to every documented tuple component", async () => {
     const base = {
@@ -69,9 +93,11 @@ describe("Stage.command", () => {
 
   test("plans and executes exactly one command with an explicit identity", async () => {
     const Deliberate = Model.profile("command_deliberate")
+
     const observed = await Effect.runPromise(
       Ref.make<string | undefined>(undefined),
     )
+
     const Send = Tool.command({
       name: "send_proposal",
       description: "Send the approved proposal once.",
@@ -86,15 +112,18 @@ describe("Stage.command", () => {
         ({ status }) => ({ status }),
       ),
     )
+
     const Delivery = Stage.command({
       name: "delivery",
       model: Deliberate,
       instructions: ["Send the proposal to the named recipient."],
       command: Send,
     })
+
     const commandId = Schema.decodeSync(Tool.CommandIdSchema)(
       `cmd_${"a".repeat(64)}`,
     )
+
     const model = Layer.succeed(Deliberate, {
       requestTool: () =>
         Effect.succeed({
@@ -104,10 +133,9 @@ describe("Stage.command", () => {
     })
 
     const result = await Effect.runPromise(
-      Delivery.run(
-        [Model.Message.user("Send it to team@example.com")],
-        { commandId },
-      ).pipe(Effect.provide(model)),
+      Delivery.run([Model.Message.user("Send it to team@example.com")], {
+        commandId,
+      }).pipe(Effect.provide(model)),
     )
 
     expect(result.serverResult).toEqual({
@@ -121,10 +149,13 @@ describe("Stage.command", () => {
     const attempts = await Effect.runPromise(
       Ref.make<ReadonlyArray<{ id: string; recipient: string }>>([]),
     )
+
     const outcomes = await Effect.runPromise(
       Ref.make<ReadonlyMap<string, { readonly delivery: number }>>(new Map()),
     )
+
     const sends = await Effect.runPromise(Ref.make(0))
+
     const Send = Tool.command({
       name: "idempotent_send",
       description: "Send once through an idempotent application endpoint.",
@@ -137,12 +168,15 @@ describe("Stage.command", () => {
           Effect.andThen(
             Ref.modify(outcomes, (current) => {
               const prior = current.get(commandId)
+
               if (prior !== undefined) {
                 return [prior, current]
               }
+
               const outcome = { delivery: current.size + 1 }
               const next = new Map(current)
               next.set(commandId, outcome)
+
               return [outcome, next]
             }),
           ),
@@ -153,16 +187,19 @@ describe("Stage.command", () => {
           ),
         ),
     })
+
     const Delivery = Stage.command({
       name: "idempotent_delivery",
       instructions: ["Send the requested message once."],
       command: Send,
     })
+
     const DeliveryChat = Chat.define({
       name: "delivery_chat",
       version: 1,
       stages: [Delivery],
     })
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
@@ -170,12 +207,15 @@ describe("Stage.command", () => {
           arguments: { recipient: "team@example.com" },
         }),
     })
+
     const unavailableStore = Layer.succeed(Session.Store, {
       load: () => Effect.succeed(null),
       replace: () =>
         Effect.fail(new Session.StoreUnavailable({ reason: "write_failed" })),
     })
+
     const live = Layer.merge(model, unavailableStore)
+
     const reply = () =>
       Effect.result(
         Chat.turn(DeliveryChat, {
@@ -198,25 +238,27 @@ describe("Stage.command", () => {
 
   test("completes a persisted command chat and will not execute it again", async () => {
     const executions = await Effect.runPromise(Ref.make(0))
+
     const Send = Tool.command({
       name: "terminal_send",
       description: "Send one terminal message.",
       input: Schema.Struct({ body: Schema.String }),
       execute: ({ body }) =>
-        Ref.update(executions, (count) => count + 1).pipe(
-          Effect.as({ body }),
-        ),
+        Ref.update(executions, (count) => count + 1).pipe(Effect.as({ body })),
     })
+
     const Delivery = Stage.command({
       name: "terminal_delivery",
       instructions: ["Send one message."],
       command: Send,
     })
+
     const DeliveryChat = Chat.define({
       name: "terminal_delivery_chat",
       version: 1,
       stages: [Delivery],
     })
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
@@ -224,6 +266,7 @@ describe("Stage.command", () => {
           arguments: { body: "Hello" },
         }),
     })
+
     const live = Layer.merge(model, inMemoryChatSessionStore)
 
     const result = await Effect.runPromise(
@@ -232,6 +275,7 @@ describe("Stage.command", () => {
           sessionId: "terminal-delivery",
           message: "Send hello.",
         })
+
         const second = yield* Effect.result(
           Chat.turn(DeliveryChat, {
             sessionId: "terminal-delivery",
@@ -239,6 +283,7 @@ describe("Stage.command", () => {
             message: "Send it again.",
           }),
         )
+
         return { first, second }
       }).pipe(Effect.provide(live)),
     )
@@ -250,9 +295,11 @@ describe("Stage.command", () => {
 
   test("carries command identity across collection completed in the same turn", async () => {
     const requests = await Effect.runPromise(Ref.make(0))
+
     const observed = await Effect.runPromise(
       Ref.make<string | undefined>(undefined),
     )
+
     const Recipient = Stage.collect({
       name: "recipient",
       fields: {
@@ -262,6 +309,7 @@ describe("Stage.command", () => {
         }),
       },
     })
+
     const Send = Tool.command({
       name: "collected_send",
       description: "Send to the collected recipient.",
@@ -269,16 +317,19 @@ describe("Stage.command", () => {
       execute: ({ email }, { commandId }) =>
         Ref.set(observed, commandId).pipe(Effect.as({ email })),
     })
+
     const Delivery = Stage.command({
       name: "collected_delivery",
       instructions: ["Send to the collected recipient."],
       command: Send,
     })
+
     const DeliveryChat = Chat.define({
       name: "collected_delivery_chat",
       version: 1,
       stages: [Recipient, Delivery],
     })
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.updateAndGet(requests, (count) => count + 1).pipe(
@@ -309,9 +360,7 @@ describe("Stage.command", () => {
       Chat.turn(DeliveryChat, {
         sessionId: "collected-delivery",
         message: "Send it to team@example.com.",
-      }).pipe(
-        Effect.provide(Layer.merge(model, inMemoryChatSessionStore)),
-      ),
+      }).pipe(Effect.provide(Layer.merge(model, inMemoryChatSessionStore))),
     )
 
     expect(reply.turn._tag).toBe("Complete")
@@ -323,6 +372,7 @@ describe("Stage.command", () => {
   test("rejects the history limit before command planning or execution", async () => {
     let modelCalls = 0
     let commandCalls = 0
+
     const Send = Tool.command({
       name: "bounded_send",
       description: "Must not run beyond the history boundary.",
@@ -330,19 +380,23 @@ describe("Stage.command", () => {
       execute: () =>
         Effect.sync(() => {
           commandCalls += 1
+
           return { sent: true }
         }),
     })
+
     const Delivery = Stage.command({
       name: "bounded_delivery",
       instructions: ["Send once."],
       command: Send,
     })
+
     const DeliveryChat = Chat.define({
       name: "bounded_delivery_chat",
       version: 1,
       stages: [Delivery],
     })
+
     const store = Layer.succeed(Session.Store, {
       load: () =>
         Effect.succeed({
@@ -350,16 +404,18 @@ describe("Stage.command", () => {
           state: ChatTest.initialState(DeliveryChat),
           messages: Array.from({ length: 199 }, (_, index) =>
             index % 2 === 0
-              ? Model.Message.user(`User ${index}`)
-              : Model.Message.assistant(`Assistant ${index}`),
+              ? Session.Message.submitted(`User ${index}`)
+              : Session.Message.authored(`Assistant ${index}`),
           ),
         }),
       replace: () => Effect.die("must not replace"),
     })
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.sync(() => {
           modelCalls += 1
+
           return { name: "bounded_send", arguments: {} }
         }),
     })
@@ -382,6 +438,7 @@ describe("Stage.command", () => {
   test("will not execute a command through an unscoped direct chat run", async () => {
     let modelCalls = 0
     let commandCalls = 0
+
     const Send = Tool.command({
       name: "scoped_send",
       description: "Requires persisted command identity.",
@@ -389,23 +446,28 @@ describe("Stage.command", () => {
       execute: () =>
         Effect.sync(() => {
           commandCalls += 1
+
           return { sent: true }
         }),
     })
+
     const Delivery = Stage.command({
       name: "scoped_delivery",
       instructions: ["Send once."],
       command: Send,
     })
+
     const DeliveryChat = Chat.define({
       name: "scoped_delivery_chat",
       version: 1,
       stages: [Delivery],
     })
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.sync(() => {
           modelCalls += 1
+
           return { name: "scoped_send", arguments: {} }
         }),
     })
@@ -414,7 +476,7 @@ describe("Stage.command", () => {
       Effect.result(
         ChatTest.run(DeliveryChat, {
           state: ChatTest.initialState(DeliveryChat),
-          messages: [Model.Message.user("Send it")],
+          messages: [Session.Message.submitted("Send it")],
         }).pipe(Effect.provide(model)),
       ),
     )

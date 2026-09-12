@@ -24,9 +24,7 @@ const FindRelated = Tool.define({
   input: Schema.Struct({ seedId: Schema.String }),
   execute: ({ seedId }) =>
     Catalog.pipe(Effect.flatMap((catalog) => catalog.related(seedId))),
-}).pipe(
-  Tool.present(RelatedCards, (results) => ({ results })),
-)
+}).pipe(Tool.present(RelatedCards, (results) => ({ results })))
 
 const SearchCards = View.define({
   name: "search_cards",

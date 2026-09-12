@@ -1,13 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import {
-  useAui,
-  type AssistantClient,
-} from "@assistant-ui/react"
-import {
-  act,
-  create,
-  type ReactTestRenderer,
-} from "react-test-renderer"
+import { useAui, type AssistantClient } from "@assistant-ui/react"
+import { act, create, type ReactTestRenderer } from "react-test-renderer"
 import {
   StructuredChatAssistantProvider,
   type StructuredChatAssistantProviderProps,
@@ -74,23 +67,19 @@ const mountProvider = async (
   readonly client: AssistantClient
   readonly renderer: ReactTestRenderer
   readonly update: (
-    props: Omit<
-      StructuredChatAssistantProviderProps,
-      "children"
-    >,
+    props: Omit<StructuredChatAssistantProviderProps, "children">,
   ) => Promise<void>
 }> => {
   let client: AssistantClient | undefined
+
   const Capture = () => {
     client = useAui()
+
     return null
   }
 
   const render = (
-    nextProps: Omit<
-      StructuredChatAssistantProviderProps,
-      "children"
-    >,
+    nextProps: Omit<StructuredChatAssistantProviderProps, "children">,
   ) => (
     <StructuredChatAssistantProvider {...nextProps}>
       <Capture />
@@ -108,15 +97,18 @@ const mountProvider = async (
     renderer = create(render(props))
     await loadDebugPanel(props.debug)
   })
+
   if (client === undefined || renderer === undefined) {
     throw new Error("Structured-chat assistant provider did not mount")
   }
+
   const mountedRenderer = renderer
 
   const getClient = (): AssistantClient => {
     if (client === undefined) {
       throw new Error("Structured-chat assistant provider is unavailable")
     }
+
     return client
   }
 
@@ -143,6 +135,7 @@ const send = async (client: AssistantClient, text: string) => {
         resolve()
       })
     })
+
     client.thread.append({
       role: "user",
       content: [{ type: "text", text }],
@@ -154,19 +147,19 @@ const send = async (client: AssistantClient, text: string) => {
 describe("StructuredChatAssistantProvider", () => {
   test("uses the ordinary endpoint and omits the debug window by default", async () => {
     const requests: Array<string> = []
-    const { client, renderer } = await mountProvider(
-      {
-        chatKey: "resource-finder:01",
-        endpoint: "/api/chat/turn",
-        fetch: async (input) => {
-          requests.push(input)
-          return new Response(JSON.stringify(normalResponseBody), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          })
-        },
+
+    const { client, renderer } = await mountProvider({
+      chatKey: "resource-finder:01",
+      endpoint: "/api/chat/turn",
+      fetch: async (input) => {
+        requests.push(input)
+
+        return new Response(JSON.stringify(normalResponseBody), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
       },
-    )
+    })
 
     await send(client, "Find a resource")
 
@@ -182,21 +175,21 @@ describe("StructuredChatAssistantProvider", () => {
 
   test("one debug toggle selects the debug endpoint and mounts the window", async () => {
     const requests: Array<string> = []
-    const { client, renderer } = await mountProvider(
-      {
-        chatKey: "resource-finder:01",
-        endpoint: "/api/chat/turn",
-        debug: true,
-        debugEndpoint: "/api/chat/debug/turn",
-        fetch: async (input) => {
-          requests.push(input)
-          return new Response(JSON.stringify(successfulDebugResponseBody), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          })
-        },
+
+    const { client, renderer } = await mountProvider({
+      chatKey: "resource-finder:01",
+      endpoint: "/api/chat/turn",
+      debug: true,
+      debugEndpoint: "/api/chat/debug/turn",
+      fetch: async (input) => {
+        requests.push(input)
+
+        return new Response(JSON.stringify(successfulDebugResponseBody), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
       },
-    )
+    })
 
     expect(
       renderer.root.findAllByProps({ className: "pcsc-debug" }),
@@ -216,16 +209,16 @@ describe("StructuredChatAssistantProvider", () => {
       readonly endpoint: string
       readonly body: RequestInit["body"]
     }> = []
+
     const fetch = async (input: string, init: RequestInit) => {
       requests.push({ endpoint: input, body: init.body })
-      return new Response(
-        JSON.stringify(normalResponseBodyWithSession),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      )
+
+      return new Response(JSON.stringify(normalResponseBodyWithSession), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
     }
+
     const mounted = await mountProvider({
       chatKey: "resource-finder:01",
       endpoint: "/api/chat-a/turn",
@@ -287,17 +280,21 @@ describe("StructuredChatAssistantProvider", () => {
       readonly endpoint: string
       readonly body: RequestInit["body"]
     }> = []
+
     const fetch = async (input: string, init: RequestInit) => {
       requests.push({ endpoint: input, body: init.body })
+
       const body =
         input === "/api/chat/debug/turn"
           ? successfulDebugResponseBody
           : normalResponseBodyWithSession
+
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       })
     }
+
     const mounted = await mountProvider({
       chatKey: "resource-finder:01",
       endpoint: "/api/chat/turn",

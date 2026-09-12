@@ -1,4 +1,4 @@
-import { Effect, Function as Fn, Schema } from "effect"
+import { Predicate, Effect, Function as Fn, Schema } from "effect"
 import type { AnyDefinition } from "../Chat.js"
 import {
   ChatContext,
@@ -93,8 +93,9 @@ export const defineBranch = <
   },
   contract: ChatContract,
 ): Branch<Name, Arguments, Child, Error, Requirements> => {
-  Schema.decodeSync(ToolNameSchema)(input.name)
-  Schema.decodeSync(ToolDescriptionSchema)(input.description)
+  ToolNameSchema.make(input.name)
+  ToolDescriptionSchema.make(input.description)
+
   return structuredDefinition("chat_branch")({
     _tag: "ChatBranch" as const,
     name: input.name,
@@ -124,14 +125,16 @@ export const returned = <B extends BranchContract>(
 > =>
   Effect.gen(function* () {
     const context = yield* ChatContext
+
     const entry = context.returns
       .filter((value) => value.branch === branch)
       .at(-1)
+
     if (entry === undefined)
-      return yield* Effect.fail(
-        new ChatContextUnavailable({ reason: "missing_return" }),
-      )
-    if (entry.outcome._tag === "Cancelled") return entry.outcome
+      return yield* new ChatContextUnavailable({ reason: "missing_return" })
+
+    if (!Predicate.isTagged(entry.outcome, "Completed")) return entry.outcome
+
     const output = yield* Schema.decodeUnknownEffect(
       Schema.toType(readBranch(branch).outputSchema),
     )(entry.outcome.output).pipe(
@@ -139,6 +142,7 @@ export const returned = <B extends BranchContract>(
         () => new ChatContextUnavailable({ reason: "invalid_return" }),
       ),
     )
+
     // SAFETY: the sealed branch carries this child's exact output codec.
     return {
       _tag: "Completed" as const,

@@ -27,15 +27,9 @@ export {
   ToolNameSchema as NameSchema,
 } from "./core/tool.js"
 
-export {
-  CommandIdSchema,
-  deriveCommandId,
-} from "./core/command.js"
+export { CommandIdSchema, deriveCommandId } from "./core/command.js"
 
-export type {
-  CommandId,
-  CommandIdentityInput,
-} from "./core/command.js"
+export type { CommandId, CommandIdentityInput } from "./core/command.js"
 
 export type {
   CommandDefinitionContract,
@@ -65,5 +59,10 @@ export type {
   ToolTuple as Tuple,
 } from "./core/tool-set.js"
 
-export { ToolContext as Context, acceptedAnswer, AcceptedAnswerUnavailable } from "./core/tool-context.js"
+export {
+  ToolContext as Context,
+  acceptedAnswer,
+  AcceptedAnswerUnavailable,
+} from "./core/tool-context.js"
+
 export type { ToolContextService as ContextService } from "./core/tool-context.js"

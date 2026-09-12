@@ -1,8 +1,5 @@
-import { Context, Effect, Function as Fn, Schema } from "effect"
-import type {
-  InvalidToolCall,
-  ModelToolDefinition,
-} from "./tool.js"
+import { Predicate, Context, Effect, Function as Fn, Schema } from "effect"
+import type { InvalidToolCall, ModelToolDefinition } from "./tool.js"
 import {
   runModelCallGuards,
   runModelGuards,
@@ -24,13 +21,10 @@ import type { JsonValue } from "./json-value.js"
 import { recordLatestDebugModelOutputRejected } from "./debug-trace.js"
 
 /** Bounded application-authored instruction supplied to a model adapter. */
-export const TrustedInstructionSchema =
-  Schema.Trimmed.check(
-    Schema.isNonEmpty(),
-    Schema.isMaxLength(20_000),
-  ).pipe(
-    Schema.brand("TrustedInstruction"),
-  )
+export const TrustedInstructionSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(20_000),
+).pipe(Schema.brand("TrustedInstruction"))
 
 /** Bounded application-authored instruction supplied to a model adapter. */
 export type TrustedInstruction = Schema.Schema.Type<
@@ -38,10 +32,7 @@ export type TrustedInstruction = Schema.Schema.Type<
 >
 
 /** Conversation role accepted as untrusted model context. */
-export const ConversationRoleSchema = Schema.Literals([
-  "user",
-  "assistant",
-])
+export const ConversationRoleSchema = Schema.Literals(["user", "assistant"])
 
 /** One bounded conversation message treated as untrusted model context. */
 export const UntrustedMessageSchema = Schema.Struct({
@@ -53,18 +44,13 @@ export const UntrustedMessageSchema = Schema.Struct({
 })
 
 /** One bounded conversation message treated as untrusted model context. */
-export type UntrustedMessage = Schema.Schema.Type<
-  typeof UntrustedMessageSchema
->
+export type UntrustedMessage = Schema.Schema.Type<typeof UntrustedMessageSchema>
 
 /** @internal Exact content-character count for bounded message arrays. */
 export const countUntrustedMessageCharacters = (
   messages: ReadonlyArray<UntrustedMessage>,
 ): number =>
-  messages.reduce(
-    (total, message) => total + message.content.length,
-    0,
-  )
+  messages.reduce((total, message) => total + message.content.length, 0)
 
 /** Safe reason that a configured chat model could not complete a step. */
 export const ChatModelUnavailableReasonSchema = Schema.Literals([
@@ -92,14 +78,8 @@ export const UnsupportedModelToolSchemaReasonSchema = Schema.Literals([
 export class UnsupportedModelToolSchema extends Schema.TaggedError<UnsupportedModelToolSchema>()(
   "UnsupportedModelToolSchema",
   {
-    tool: Schema.Trimmed.check(
-      Schema.isNonEmpty(),
-      Schema.isMaxLength(100),
-    ),
-    path: Schema.Trimmed.check(
-      Schema.isNonEmpty(),
-      Schema.isMaxLength(2_000),
-    ),
+    tool: Schema.Trimmed.check(Schema.isNonEmpty(), Schema.isMaxLength(100)),
+    path: Schema.Trimmed.check(Schema.isNonEmpty(), Schema.isMaxLength(2_000)),
     reason: UnsupportedModelToolSchemaReasonSchema,
   },
 ) {}
@@ -129,9 +109,7 @@ export interface StructuredChatModelService {
 export class StructuredChatModel extends Context.Service<
   StructuredChatModel,
   StructuredChatModelService
->()(
-  "@popcomputer/structured-chat/StructuredChatModel",
-) {}
+>()("@popcomputer/structured-chat/StructuredChatModel") {}
 
 const ModelProfileTypeId: unique symbol = Symbol.for(
   "@popcomputer/structured-chat/ModelProfile",
@@ -141,22 +119,17 @@ const ModelProfileTypeId: unique symbol = Symbol.for(
 export const ModelProfileNameSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
   Schema.isMaxLength(100),
-  Schema.isPattern(
-    /^(?!default$)[a-z0-9]+(?:[._-][a-z0-9]+)*$/,
-  ),
+  Schema.isPattern(/^(?!default$)[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
 )
 
 /** Stable machine-facing name for one named model profile. */
-export type ModelProfileName = Schema.Schema.Type<
-  typeof ModelProfileNameSchema
->
+export type ModelProfileName = Schema.Schema.Type<typeof ModelProfileNameSchema>
 
 /** Named provider-neutral Effect service key for one model configuration. */
-export interface ModelProfile<Name extends string>
-  extends Context.Service<
-    ModelProfile<Name>,
-    StructuredChatModelService
-  > {
+export interface ModelProfile<Name extends string> extends Context.Service<
+  ModelProfile<Name>,
+  StructuredChatModelService
+> {
   readonly _tag: "ModelProfile"
   readonly profile: Name
   readonly [ModelProfileTypeId]: typeof ModelProfileTypeId
@@ -178,14 +151,13 @@ type IsUnion<Value, Whole = Value> = Value extends unknown
     : true
   : never
 
-type ConcreteModelProfileName<Name extends string> =
-  string extends Name
+type ConcreteModelProfileName<Name extends string> = string extends Name
+  ? never
+  : true extends IsUnion<Name>
     ? never
-    : true extends IsUnion<Name>
+    : Record<never, never> extends Record<Name, never>
       ? never
-      : Record<never, never> extends Record<Name, never>
-        ? never
-        : Name
+      : Name
 
 /** @internal One exact, non-erased model-profile service identity. */
 export type ExactModelProfile<Profile extends AnyModelProfile> =
@@ -201,13 +173,12 @@ export type ExactModelProfile<Profile extends AnyModelProfile> =
 export const defineModelProfile = <const Name extends string>(
   name: ConcreteModelProfileName<Name>,
 ): ModelProfile<Name> => {
-  const profileName = Schema.decodeSync(ModelProfileNameSchema)(name)
+  const profileName = ModelProfileNameSchema.make(name)
+
   const service = Context.Service<
     ModelProfile<Name>,
     StructuredChatModelService
-  >(
-    `@popcomputer/structured-chat/ModelProfile/${profileName}`,
-  )
+  >(`@popcomputer/structured-chat/ModelProfile/${profileName}`)
 
   Object.defineProperties(service, {
     _tag: {
@@ -236,9 +207,9 @@ export const defineModelProfile = <const Name extends string>(
 }
 
 /** Sound stage/model input: omission is legal only for the default profile. */
-export type ModelProfileInput<
-  Profile extends AnyModelProfile | undefined,
-> = [Profile] extends [never]
+export type ModelProfileInput<Profile extends AnyModelProfile | undefined> = [
+  Profile,
+] extends [never]
   ? never
   : true extends IsUnion<Profile>
     ? never
@@ -250,15 +221,12 @@ export type ModelProfileInput<
         }
 
 /** Effect requirement selected by an optional named model profile. */
-export type ModelRequirement<
-  Profile extends AnyModelProfile | undefined,
-> = Profile extends AnyModelProfile
-  ? Context.Service.Identifier<Profile>
-  : StructuredChatModel
+export type ModelRequirement<Profile extends AnyModelProfile | undefined> =
+  Profile extends AnyModelProfile
+    ? Context.Service.Identifier<Profile>
+    : StructuredChatModel
 
-const resolveModel = <
-  const Profile extends AnyModelProfile | undefined,
->(
+const resolveModel = <const Profile extends AnyModelProfile | undefined>(
   selected: Profile,
 ): Effect.Effect<
   StructuredChatModelService,
@@ -282,11 +250,7 @@ const resolveModel = <
   // identifier is represented by ModelRequirement<Profile>.
   return Fn.cast<
     typeof selected,
-    Effect.Effect<
-      StructuredChatModelService,
-      never,
-      ModelRequirement<Profile>
-    >
+    Effect.Effect<StructuredChatModelService, never, ModelRequirement<Profile>>
   >(selected)
 }
 
@@ -313,20 +277,15 @@ type PlanToolCallInput<
   readonly guards?: Guards
 } & ModelProfileInput<Profile>
 
-const invalidOutputRepairInstruction = Schema.decodeSync(
-  TrustedInstructionSchema,
-)(
+const invalidOutputRepairInstruction = TrustedInstructionSchema.make(
   "Your previous response did not satisfy the required tool-call contract. Call exactly one listed tool and return only arguments allowed by its JSON Schema.",
 )
 
 const isRepairableModelOutput = (
-  error:
-    | ChatModelUnavailable
-    | UnsupportedModelToolSchema
-    | InvalidToolCall,
+  error: ChatModelUnavailable | UnsupportedModelToolSchema | InvalidToolCall,
 ): boolean =>
-  error._tag === "InvalidToolCall" ||
-  (error._tag === "ChatModelUnavailable" &&
+  Predicate.isTagged(error, "InvalidToolCall") ||
+  (Predicate.isTagged(error, "ChatModelUnavailable") &&
     error.reason === "invalid_response")
 
 /** @internal Plan one strictly parsed and guarded call to a closed tool set. */
@@ -361,36 +320,36 @@ export const planToolCall = <
         model
           .requestTool({
             instructions,
-            untrustedMessages: input.messages,
+            untrustedMessages: input.messages.map(({ role, content }) => ({
+              role,
+              content,
+            })),
             tools: input.tools.models,
             toolChoice: "required",
             maximumToolCalls: 1,
             parallelToolCalls: false,
           })
           .pipe(
-            Effect.withSpan(
-              "popcomputer.structured_chat.model.request",
-              {
-                attributes: {
-                  attempt,
-                  messageCount: input.messages.length,
-                  messageCharacterCount:
-                    countUntrustedMessageCharacters(input.messages),
-                  instructionCount: instructions.length,
-                  modelProfile:
-                    selected?.profile ?? "default",
-                  toolCount: input.tools.models.length,
-                },
+            Effect.withSpan("popcomputer.structured_chat.model.request", {
+              attributes: {
+                attempt,
+                messageCount: input.messages.length,
+                messageCharacterCount: countUntrustedMessageCharacters(
+                  input.messages,
+                ),
+                instructionCount: instructions.length,
+                modelProfile: selected?.profile ?? "default",
+                toolCount: input.tools.models.length,
               },
-            ),
+            }),
             Effect.flatMap((call) =>
-              input.tools.parseCall(call).pipe(
-                Effect.tapError(() =>
-                  recordLatestDebugModelOutputRejected(
-                    "invalid_tool_call",
+              input.tools
+                .parseCall(call)
+                .pipe(
+                  Effect.tapError(() =>
+                    recordLatestDebugModelOutputRejected("invalid_tool_call"),
                   ),
                 ),
-              ),
             ),
           )
 
@@ -409,16 +368,12 @@ export const planToolCall = <
                   errorTag: error._tag,
                   errorReason: error.reason,
                 }
-          return Effect.logWarning(
-            "Retrying structured model output",
-          ).pipe(
+
+          return Effect.logWarning("Retrying structured model output").pipe(
             Effect.annotateLogs(annotations),
             Effect.andThen(
               requestParsedCall(
-                [
-                  ...input.instructions,
-                  invalidOutputRepairInstruction,
-                ],
+                [...input.instructions, invalidOutputRepairInstruction],
                 2,
               ),
             ),
@@ -476,13 +431,12 @@ export const runToolStep = <
   )
 
 const makeInstruction = (value: string): TrustedInstruction =>
-  Schema.decodeSync(TrustedInstructionSchema)(value)
+  TrustedInstructionSchema.make(value)
 
 const makeMessage = (
   role: UntrustedMessage["role"],
   content: string,
-): UntrustedMessage =>
-  Schema.decodeSync(UntrustedMessageSchema)({ role, content })
+): UntrustedMessage => UntrustedMessageSchema.make({ role, content })
 
 /** Constructors that explicitly mark static application instructions. */
 export const Instruction = {

@@ -7,11 +7,7 @@ import {
   Schema,
   SchemaIssue,
 } from "effect"
-import type {
-  ViewDefinitionContract,
-  ViewInput,
-  ViewPart,
-} from "./view.js"
+import type { ViewDefinitionContract, ViewInput, ViewPart } from "./view.js"
 import {
   structuredDefinition,
   type StructuredDefinition,
@@ -47,10 +43,7 @@ export class InvalidToolCall extends Schema.TaggedError<InvalidToolCall>()(
     tool: Schema.NullOr(ToolNameSchema),
     reason: InvalidToolCallReasonSchema,
     path: Schema.NullOr(
-      Schema.Trimmed.check(
-        Schema.isNonEmpty(),
-        Schema.isMaxLength(500),
-      ),
+      Schema.Trimmed.check(Schema.isNonEmpty(), Schema.isMaxLength(500)),
     ),
   },
 ) {}
@@ -62,15 +55,12 @@ export const InvalidToolProjectionReasonSchema = Schema.Literals([
 ])
 
 const StandardSchemaPathSegment = Schema.Struct({
-  key: Schema.Union([
-    Schema.String,
-    Schema.Number,
-    Schema.Symbol,
-  ]),
+  key: Schema.Union([Schema.String, Schema.Number, Schema.Symbol]),
 })
 
-const decodeStandardSchemaPathSegment =
-  Schema.decodeUnknownResult(StandardSchemaPathSegment)
+const decodeStandardSchemaPathSegment = Schema.decodeUnknownResult(
+  StandardSchemaPathSegment,
+)
 
 /** An application-owned model or view projection violated its schema. */
 export class InvalidToolProjection extends Schema.TaggedError<InvalidToolProjection>()(
@@ -104,8 +94,7 @@ export interface CommandExecutionContext {
 }
 
 /** Minimum runtime shape retained for every structured chat tool. */
-export interface ToolDefinitionContract
-  extends StructuredDefinition<"tool"> {
+export interface ToolDefinitionContract extends StructuredDefinition<"tool"> {
   readonly _tag: "StructuredTool"
   readonly operation: ToolOperation
   readonly name: string
@@ -128,10 +117,7 @@ export interface CommandDefinitionContract extends ToolDefinitionContract {
 }
 
 /** One model-authored, schema-parsed tool call. */
-export type ToolCall<
-  Name extends string,
-  InputSchema extends ToolSchema,
-> = {
+export type ToolCall<Name extends string, InputSchema extends ToolSchema> = {
   readonly name: Name
   readonly arguments: Schema.Schema.Type<InputSchema>
 }
@@ -146,18 +132,19 @@ export type EncodedToolCall<
 } & JsonValue
 
 /** Encoded call shape derived from one concrete structured tool. */
-export type EncodedToolCallOf<Tool> = Tool extends StructuredTool<
-  infer Name,
-  infer InputSchema,
-  infer _ServerResult,
-  infer _Error,
-  infer _Requirements,
-  infer _ModelSchema,
-  infer _Presenters,
-  infer _Operation
->
-  ? EncodedToolCall<Name, InputSchema>
-  : never
+export type EncodedToolCallOf<Tool> =
+  Tool extends StructuredTool<
+    infer Name,
+    infer InputSchema,
+    infer _ServerResult,
+    infer _Error,
+    infer _Requirements,
+    infer _ModelSchema,
+    infer _Presenters,
+    infer _Operation
+  >
+    ? EncodedToolCall<Name, InputSchema>
+    : never
 
 /** One application-owned view projection attached to a tool. */
 export interface ToolPresenter<
@@ -165,9 +152,7 @@ export interface ToolPresenter<
   View extends ViewDefinitionContract,
 > {
   readonly view: View
-  readonly project: (
-    result: ServerResult,
-  ) => ViewInput<View> | undefined
+  readonly project: (result: ServerResult) => ViewInput<View> | undefined
 }
 
 type PresenterView<Presenter> =
@@ -182,11 +167,8 @@ export type ToolViewPart<
   >,
 > = ViewPart<PresenterView<Presenters[number]>>
 
-type ToolModelResult<
-  ModelSchema extends ToolSchema | undefined,
-> = ModelSchema extends ToolSchema
-  ? Schema.Schema.Type<ModelSchema>
-  : undefined
+type ToolModelResult<ModelSchema extends ToolSchema | undefined> =
+  ModelSchema extends ToolSchema ? Schema.Schema.Type<ModelSchema> : undefined
 
 /** Complete trusted result of one parsed and executed tool call. */
 export interface ToolExecution<
@@ -202,14 +184,9 @@ export interface ToolExecution<
   readonly [toolExecutionModelContext]: string | undefined
 }
 
-interface ToolModelProjection<
-  ServerResult,
-  ModelSchema extends ToolSchema,
-> {
+interface ToolModelProjection<ServerResult, ModelSchema extends ToolSchema> {
   readonly schema: ModelSchema
-  readonly project: (
-    result: ServerResult,
-  ) => Schema.Schema.Type<ModelSchema>
+  readonly project: (result: ServerResult) => Schema.Schema.Type<ModelSchema>
 }
 
 interface ToolRuntime<
@@ -226,9 +203,7 @@ interface ToolRuntime<
 > {
   readonly executeServer: (
     input: Schema.Schema.Type<InputSchema>,
-    context: Operation extends "command"
-      ? CommandExecutionContext
-      : undefined,
+    context: Operation extends "command" ? CommandExecutionContext : undefined,
   ) => Effect.Effect<ServerResult, Error, Requirements>
   readonly modelProjection: ModelSchema extends ToolSchema
     ? ToolModelProjection<ServerResult, ModelSchema>
@@ -241,19 +216,16 @@ interface ToolRuntime<
   readonly operation: Operation
 }
 
-const toolRuntime = Symbol(
-  "@popcomputer/structured-chat/ToolRuntime",
-)
+const toolRuntime = Symbol("@popcomputer/structured-chat/ToolRuntime")
 
 const toolExecutionModelContext = Symbol(
   "@popcomputer/structured-chat/ToolExecutionModelContext",
 )
 
-const ToolExecutionModelContextSchema =
-  Schema.Trimmed.check(
-    Schema.isNonEmpty(),
-    Schema.isMaxLength(40_000),
-  )
+const ToolExecutionModelContextSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(40_000),
+)
 
 /** @internal Bounded model projection retained by a sealed tool execution. */
 export interface RuntimeToolExecutionContext {
@@ -279,14 +251,12 @@ export interface StructuredTool<
     ToolPresenter<ServerResult, ViewDefinitionContract>
   > = readonly [],
   Operation extends ToolOperation = "query",
-> extends Pipeable.Pipeable,
-    ToolDefinitionContract {
+>
+  extends Pipeable.Pipeable, ToolDefinitionContract {
   readonly name: Name
   readonly operation: Operation
   readonly inputSchema: InputSchema
-  readonly callSchema: Schema.Schema<
-    ToolCall<Name, InputSchema>
-  >
+  readonly callSchema: Schema.Schema<ToolCall<Name, InputSchema>>
   readonly model: ModelToolDefinition<Name>
 
   /** Parse an unknown model-authored invocation. */
@@ -397,36 +367,31 @@ export interface DefineCommandInput<
   ) => Effect.Effect<ServerResult, Error, Requirements>
 }
 
-const parseToolCall = <
-  Name extends string,
-  InputSchema extends ToolSchema,
->(
+const parseToolCall = <Name extends string, InputSchema extends ToolSchema>(
   name: Name,
-  callSchema: Schema.Codec<
-    ToolCall<Name, InputSchema>,
-    unknown,
-    never,
-    never
-  >,
+  callSchema: Schema.Codec<ToolCall<Name, InputSchema>, unknown, never, never>,
   input: JsonValue,
 ): Effect.Effect<ToolCall<Name, InputSchema>, InvalidToolCall> =>
-  Schema.decodeUnknownEffect(callSchema)(input, {
+  Schema.decodeEffect(callSchema)(input, {
     onExcessProperty: "error",
   }).pipe(
     Effect.mapError((error) => {
-      const issue =
-        SchemaIssue.makeFormatterStandardSchemaV1()(error.issue)
-          .issues[0]
+      const issue = SchemaIssue.makeFormatterStandardSchemaV1()(error.issue)
+        .issues[0]
+
       const path = issue?.path ?? []
+
       const issuePath =
         path.length === 0
           ? "#"
-          : `#/${path.map((segment) =>
-              Result.match(decodeStandardSchemaPathSegment(segment), {
-                onFailure: () => String(segment),
-                onSuccess: ({ key }) => String(key),
-              })
-            ).join("/")}`
+          : `#/${path
+              .map((segment) =>
+                Result.match(decodeStandardSchemaPathSegment(segment), {
+                  onFailure: () => String(segment),
+                  onSuccess: ({ key }) => String(key),
+                }),
+              )
+              .join("/")}`
 
       return new InvalidToolCall({
         tool: name,
@@ -442,10 +407,7 @@ const projectModelResult = <
 >(
   tool: string,
   projection:
-    | ToolModelProjection<
-        ServerResult,
-        Exclude<ModelSchema, undefined>
-      >
+    | ToolModelProjection<ServerResult, Exclude<ModelSchema, undefined>>
     | undefined,
   result: ServerResult,
 ): Effect.Effect<ToolModelResult<ModelSchema>, InvalidToolProjection> => {
@@ -477,16 +439,14 @@ const projectModelResult = <
     // SAFETY: decoding the Type side returned the configured schema's exact
     // Type side, which is ToolModelResult<ModelSchema> in this branch.
     Effect.map((value) =>
-      Fn.cast<typeof value, ToolModelResult<ModelSchema>>(value)
+      Fn.cast<typeof value, ToolModelResult<ModelSchema>>(value),
     ),
   )
 }
 
 const encodeToolExecutionModelContext = <ModelResult>(
   tool: string,
-  projection:
-    | { readonly schema: ToolSchema }
-    | undefined,
+  projection: { readonly schema: ToolSchema } | undefined,
   modelResult: ModelResult,
 ): Effect.Effect<string | undefined, InvalidToolProjection> => {
   if (projection === undefined) {
@@ -495,15 +455,13 @@ const encodeToolExecutionModelContext = <ModelResult>(
 
   return Schema.encodeUnknownEffect(projection.schema)(modelResult).pipe(
     Effect.flatMap((encodedResult) =>
-      Schema.encodeUnknownEffect(
-        Schema.fromJsonString(Schema.Unknown),
-      )({
+      Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))({
         tool,
         result: encodedResult,
       }),
     ),
     Effect.flatMap((context) =>
-      Schema.decodeUnknownEffect(ToolExecutionModelContextSchema)(context),
+      Schema.decodeEffect(ToolExecutionModelContextSchema)(context),
     ),
     Effect.mapError(
       () =>
@@ -550,29 +508,26 @@ const projectViews = <
     )
   }).pipe(
     Effect.map((parts) =>
-      parts.flatMap((part) =>
-        part === undefined ? [] : [part],
-      ),
+      parts.flatMap((part) => (part === undefined ? [] : [part])),
     ),
     Effect.map((parts) => {
       // SAFETY: Every retained part was parsed by the corresponding presenter
       // view, and the output union is derived from that same presenter tuple.
-      return Fn.cast<
-        typeof parts,
-        ReadonlyArray<ToolViewPart<Presenters>>
-      >(parts)
+      return Fn.cast<typeof parts, ReadonlyArray<ToolViewPart<Presenters>>>(
+        parts,
+      )
     }),
   )
 
-const makeModelInputSchema = (
-  schema: ToolSchema,
-): JsonSchema.JsonSchema => {
+const makeModelInputSchema = (schema: ToolSchema): JsonSchema.JsonSchema => {
   const document = JsonSchema.toDocumentDraft07(
     Schema.toJsonSchemaDocument(schema),
   )
-  const definitions = Object.keys(document.definitions).length === 0
-    ? {}
-    : { definitions: document.definitions }
+
+  const definitions =
+    Object.keys(document.definitions).length === 0
+      ? {}
+      : { definitions: document.definitions }
 
   return {
     $schema: JsonSchema.META_SCHEMA_URI_DRAFT_07,
@@ -607,19 +562,22 @@ export const makeToolCall = <
   input: Schema.Schema.Type<InputSchema>,
 ): EncodedToolCall<Name, InputSchema> => {
   const encodedArguments = Schema.encodeSync(tool.inputSchema)(input)
-  const encodedCall = Schema.decodeUnknownSync(JsonValueSchema)({
-    name: tool.name,
-    arguments: encodedArguments,
-  }, {
-    onExcessProperty: "error",
-  })
+
+  const encodedCall = Schema.decodeUnknownSync(JsonValueSchema)(
+    {
+      name: tool.name,
+      arguments: encodedArguments,
+    },
+    {
+      onExcessProperty: "error",
+    },
+  )
 
   // SAFETY: the input codec produced Encoded<InputSchema>; the JSON boundary
   // then proved that the complete name-and-arguments envelope is transportable.
-  return Fn.cast<
-    typeof encodedCall,
-    EncodedToolCall<Name, InputSchema>
-  >(encodedCall)
+  return Fn.cast<typeof encodedCall, EncodedToolCall<Name, InputSchema>>(
+    encodedCall,
+  )
 }
 
 const makeTool = <
@@ -658,69 +616,63 @@ const makeTool = <
   // literal name and InputSchema before makeTool is called.
   const callSchema = Fn.cast<
     typeof runtime.callSchema,
-    Schema.Codec<
-      ToolCall<Name, InputSchema>,
-      unknown,
-      never,
-      never
-    >
+    Schema.Codec<ToolCall<Name, InputSchema>, unknown, never, never>
   >(runtime.callSchema)
+
   const parseCall = (input: JsonValue) =>
     parseToolCall(runtime.name, callSchema, input)
+
   const executeRuntime = (
     input: Schema.Schema.Type<InputSchema>,
     context: CommandExecutionContext | undefined,
   ) =>
-    runtime.executeServer(
-      input,
-      // SAFETY: command constructors expose a required context while query
-      // constructors expose no context; runtime.operation owns that invariant.
-      Fn.cast<
-        CommandExecutionContext | undefined,
-        Operation extends "command"
-          ? CommandExecutionContext
-          : undefined
-      >(context),
-    ).pipe(
-      Effect.tap(() =>
-        recordDebugEvent({
-          _tag: "ToolCalled",
-          tool: runtime.name,
-        }),
-      ),
-      Effect.flatMap((serverResult) =>
-        Effect.all({
-          modelResult: projectModelResult(
-            runtime.name,
-            runtime.modelProjection,
-            serverResult,
-          ),
-          views: projectViews(
-            runtime.name,
-            runtime.presenters,
-            serverResult,
-          ),
-        }).pipe(
-          Effect.flatMap(({ modelResult, views }) =>
-            encodeToolExecutionModelContext(
+    runtime
+      .executeServer(
+        input,
+        // SAFETY: command constructors expose a required context while query
+        // constructors expose no context; runtime.operation owns that invariant.
+        Fn.cast<
+          CommandExecutionContext | undefined,
+          Operation extends "command" ? CommandExecutionContext : undefined
+        >(context),
+      )
+      .pipe(
+        Effect.tap(() =>
+          recordDebugEvent({
+            _tag: "ToolCalled",
+            tool: runtime.name,
+          }),
+        ),
+        Effect.flatMap((serverResult) =>
+          Effect.all({
+            modelResult: projectModelResult(
               runtime.name,
               runtime.modelProjection,
-              modelResult,
-            ).pipe(
-              Effect.map((modelContext) => ({
-                serverResult,
+              serverResult,
+            ),
+            views: projectViews(runtime.name, runtime.presenters, serverResult),
+          }).pipe(
+            Effect.flatMap(({ modelResult, views }) =>
+              encodeToolExecutionModelContext(
+                runtime.name,
+                runtime.modelProjection,
                 modelResult,
-                views,
-                [toolExecutionModelContext]: modelContext,
-              })),
+              ).pipe(
+                Effect.map((modelContext) => ({
+                  serverResult,
+                  modelResult,
+                  views,
+                  [toolExecutionModelContext]: modelContext,
+                })),
+              ),
             ),
           ),
         ),
-      ),
-      Effect.withSpan("popcomputer.structured_chat.tool.execute", {
-        attributes: { tool: runtime.name },
-      }),
-    )
+        Effect.withSpan("popcomputer.structured_chat.tool.execute", {
+          attributes: { tool: runtime.name },
+        }),
+      )
+
   // SAFETY: command constructors expose a required context while query
   // constructors expose no context; both feed this operation-tagged runtime.
   const execute = Fn.cast<
@@ -736,6 +688,7 @@ const makeTool = <
       Operation
     >["execute"]
   >(executeRuntime)
+
   const executeCallRuntime = (
     input: JsonValue,
     context: CommandExecutionContext | undefined,
@@ -793,21 +746,17 @@ export const defineTool = <
     Error,
     Requirements
   >,
-): StructuredTool<
-  Name,
-  InputSchema,
-  ServerResult,
-  Error,
-  Requirements
-> => {
-  Schema.decodeSync(ToolNameSchema)(definition.name)
-  Schema.decodeSync(ToolDescriptionSchema)(definition.description)
+): StructuredTool<Name, InputSchema, ServerResult, Error, Requirements> => {
+  ToolNameSchema.make(definition.name)
+  ToolDescriptionSchema.make(definition.description)
   const name = definition.name
   const description = definition.description
+
   const rawCallSchema = Schema.Struct({
     name: Schema.Literal(name),
     arguments: definition.input,
   })
+
   // SAFETY: the literal name and input schema are exactly the two ToolCall
   // fields, and the constituent schemas require no runtime context.
   const callSchema = Fn.cast<
@@ -842,19 +791,15 @@ export const defineCommand = <
     Error,
     Requirements
   >,
-): StructuredCommand<
-  Name,
-  InputSchema,
-  ServerResult,
-  Error,
-  Requirements
-> => {
-  Schema.decodeSync(ToolNameSchema)(definition.name)
-  Schema.decodeSync(ToolDescriptionSchema)(definition.description)
+): StructuredCommand<Name, InputSchema, ServerResult, Error, Requirements> => {
+  ToolNameSchema.make(definition.name)
+  ToolDescriptionSchema.make(definition.description)
+
   const rawCallSchema = Schema.Struct({
     name: Schema.Literal(definition.name),
     arguments: definition.input,
   })
+
   // SAFETY: the literal name and input schema exactly form ToolCall.
   const callSchema = Fn.cast<
     typeof rawCallSchema,
@@ -874,15 +819,11 @@ export const defineCommand = <
 }
 
 /** Add one bounded model-visible result projection to a tool. */
-const modelResult = <
-  ServerResult,
-  ModelSchema extends ToolSchema,
->(
-  schema: ModelSchema,
-  project: (
-    result: ServerResult,
-  ) => Schema.Schema.Type<ModelSchema>,
-) =>
+const modelResult =
+  <ServerResult, ModelSchema extends ToolSchema>(
+    schema: ModelSchema,
+    project: (result: ServerResult) => Schema.Schema.Type<ModelSchema>,
+  ) =>
   <
     Name extends string,
     InputSchema extends ToolSchema,
@@ -914,10 +855,12 @@ const modelResult = <
     Operation
   > => {
     const runtime = tool[toolRuntime]
+
     const nextRuntime = {
       ...runtime,
       modelProjection: { schema, project },
     }
+
     // SAFETY: this combinator changes only the model-projection slot from
     // absent to the exact supplied schema and projector.
     return makeTool(
@@ -938,15 +881,11 @@ const modelResult = <
   }
 
 /** Add one optional display-safe view projection to a tool. */
-const present = <
-  ServerResult,
-  View extends ViewDefinitionContract,
->(
-  view: View,
-  project: (
-    result: ServerResult,
-  ) => ViewInput<View> | undefined,
-) =>
+const present =
+  <ServerResult, View extends ViewDefinitionContract>(
+    view: View,
+    project: (result: ServerResult) => ViewInput<View> | undefined,
+  ) =>
   <
     Name extends string,
     InputSchema extends ToolSchema,
@@ -975,19 +914,14 @@ const present = <
     Error,
     Requirements,
     ModelSchema,
-    readonly [
-      ...Presenters,
-      ToolPresenter<ServerResult, View>,
-    ],
+    readonly [...Presenters, ToolPresenter<ServerResult, View>],
     Operation
   > => {
     const runtime = tool[toolRuntime]
+
     return makeTool({
       ...runtime,
-      presenters: [
-        ...runtime.presenters,
-        { view, project },
-      ],
+      presenters: [...runtime.presenters, { view, project }],
     })
   }
 

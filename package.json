@@ -36,6 +36,14 @@
       "types": "./dist/integrations/d1.d.ts",
       "import": "./dist/integrations/d1.js"
     },
+    "./live": {
+      "types": "./dist/integrations/live.d.ts",
+      "import": "./dist/integrations/live.js"
+    },
+    "./live/openai": {
+      "types": "./dist/integrations/openai-live.d.ts",
+      "import": "./dist/integrations/openai-live.js"
+    },
     "./client": {
       "types": "./dist/integrations/chat-client.d.ts",
       "import": "./dist/integrations/chat-client.js"
@@ -56,6 +64,7 @@
   "files": [
     "dist",
     "examples",
+    "docs/live.md",
     "migrations/d1",
     "CHANGELOG.md",
     "README.md",

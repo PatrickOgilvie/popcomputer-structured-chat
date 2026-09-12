@@ -20,6 +20,18 @@ import {
   makeD1ChatSessionStore,
 } from "@popcomputer/structured-chat/d1"
 import { Effect, Result, Schema } from "effect"
+import * as Live from "@popcomputer/structured-chat/live"
+import * as OpenAILive from "@popcomputer/structured-chat/live/openai"
+
+if (
+  !Live.run ||
+  !Live.turn ||
+  !Live.journal ||
+  !OpenAILive.connection ||
+  !OpenAILive.createSession
+) {
+  throw new Error("Live integration entry point smoke test failed")
+}
 
 const ResultView = View.define({
   name: "result",
@@ -45,11 +57,10 @@ const EchoStage = Stage.tools({
   instructions: ["Echo one value."],
   tools: [tool],
 })
+
 const planned = await Effect.runPromise(
   EchoStage.plan([Model.Message.user("Echo a scripted value.")]).pipe(
-    Effect.provide(
-      Scenario.model(Scenario.call(tool, { value: "scripted" })),
-    ),
+    Effect.provide(Scenario.model(Scenario.call(tool, { value: "scripted" }))),
   ),
 )
 
@@ -69,6 +80,7 @@ const stored = await Effect.runPromise(
       state: { status: "ready" },
       messages: [],
     })
+
     return yield* store.load({
       namespace: "node-smoke",
       sessionId: "session-1",
@@ -95,18 +107,37 @@ if (!StructuredChatAssistantProvider) {
 try {
   const { DatabaseSync } = await import("node:sqlite")
   const sqlite = new DatabaseSync(":memory:")
-  sqlite.exec(readFileSync(new URL("../migrations/d1/0001_structured_chat_sessions.sql", import.meta.url), "utf8"))
+  sqlite.exec(
+    readFileSync(
+      new URL(
+        "../migrations/d1/0001_structured_chat_sessions.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  )
+
   const d1Store = makeD1ChatSessionStore({
     prepare: (query) => {
       const statement = sqlite.prepare(query)
       let values = []
+
       const bind = (...next) => {
         values = next
-        return { bind, first: async () => statement.get(...values) ?? null, run: async () => ({ meta: { changes: statement.run(...values).changes } }) }
+
+        return {
+          bind,
+          first: async () => statement.get(...values) ?? null,
+          run: async () => ({
+            meta: { changes: statement.run(...values).changes },
+          }),
+        }
       }
+
       return bind()
     },
   })
+
   const d1Stored = await Effect.runPromise(
     Effect.gen(function* () {
       yield* d1Store.replace({
@@ -118,6 +149,7 @@ try {
         state: { status: "ready" },
         messages: [],
       })
+
       return yield* d1Store.load({
         namespace: "node-smoke",
         sessionId: "session-1",
@@ -126,25 +158,37 @@ try {
       })
     }),
   )
+
   if (d1Stored?.revision !== "1") {
     throw new Error("./d1 entry point smoke test failed")
   }
+
   const removed = await Effect.runPromise(
     cleanupExpiredD1ChatSessions(
       {
         prepare: (query) => {
           const statement = sqlite.prepare(query)
           let values = []
+
           const bind = (...next) => {
             values = next
-            return { bind, first: async () => statement.get(...values) ?? null, run: async () => ({ meta: { changes: statement.run(...values).changes } }) }
+
+            return {
+              bind,
+              first: async () => statement.get(...values) ?? null,
+              run: async () => ({
+                meta: { changes: statement.run(...values).changes },
+              }),
+            }
           }
+
           return bind()
         },
       },
       { expiringNamespacePrefixes: ["other:"], retentionMillis: 60_000 },
     ),
   )
+
   if (removed !== 0) {
     throw new Error("./d1 entry point smoke test failed")
   }
@@ -168,23 +212,29 @@ if (ResultUI.unstable_data.name !== "result") {
 }
 
 const debugStore = createStructuredChatDebugStore()
+
 void StructuredChatDebugPanel
+
 if (debugStore.getSnapshot() !== null) {
   throw new Error("Assistant debug inspector smoke test failed")
 }
 
 let requestedEndpoint
+
 const answerStore = createStructuredChatUserAnswerStore()
+
 const nodeUserAnswers = {
   schemaVersion: 1,
   chat: { name: "node_smoke", version: 1 },
   sections: [],
 }
+
 const adapter = makeAssistantChatModelAdapter({
   endpoint: "https://example.invalid/turn",
   onAnswerSnapshot: answerStore.receive,
   fetch: (input) => {
     requestedEndpoint = input
+
     return Promise.resolve(
       new Response(
         JSON.stringify({
@@ -204,6 +254,7 @@ const adapter = makeAssistantChatModelAdapter({
     )
   },
 })
+
 const adapted = await adapter.run({
   messages: [
     {
@@ -225,10 +276,12 @@ if (
 }
 
 let requestedExploration
+
 const explorationClient = makeAssistantExplorationClient({
   endpoint: "https://example.invalid/explore",
   fetch: (_input, init) => {
     requestedExploration = JSON.parse(String(init.body))
+
     return Promise.resolve(
       new Response(
         JSON.stringify({
@@ -243,6 +296,7 @@ const explorationClient = makeAssistantExplorationClient({
     )
   },
 })
+
 const explored = await explorationClient.run({
   session: { id: "node-smoke", revision: "9" },
   call: { name: "echo", arguments: { value: "related" } },

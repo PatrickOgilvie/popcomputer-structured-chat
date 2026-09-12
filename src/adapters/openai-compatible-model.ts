@@ -1,13 +1,5 @@
-import {
-  cast,
-  Context,
-  Effect,
-  Exit,
-  JsonSchema,
-  Layer,
-  Result,
-  Schema,
-} from "effect"
+import type { Context, JsonSchema } from "effect"
+import { cast, Effect, Exit, Layer, Result, Schema } from "effect"
 import {
   ChatModelUnavailable,
   StructuredChatModel,
@@ -18,15 +10,9 @@ import {
   type StructuredChatModelService,
   type ToolModelRequest,
 } from "../core/model.js"
-import {
-  nextDebugModelCall,
-  recordDebugEvent,
-} from "../core/debug-trace.js"
+import { nextDebugModelCall, recordDebugEvent } from "../core/debug-trace.js"
 import type { ModelToolDefinition } from "../core/tool.js"
-import {
-  JsonValueSchema,
-  type JsonValue,
-} from "../core/json-value.js"
+import { JsonValueSchema, type JsonValue } from "../core/json-value.js"
 
 /** Bounded timeout for one provider tool-call request. */
 export const StructuredChatRequestTimeoutSchema = Schema.Number.check(
@@ -68,11 +54,10 @@ type OpenAICompatibleToolArguments = Schema.Schema.Type<
 >
 
 /** Bounded provider model identifier used for routing and diagnostics. */
-export const StructuredChatModelIdSchema =
-  Schema.Trimmed.check(
-    Schema.isNonEmpty(),
-    Schema.isMaxLength(200),
-  )
+export const StructuredChatModelIdSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(200),
+)
 
 /** Bounded provider model identifier used for routing and diagnostics. */
 export type StructuredChatModelId = Schema.Schema.Type<
@@ -132,12 +117,10 @@ interface OpenAICompatibleProviderConfig {
 }
 
 /** Configuration for the built-in Cloudflare Workers AI provider. */
-export interface CloudflareWorkersAIProviderConfig
-  extends OpenAICompatibleProviderConfig {}
+export interface CloudflareWorkersAIProviderConfig extends OpenAICompatibleProviderConfig {}
 
 /** Configuration for the built-in OpenAI provider. */
-export interface OpenAIProviderConfig
-  extends OpenAICompatibleProviderConfig {}
+export interface OpenAIProviderConfig extends OpenAICompatibleProviderConfig {}
 
 /** Stable identifier for a built-in model provider. */
 export const StructuredChatProviderIdSchema = Schema.Literals([
@@ -182,10 +165,7 @@ export interface StructuredChatModelRetryPolicy {
   readonly maximumAttempts: 1 | 2 | 3
   /** Transport failure reasons eligible for retry. */
   readonly retryableReasons: ReadonlyArray<
-    Exclude<
-      ChatModelUnavailableReason,
-      "invalid_response" | "response_blocked"
-    >
+    Exclude<ChatModelUnavailableReason, "invalid_response" | "response_blocked">
   >
   /** Fixed delay between attempts, bounded 0..1000 ms. */
   readonly delayMilliseconds?: number
@@ -202,9 +182,7 @@ const RetryDelaySchema = Schema.Number.check(
 export interface StructuredChatModelConfig {
   readonly provider: StructuredChatProvider
   readonly timeoutMilliseconds: number
-  readonly classifyError?: (
-    cause: unknown,
-  ) => ChatModelUnavailableReason
+  readonly classifyError?: (cause: unknown) => ChatModelUnavailableReason
   readonly retry?: StructuredChatModelRetryPolicy
 }
 
@@ -220,9 +198,7 @@ const makeProvider = (
   config: OpenAICompatibleProviderConfig,
   toolArguments: OpenAICompatibleToolArguments,
 ): StructuredChatProvider => {
-  const model = Schema.decodeSync(StructuredChatModelIdSchema)(
-    config.model,
-  )
+  const model = Schema.decodeSync(StructuredChatModelIdSchema)(config.model)
 
   return {
     id,
@@ -231,8 +207,7 @@ const makeProvider = (
       toolArguments,
       requestOptions: config.requestOptions ?? {},
       guidanceSchemaOverride: config.guidanceSchemaOverride,
-      complete: (input, signal) =>
-        config.complete({ model, input }, signal),
+      complete: (input, signal) => config.complete({ model, input }, signal),
     },
   }
 }
@@ -256,19 +231,13 @@ export const ModelProvider = {
    * Known Structured Outputs model families use strict function arguments.
    * Unknown and older model identifiers conservatively use schema guidance.
    */
-  openAI: (
-    config: OpenAIProviderConfig,
-  ): StructuredChatProvider => {
-    const model = Schema.decodeSync(StructuredChatModelIdSchema)(
-      config.model,
-    )
+  openAI: (config: OpenAIProviderConfig): StructuredChatProvider => {
+    const model = Schema.decodeSync(StructuredChatModelIdSchema)(config.model)
 
     return makeProvider(
       "openai",
       { ...config, model },
-      openAIModelSupportsStrictToolArguments(model)
-        ? "strict"
-        : "guided",
+      openAIModelSupportsStrictToolArguments(model) ? "strict" : "guided",
     )
   },
 } as const
@@ -284,9 +253,7 @@ const ToolCallResponseSchema = Schema.Struct({
                 Schema.isNonEmpty(),
                 Schema.isMaxLength(100),
               ),
-              arguments: Schema.String.check(
-                Schema.isMaxLength(20_000),
-              ),
+              arguments: Schema.String.check(Schema.isMaxLength(20_000)),
             }),
           }),
         ]),
@@ -296,9 +263,7 @@ const ToolCallResponseSchema = Schema.Struct({
 })
 
 const unavailable = (
-  reason: Schema.Schema.Type<
-    typeof ChatModelUnavailableReasonSchema
-  >,
+  reason: Schema.Schema.Type<typeof ChatModelUnavailableReasonSchema>,
 ) => new ChatModelUnavailable({ reason })
 
 const parseJson = (
@@ -308,25 +273,19 @@ const parseJson = (
     Effect.mapError(() => unavailable("invalid_response")),
   )
 
-const JsonSchemaObjectSchema = Schema.Record(
-  Schema.String,
-  JsonValueSchema,
-)
+const JsonSchemaObjectSchema = Schema.Record(Schema.String, JsonValueSchema)
 
 type JsonSchemaObject = Schema.Schema.Type<typeof JsonSchemaObjectSchema>
 
 interface StrictSchemaIssue {
   readonly path: string
   readonly reason:
-    | "root_not_object"
-    | "additional_properties_allowed"
-    | "optional_property"
+    "root_not_object" | "additional_properties_allowed" | "optional_property"
 }
 
 const isJsonSchemaObject = (
   value: JsonValue | undefined,
-): value is JsonSchemaObject =>
-  Schema.is(JsonSchemaObjectSchema)(value)
+): value is JsonSchemaObject => Schema.is(JsonSchemaObjectSchema)(value)
 
 const appendJsonPointer = (path: string, segment: string): string =>
   `${path}/${segment.replaceAll("~", "~0").replaceAll("/", "~1")}`
@@ -349,12 +308,9 @@ const findStrictObjectIssue = (
     const properties = isJsonSchemaObject(schema.properties)
       ? schema.properties
       : {}
+
     const required = Array.isArray(schema.required)
-      ? new Set(
-          schema.required.filter(
-            Schema.is(Schema.String),
-          ),
-        )
+      ? new Set(schema.required.filter(Schema.is(Schema.String)))
       : new Set<string>()
 
     for (const property of Object.keys(properties)) {
@@ -373,13 +329,12 @@ const findStrictObjectIssue = (
       if (!isJsonSchemaObject(propertySchema)) {
         continue
       }
+
       const issue = findStrictObjectIssue(
         propertySchema,
-        appendJsonPointer(
-          appendJsonPointer(path, "properties"),
-          property,
-        ),
+        appendJsonPointer(appendJsonPointer(path, "properties"), property),
       )
+
       if (issue !== undefined) {
         return issue
       }
@@ -388,20 +343,21 @@ const findStrictObjectIssue = (
 
   for (const definitionKey of ["$defs", "definitions"] as const) {
     const definitions = schema[definitionKey]
+
     if (!isJsonSchemaObject(definitions)) {
       continue
     }
+
     for (const [name, definition] of Object.entries(definitions)) {
       if (!isJsonSchemaObject(definition)) {
         continue
       }
+
       const issue = findStrictObjectIssue(
         definition,
-        appendJsonPointer(
-          appendJsonPointer(path, definitionKey),
-          name,
-        ),
+        appendJsonPointer(appendJsonPointer(path, definitionKey), name),
       )
+
       if (issue !== undefined) {
         return issue
       }
@@ -410,17 +366,21 @@ const findStrictObjectIssue = (
 
   for (const unionKey of ["allOf", "anyOf", "oneOf"] as const) {
     const members = schema[unionKey]
+
     if (!Array.isArray(members)) {
       continue
     }
+
     for (const [index, member] of members.entries()) {
       if (!isJsonSchemaObject(member)) {
         continue
       }
+
       const issue = findStrictObjectIssue(
         member,
         appendJsonPointer(appendJsonPointer(path, unionKey), String(index)),
       )
+
       if (issue !== undefined) {
         return issue
       }
@@ -428,6 +388,7 @@ const findStrictObjectIssue = (
   }
 
   const items = schema.items
+
   if (isJsonSchemaObject(items)) {
     return findStrictObjectIssue(items, appendJsonPointer(path, "items"))
   }
@@ -445,16 +406,16 @@ const findStrictSchemaIssue = (
   return findStrictObjectIssue(schema, "#")
 }
 
-const parseSchemaDocument = Schema.decodeUnknownExit(
-  JsonSchemaObjectSchema,
-  { onExcessProperty: "error" },
-)
+const parseSchemaDocument = Schema.decodeUnknownExit(JsonSchemaObjectSchema, {
+  onExcessProperty: "error",
+})
 
 const strictDocumentIssue = (
   toolName: string,
   document: JsonSchemaObject,
 ): UnsupportedModelToolSchema | undefined => {
   const issue = findStrictSchemaIssue(document)
+
   return issue === undefined
     ? undefined
     : new UnsupportedModelToolSchema({
@@ -468,6 +429,7 @@ const strictToolIssue = (
   tool: ModelToolDefinition,
 ): UnsupportedModelToolSchema | undefined => {
   const parsedSchema = parseSchemaDocument(tool.inputSchema)
+
   if (Exit.isFailure(parsedSchema)) {
     return new UnsupportedModelToolSchema({
       tool: tool.name,
@@ -491,10 +453,8 @@ const parseGuidanceOverride = (
   overridden: JsonSchema.JsonSchema,
 ): Result.Result<JsonSchemaObject, UnsupportedModelToolSchema> => {
   const parsedSchema = parseSchemaDocument(overridden)
-  if (
-    Exit.isFailure(parsedSchema) ||
-    parsedSchema.value.type !== "object"
-  ) {
+
+  if (Exit.isFailure(parsedSchema) || parsedSchema.value.type !== "object") {
     return Result.fail(
       new UnsupportedModelToolSchema({
         tool: toolName,
@@ -503,6 +463,7 @@ const parseGuidanceOverride = (
       }),
     )
   }
+
   return Result.succeed(parsedSchema.value)
 }
 
@@ -543,34 +504,41 @@ const serializeProviderTools = (
   UnsupportedModelToolSchema
 > => {
   const tools: Array<OpenAICompatibleTool> = []
+
   for (const tool of request.tools) {
     const view: ProviderToolSchemaView = {
       name: tool.name,
       description: tool.description,
       derivedSchema: tool.inputSchema,
     }
+
     const overridden = guidanceSchemaOverride?.(view)
     let parameters: JsonSchema.JsonSchema = tool.inputSchema
     let issue: UnsupportedModelToolSchema | undefined
+
     if (overridden === undefined) {
-      issue =
-        toolArguments === "strict" ? strictToolIssue(tool) : undefined
+      issue = toolArguments === "strict" ? strictToolIssue(tool) : undefined
     } else {
       parameters = overridden
       const parsedOverride = parseGuidanceOverride(tool.name, overridden)
+
       if (Result.isFailure(parsedOverride)) {
         return Effect.fail(parsedOverride.failure)
       }
+
       issue =
         toolArguments === "strict"
           ? strictDocumentIssue(tool.name, parsedOverride.success)
           : undefined
     }
+
     if (issue !== undefined) {
       return Effect.fail(issue)
     }
+
     tools.push(toProviderTool(tool, parameters, toolArguments))
   }
+
   return Effect.succeed(tools)
 }
 
@@ -580,11 +548,7 @@ const toProviderInput = (
   toolArguments: OpenAICompatibleToolArguments,
   guidanceSchemaOverride: GuidanceSchemaOverride | undefined,
 ): Effect.Effect<OpenAICompatibleInput, UnsupportedModelToolSchema> =>
-  serializeProviderTools(
-    request,
-    toolArguments,
-    guidanceSchemaOverride,
-  ).pipe(
+  serializeProviderTools(request, toolArguments, guidanceSchemaOverride).pipe(
     Effect.map((tools) => ({
       ...requestOptions,
       messages: [
@@ -613,7 +577,9 @@ export const makeStructuredChatModel = (
   const timeoutMilliseconds = Schema.decodeSync(
     StructuredChatRequestTimeoutSchema,
   )(config.timeoutMilliseconds)
+
   const runtime = config.provider[StructuredChatProviderRuntime]
+
   const classifyError =
     config.classifyError ?? (() => "request_failed" as const)
 
@@ -623,13 +589,14 @@ export const makeStructuredChatModel = (
       : Schema.decodeSync(RetryMaximumAttemptsSchema)(
           config.retry.maximumAttempts,
         )
+
   // SAFETY: blocked and invalid responses are excluded at the type level; this
   // runtime filter keeps hand-written or untyped configurations fail-closed.
-  const isConfiguredRetryable = (
-    reason: ChatModelUnavailableReason,
-  ): boolean =>
+  const isConfiguredRetryable = (reason: ChatModelUnavailableReason): boolean =>
     reason !== "response_blocked" && reason !== "invalid_response"
+
   const retryableReasons = new Set<ChatModelUnavailableReason>()
+
   if (config.retry !== undefined) {
     for (const reason of config.retry.retryableReasons) {
       if (isConfiguredRetryable(reason)) {
@@ -637,12 +604,11 @@ export const makeStructuredChatModel = (
       }
     }
   }
+
   const delayMilliseconds =
     config.retry?.delayMilliseconds === undefined
       ? 0
-      : Schema.decodeSync(RetryDelaySchema)(
-          config.retry.delayMilliseconds,
-        )
+      : Schema.decodeSync(RetryDelaySchema)(config.retry.delayMilliseconds)
 
   const parseProviderResponse = (response: JsonValue) =>
     Schema.decodeUnknownEffect(ToolCallResponseSchema)(response).pipe(
@@ -650,7 +616,7 @@ export const makeStructuredChatModel = (
     )
 
   const parseProviderJson = (response: JsonValue) =>
-    Schema.decodeUnknownEffect(JsonValueSchema)(response, {
+    Schema.decodeEffect(JsonValueSchema)(response, {
       onExcessProperty: "error",
     }).pipe(Effect.mapError(() => unavailable("invalid_response")))
 
@@ -661,10 +627,12 @@ export const makeStructuredChatModel = (
   ) =>
     Effect.gen(function* () {
       const call = yield* nextDebugModelCall
+
       const providerRequest = {
         model: config.provider.model,
         input,
       }
+
       // SAFETY: the adapter constructs input only from JSON-compatible request
       // options, messages, and tool schema documents; model is a string.
       const request = cast<typeof providerRequest, JsonValue>(providerRequest)
@@ -704,8 +672,7 @@ export const makeStructuredChatModel = (
 
       return yield* parseProviderResponse(response).pipe(
         Effect.flatMap((parsedResponse) => {
-          const tool =
-            parsedResponse.choices[0].message.tool_calls[0].function
+          const tool = parsedResponse.choices[0].message.tool_calls[0].function
 
           return parseJson(tool.arguments).pipe(
             Effect.map((arguments_) => ({
@@ -724,9 +691,8 @@ export const makeStructuredChatModel = (
       )
     })
 
-  const isRetryableUnavailable = (
-    error: ChatModelUnavailable,
-  ): boolean => retryableReasons.has(error.reason)
+  const isRetryableUnavailable = (error: ChatModelUnavailable): boolean =>
+    retryableReasons.has(error.reason)
 
   /**
    * Retry only the transport and envelope region. Guards and strict-schema
@@ -743,17 +709,18 @@ export const makeStructuredChatModel = (
   > =>
     Effect.suspend(() => {
       const once = attemptProviderCall(input, attemptNumber)
+
       // Content-free observability: the attempt count is annotated only for
       // follow-up attempts; reasons stay behind the stable failure tag.
       const annotatedOnce =
         attemptNumber > 1
           ? once.pipe(
-              Effect.withSpan(
-                "popcomputer.structured_chat.model.attempt",
-                { attributes: { attempt: attemptNumber } },
-              ),
+              Effect.withSpan("popcomputer.structured_chat.model.attempt", {
+                attributes: { attempt: attemptNumber },
+              }),
             )
-            : once
+          : once
+
       return annotatedOnce.pipe(
         Effect.catchIf(isRetryableUnavailable, (error) =>
           remainingAttempts <= 0
@@ -792,9 +759,7 @@ export function structuredChatModelLayer(
 ): Layer.Layer<StructuredChatModel>
 
 /** Build a named-profile Effect layer for one provider-backed chat model. */
-export function structuredChatModelLayer<
-  const Profile extends AnyModelProfile,
->(
+export function structuredChatModelLayer<const Profile extends AnyModelProfile>(
   profile: Profile & ExactModelProfile<Profile>,
   config: StructuredChatModelConfig,
 ): Layer.Layer<Context.Service.Identifier<Profile>>
@@ -802,22 +767,15 @@ export function structuredChatModelLayer<
 export function structuredChatModelLayer(
   ...args:
     | readonly [config: StructuredChatModelConfig]
-    | readonly [
-        profile: AnyModelProfile,
-        config: StructuredChatModelConfig,
-      ]
+    | readonly [profile: AnyModelProfile, config: StructuredChatModelConfig]
 ) {
   if (args.length === 1) {
     const service = makeStructuredChatModel(args[0])
-    return Layer.succeed(
-      StructuredChatModel,
-      StructuredChatModel.of(service),
-    )
+
+    return Layer.succeed(StructuredChatModel, StructuredChatModel.of(service))
   }
 
   const [profile, config] = args
-  return Layer.succeed(
-    profile,
-    makeStructuredChatModel(config),
-  )
+
+  return Layer.succeed(profile, makeStructuredChatModel(config))
 }

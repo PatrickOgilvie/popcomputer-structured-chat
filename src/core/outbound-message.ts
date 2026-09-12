@@ -1,4 +1,4 @@
-import { Context, Effect, Schema } from "effect"
+import { Predicate, Context, Effect, Schema } from "effect"
 import type { BranchContract } from "./branch.js"
 import {
   structuredDefinition,
@@ -102,14 +102,18 @@ export const defineMessage = <
   readonly text: (input: Input["Type"]) => string
   readonly replies?: (input: Input["Type"]) => ReadonlyArray<ReplyHint>
 }): OutboundMessage<Name, Input> => {
-  Schema.decodeSync(ToolNameSchema)(input.name)
+  ToolNameSchema.make(input.name)
   const parseInput = Schema.decodeUnknownEffect(Schema.toType(input.input))
+
   const invalidInput = () =>
     new InvalidOutboundMessage({ reason: "invalid_input" })
+
   const invalidText = () =>
     new InvalidOutboundMessage({ reason: "invalid_text" })
+
   const invalidHint = () =>
     new InvalidOutboundMessage({ reason: "invalid_hint" })
+
   const prepareHints = Effect.fn("Message.prepareHints")(function* (
     value: Input["Type"],
   ) {
@@ -117,26 +121,32 @@ export const defineMessage = <
       try: () => input.replies?.(value) ?? [],
       catch: invalidHint,
     })
-    if (candidates.length > 20) return yield* Effect.fail(invalidHint())
+
+    if (candidates.length > 20) return yield* invalidHint()
+
     return yield* Effect.forEach(candidates, (candidate) =>
       Effect.gen(function* () {
-        const when = yield* Schema.decodeUnknownEffect(
-          TrustedInstructionSchema,
-        )(candidate.when)
-        const schema =
-          candidate.target._tag === "ChatBranch"
-            ? candidate.target.argumentsSchema
-            : candidate.target.inputSchema
+        const when = yield* Schema.decodeEffect(TrustedInstructionSchema)(
+          candidate.when,
+        )
+
+        const schema = Predicate.isTagged(candidate.target, "ChatBranch")
+          ? candidate.target.argumentsSchema
+          : candidate.target.inputSchema
+
         const arguments_ = yield* Schema.decodeUnknownEffect(
           Schema.toType(schema),
         )(candidate.arguments, { onExcessProperty: "error" })
+
         const encodedArguments = yield* Schema.encodeUnknownEffect(schema)(
           arguments_,
         ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(JsonValueSchema)))
+
         return { target: candidate.target, arguments: encodedArguments, when }
       }).pipe(Effect.mapError(invalidHint)),
     )
   })
+
   const definition: OutboundMessage<Name, Input> = structuredDefinition(
     "outbound_message",
   )({
@@ -148,12 +158,14 @@ export const defineMessage = <
           const parsed = yield* parseInput(value, {
             onExcessProperty: "error",
           }).pipe(Effect.mapError(invalidInput))
+
           const encoded = yield* Schema.encodeUnknownEffect(input.input)(
             parsed,
           ).pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(JsonValueSchema)),
             Effect.mapError(invalidInput),
           )
+
           const text = yield* Effect.try({
             try: () => input.text(parsed),
             catch: invalidText,
@@ -163,7 +175,9 @@ export const defineMessage = <
             ),
             Effect.mapError(invalidText),
           )
+
           const hints = yield* prepareHints(parsed)
+
           return { definition, input: encoded, text, hints }
         }),
       hints: (value) =>
@@ -173,6 +187,7 @@ export const defineMessage = <
         ),
     },
   })
+
   return definition
 }
 

@@ -3,6 +3,7 @@ import path from "node:path"
 import ts from "typescript"
 
 const sourceRoot = path.resolve("src")
+
 const expectedRootModules = new Set([
   "./Answer.js",
   "./Chat.js",
@@ -15,6 +16,7 @@ const expectedRootModules = new Set([
   "./Tool.js",
   "./View.js",
 ])
+
 const internalImporters = new Set([
   "Chat.ts",
   "core/chat.ts",
@@ -24,6 +26,7 @@ const internalImporters = new Set([
 ])
 
 const toPosix = (value) => value.split(path.sep).join("/")
+
 const sourceFiles = fs
   .readdirSync(sourceRoot, { recursive: true })
   .filter((file) => /\.(?:ts|tsx)$/.test(file))
@@ -33,12 +36,11 @@ const resolveRelative = (from, specifier) => {
   if (!specifier.startsWith(".")) {
     return undefined
   }
-  const unresolved = path.resolve(
-    sourceRoot,
-    path.dirname(from),
-    specifier,
-  )
+
+  const unresolved = path.resolve(sourceRoot, path.dirname(from), specifier)
+
   const withoutJs = unresolved.replace(/\.js$/, "")
+
   for (const candidate of [
     `${withoutJs}.ts`,
     `${withoutJs}.tsx`,
@@ -48,6 +50,7 @@ const resolveRelative = (from, specifier) => {
       return toPosix(path.relative(sourceRoot, candidate))
     }
   }
+
   return undefined
 }
 
@@ -55,10 +58,13 @@ const isRuntimeImport = (declaration) => {
   if (declaration.importClause === undefined) {
     return true
   }
+
   if (declaration.importClause.isTypeOnly) {
     return false
   }
+
   const bindings = declaration.importClause.namedBindings
+
   return !(
     bindings !== undefined &&
     ts.isNamedImports(bindings) &&
@@ -68,10 +74,12 @@ const isRuntimeImport = (declaration) => {
 }
 
 const graph = new Map()
+
 const errors = []
 
 for (const file of sourceFiles) {
   const absolute = path.join(sourceRoot, file)
+
   const parsed = ts.createSourceFile(
     file,
     fs.readFileSync(absolute, "utf8"),
@@ -79,7 +87,9 @@ for (const file of sourceFiles) {
     true,
     file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   )
+
   const edges = []
+
   for (const statement of parsed.statements) {
     if (
       ts.isImportDeclaration(statement) &&
@@ -87,11 +97,14 @@ for (const file of sourceFiles) {
       isRuntimeImport(statement)
     ) {
       const target = resolveRelative(file, statement.moduleSpecifier.text)
+
       if (target !== undefined) {
         edges.push(target)
       }
+
       continue
     }
+
     if (
       ts.isExportDeclaration(statement) &&
       !statement.isTypeOnly &&
@@ -99,11 +112,13 @@ for (const file of sourceFiles) {
       ts.isStringLiteral(statement.moduleSpecifier)
     ) {
       const target = resolveRelative(file, statement.moduleSpecifier.text)
+
       if (target !== undefined) {
         edges.push(target)
       }
     }
   }
+
   graph.set(file, edges)
 
   for (const target of edges) {
@@ -114,10 +129,8 @@ for (const file of sourceFiles) {
     ) {
       errors.push(`${file} imports testing production code from ${target}`)
     }
-    if (
-      target.startsWith("internal/") &&
-      !internalImporters.has(file)
-    ) {
+
+    if (target.startsWith("internal/") && !internalImporters.has(file)) {
       errors.push(`${file} is not allowed to import private ${target}`)
     }
   }
@@ -130,7 +143,9 @@ const indexSource = ts.createSourceFile(
   true,
   ts.ScriptKind.TS,
 )
+
 const rootModules = new Set()
+
 for (const statement of indexSource.statements) {
   if (
     !ts.isExportDeclaration(statement) ||
@@ -142,13 +157,16 @@ for (const statement of indexSource.statements) {
     errors.push("src/index.ts may contain only named module namespace exports")
     continue
   }
+
   rootModules.add(statement.moduleSpecifier.text)
 }
+
 for (const expected of expectedRootModules) {
   if (!rootModules.has(expected)) {
     errors.push(`src/index.ts is missing ${expected}`)
   }
 }
+
 for (const actual of rootModules) {
   if (!expectedRootModules.has(actual)) {
     errors.push(`src/index.ts leaks unexpected module ${actual}`)
@@ -156,24 +174,32 @@ for (const actual of rootModules) {
 }
 
 const visiting = new Set()
+
 const visited = new Set()
+
 const stack = []
+
 const visit = (file) => {
   if (visiting.has(file)) {
     const start = stack.indexOf(file)
     errors.push(
       `runtime import cycle: ${[...stack.slice(start), file].join(" -> ")}`,
     )
+
     return
   }
+
   if (visited.has(file)) {
     return
   }
+
   visiting.add(file)
   stack.push(file)
+
   for (const target of graph.get(file) ?? []) {
     visit(target)
   }
+
   stack.pop()
   visiting.delete(file)
   visited.add(file)
@@ -187,6 +213,7 @@ if (errors.length > 0) {
   for (const error of new Set(errors)) {
     process.stderr.write(`architecture: ${error}\n`)
   }
+
   process.exitCode = 1
 } else {
   process.stdout.write(

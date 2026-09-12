@@ -1,4 +1,14 @@
-import { Answer, Chat, Model, Question, Repair, Session, Stage, Tool, View } from "../src/index.js"
+import {
+  Answer,
+  Chat,
+  Model,
+  Question,
+  Repair,
+  Session,
+  Stage,
+  Tool,
+  View,
+} from "../src/index.js"
 import * as Debug from "../src/debug.js"
 import * as OpenAI from "../src/model/openai-compatible.js"
 import { Chat as ChatTest } from "../src/testing.js"
@@ -10,20 +20,18 @@ class Dependency extends Context.Service<
   { readonly value: string }
 >()("Dependency") {}
 
-class DomainError extends Schema.TaggedError<DomainError>()(
-  "DomainError",
-  { message: Schema.String },
-) {}
+class DomainError extends Schema.TaggedError<DomainError>()("DomainError", {
+  message: Schema.String,
+}) {}
 
 class SafetyPolicy extends Context.Service<
   SafetyPolicy,
   { readonly check: (text: string) => Effect.Effect<void, DomainError> }
 >()("SafetyPolicy") {}
 
-class InvalidQuery extends Schema.TaggedError<InvalidQuery>()(
-  "InvalidQuery",
-  { reason: Schema.String },
-) {}
+class InvalidQuery extends Schema.TaggedError<InvalidQuery>()("InvalidQuery", {
+  reason: Schema.String,
+}) {}
 
 class QueryPolicy extends Context.Service<
   QueryPolicy,
@@ -45,6 +53,7 @@ const typedBrief = Stage.collect({
     }),
   },
 })
+
 const validatedBrief = Stage.collect({
   name: "validated_brief",
   fields: {
@@ -52,30 +61,29 @@ const validatedBrief = Stage.collect({
       description: "A non-empty catalog query accepted by policy",
       ask: Question.fixed("What should we search for?"),
       validate: (query) =>
-        QueryPolicy.pipe(
-          Effect.flatMap((policy) => policy.validate(query)),
-        ),
+        QueryPolicy.pipe(Effect.flatMap((policy) => policy.validate(query))),
       reject: {
         ask: Question.fixed("Please provide a supported catalog query."),
       },
     }),
   },
 })
+
 const visibleValidatedAnswer = Answer.explicit(Schema.String, {
   description: "A user-visible query accepted by policy",
   ask: Question.fixed("What should we search for?"),
   validate: (query) =>
-    QueryPolicy.pipe(
-      Effect.flatMap((policy) => policy.validate(query)),
-    ),
+    QueryPolicy.pipe(Effect.flatMap((policy) => policy.validate(query))),
   reject: {
     ask: Question.fixed("Please provide a supported catalog query."),
   },
 }).pipe(Answer.visibleToUser({ label: "Search query" }))
+
 const visibleDateAnswer = Answer.semantic(Schema.DateFromString, {
   description: "A browser-safe date codec",
   ask: Question.fixed("When should it happen?"),
 }).pipe(Answer.visibleToUser())
+
 const assertVisibleAnswerBoundaries = (): void => {
   const hiddenBigInt = Answer.semantic(Schema.BigInt, {
     description: "A non-JSON hidden value",
@@ -85,6 +93,7 @@ const assertVisibleAnswerBoundaries = (): void => {
   // @ts-expect-error visible answers require a JSON-safe encoded side
   hiddenBigInt.pipe(Answer.visibleToUser())
 }
+
 const invalidAdaptiveRejection = {
   description: "Invalid adaptive rejection",
   ask: Question.fixed("What should we search for?"),
@@ -95,8 +104,10 @@ const invalidAdaptiveRejection = {
     }),
   },
 }
+
 // @ts-expect-error rejection questions are deterministic in v1
 Answer.explicit(Schema.String, invalidAdaptiveRejection)
+
 Answer.confirmed(Schema.Boolean, {
   description: "Invalid adaptive boolean",
   // @ts-expect-error adaptive choices resolve to string answer values
@@ -105,6 +116,7 @@ Answer.confirmed(Schema.Boolean, {
     maximumOptions: 3,
   }),
 })
+
 const assertEscapeValueTypes = (): void => {
   Answer.semantic(Schema.String, {
     description: "Invalid escape value",
@@ -113,9 +125,11 @@ const assertEscapeValueTypes = (): void => {
     escape: { value: 42 },
   })
 }
+
 const _answers: Stage.Answers<typeof typedBrief.fields> = {
   query: "public sector",
 }
+
 const assertScenarioTypes = (): void => {
   Scenario.answers(typedBrief, {
     // @ts-expect-error quoted values use the field schema's Type side
@@ -142,23 +156,26 @@ const tool = Tool.define({
       ),
     ),
 }).pipe(
-  Tool.modelResult(
-    Schema.Struct({ summary: Schema.String }),
-    ({ value }) => ({ summary: value }),
-  ),
+  Tool.modelResult(Schema.Struct({ summary: Schema.String }), ({ value }) => ({
+    summary: value,
+  })),
   Tool.present(Card, ({ value }) => ({ value })),
 )
 
 const execution = tool.execute({ query: "test" })
+
 const toolSet = Tool.set(tool)
+
 const setExecution = toolSet.executeCall({
   name: "typed_tool",
   arguments: { query: "test" },
 })
+
 const parsedSetExecution = toolSet.execute({
   name: "typed_tool",
   arguments: { query: "test" },
 })
+
 const guard = Model.guard({
   name: "safety_policy",
   check: ({ messages }) =>
@@ -168,22 +185,23 @@ const guard = Model.guard({
       ),
     ),
   checkCall: ({ call }) =>
-    SafetyPolicy.pipe(
-      Effect.flatMap((policy) => policy.check(call.name)),
-    ),
+    SafetyPolicy.pipe(Effect.flatMap((policy) => policy.check(call.name))),
 })
+
 const guardedExecution = Model.runToolStep({
   instructions: [Model.Instruction.make("Use one tool.")],
   messages: [Model.Message.user("Find a match")],
   tools: toolSet,
   guards: [guard],
 })
+
 const matching = Stage.tools({
   name: "matching",
   instructions: ["Use one tool."],
   tools: [tool],
   guards: [guard],
 })
+
 const command = Tool.command({
   name: "typed_command",
   description: "Perform one typed write.",
@@ -197,60 +215,67 @@ const command = Tool.command({
       ),
     ),
 })
+
 const commandStage = Stage.command({
   name: "command",
   instructions: ["Perform one write."],
   command,
 })
+
 const extractionModel = Model.profile("extraction")
+
 const reasoningModel = Model.profile("reasoning")
+
 const actionModel = Model.profile("action")
+
 const profiledBrief = Stage.collect({
   name: "profiled_brief",
   model: extractionModel,
   fields: typedBrief.fields,
 })
+
 const profiledMatching = Stage.tools({
   name: "profiled_matching",
   model: reasoningModel,
   instructions: ["Use one tool."],
   tools: [tool],
 })
+
 const profiledReasoningBrief = Stage.collect({
   name: "profiled_reasoning_brief",
   model: reasoningModel,
   fields: typedBrief.fields,
 })
+
 const profiledCommandStage = Stage.command({
   name: "profiled_command",
   model: actionModel,
   instructions: ["Perform one write."],
   command,
 })
+
 const profiledBriefExecution = profiledBrief.run({
   state: profiledBrief.initialState,
-  messages: [Model.Message.user("Find a match")],
+  messages: [Session.Message.submitted("Find a match")],
 })
+
 const profiledMatchingExecution = profiledMatching.run([
   Model.Message.user("Find a match"),
 ])
+
 const profiledCommandExecution = profiledCommandStage.run(
   [Model.Message.user("Perform the write")],
   {
-    commandId: Schema.decodeSync(Tool.CommandIdSchema)(
-      `cmd_${"b".repeat(64)}`,
-    ),
+    commandId: Schema.decodeSync(Tool.CommandIdSchema)(`cmd_${"b".repeat(64)}`),
   },
 )
+
 const mixedModelChat = Chat.define({
   name: "mixed_model_chat",
   version: 1,
-  stages: [
-    profiledBrief,
-    profiledReasoningBrief,
-    profiledCommandStage,
-  ],
+  stages: [profiledBrief, profiledReasoningBrief, profiledCommandStage],
 })
+
 const assertModelProfileInputs = (): void => {
   const rejectDynamicProfileNames = (
     dynamic: string,
@@ -265,8 +290,8 @@ const assertModelProfileInputs = (): void => {
     Model.profile(pattern)
   }
 
-  const selectedProfile =
-    Math.random() > 0.5 ? extractionModel : reasoningModel
+  const selectedProfile = Math.random() > 0.5 ? extractionModel : reasoningModel
+
   const directStep = {
     instructions: [Model.Instruction.make("Use one tool.")],
     messages: [Model.Message.user("Run the tool")],
@@ -325,49 +350,62 @@ const assertModelProfileInputs = (): void => {
   void rejectDynamicProfileNames
   void widenedProfile
 }
+
 const assertCommandBoundaries = (): void => {
-  // @ts-expect-error commands cannot enter repeatable query stages
-  Stage.tools({ name: "unsafe_command", instructions: ["Run."], tools: [command] })
+  Stage.tools({
+    name: "unsafe_command",
+    instructions: ["Run."],
+    // @ts-expect-error commands cannot enter repeatable query stages
+    tools: [command],
+  })
   // @ts-expect-error command execution requires an explicit stable identity
   command.execute({ query: "test" })
 }
+
 const commandExecution = commandStage.run(
   [Model.Message.user("Perform the write")],
   {
-    commandId: Schema.decodeSync(Tool.CommandIdSchema)(
-      `cmd_${"a".repeat(64)}`,
-    ),
+    commandId: Schema.decodeSync(Tool.CommandIdSchema)(`cmd_${"a".repeat(64)}`),
   },
 )
+
 Chat.define({
   name: "typed_command_chat",
   version: 1,
   stages: [typedBrief, commandStage],
 })
+
 const stageExecution = matching.run([Model.Message.user("Find a match")])
+
 const validatedExecution = validatedBrief.run({
   state: validatedBrief.initialState,
-  messages: [Model.Message.user("Find public services")],
+  messages: [Session.Message.submitted("Find public services")],
 })
+
 const typedChat = Chat.define({
   name: "typed_chat",
   version: 1,
   stages: [typedBrief, matching],
 })
+
 const exploratoryChat = Chat.define({
   name: "typed_exploration_chat",
   version: 1,
   stages: [typedBrief, matching],
   explorations: [tool],
 })
+
 const encodedToolCall = Tool.makeCall(tool, { query: "related" })
+
 const exploration = Chat.explore(exploratoryChat, {
   sessionId: "typed-session",
   call: encodedToolCall,
 })
+
 const presentedExploration = exploration.pipe(
   Chat.presentExploration(exploratoryChat),
 )
+
 const assertExplorationBoundaries = (): void => {
   // @ts-expect-error chats without exploration tools cannot be explored
   Chat.explore(typedChat, {
@@ -384,8 +422,10 @@ const assertExplorationBoundaries = (): void => {
   // @ts-expect-error makeCall uses the tool input schema's Type side
   Tool.makeCall(tool, { query: 42 })
 }
+
 // @ts-expect-error compiled runtime operations stay behind Chat.turn
 void typedChat.reply
+
 const _assertOptionalBoundaryInputs = (
   session: Chat.SessionReference | undefined,
 ): void => {
@@ -406,12 +446,14 @@ const _assertOptionalBoundaryInputs = (
     session,
   })
 }
+
 const acceptedQuery = Chat.acceptedAnswer(
   typedChat,
   ChatTest.initialState(typedChat),
   typedBrief,
   "query",
 )
+
 Chat.acceptedAnswer(
   typedChat,
   ChatTest.initialState(typedChat),
@@ -474,21 +516,24 @@ const defaultModelServiceLayer = OpenAI.layer({
   provider: cloudflareProvider,
   timeoutMilliseconds: 1_000,
 })
+
 const reasoningModelLayer = OpenAI.layer(reasoningModel, {
   provider: cloudflareProvider,
   timeoutMilliseconds: 1_000,
 })
+
 const defaultProvidedProfiledExecution = profiledMatchingExecution.pipe(
   Effect.provide(defaultModelServiceLayer),
   Effect.provideService(Dependency, { value: "provided" }),
 )
+
 const namedProvidedProfiledExecution = profiledMatchingExecution.pipe(
   Effect.provide(reasoningModelLayer),
   Effect.provideService(Dependency, { value: "provided" }),
 )
+
 const assertModelProfileProvision = (): void => {
-  const selectedProfile =
-    Math.random() > 0.5 ? reasoningModel : actionModel
+  const selectedProfile = Math.random() > 0.5 ? reasoningModel : actionModel
 
   void Effect.runPromise(namedProvidedProfiledExecution)
 
@@ -518,6 +563,7 @@ const assertProviderAuthenticity = (): void => {
 const typedRepair = Repair.standard({ maximumCorrections: 3 })
 
 type TypedChatReply = Chat.Reply<typeof typedChat>
+
 type TypedDebugReply = Debug.Reply<
   "typed_chat",
   1,
@@ -543,21 +589,23 @@ const _effect: Effect.Effect<
     readonly [
       {
         readonly view: typeof Card
-        readonly project: (
-          result: { readonly value: string },
-        ) => { readonly value: string } | undefined
+        readonly project: (result: {
+          readonly value: string
+        }) => { readonly value: string } | undefined
       },
     ]
   >,
-  DomainError | import("../src/index.js").Tool.InvalidProjection,
+  DomainError | Tool.InvalidProjection,
   Dependency
 > = execution
 
 type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends
-    <Value>() => Value extends Right ? 1 : 2
-    ? (<Value>() => Value extends Right ? 1 : 2) extends
-        <Value>() => Value extends Left ? 1 : 2
+  (<Value>() => Value extends Left ? 1 : 2) extends <
+    Value,
+  >() => Value extends Right ? 1 : 2
+    ? (<Value>() => Value extends Right ? 1 : 2) extends <
+        Value,
+      >() => Value extends Left ? 1 : 2
       ? true
       : false
     : false
@@ -594,21 +642,15 @@ type ExpectedValidationError =
   | Model.UnsupportedToolSchema
   | Tool.InvalidCall
   | Tool.InvalidProjection
-  | import("../src/index.js").Stage.InvalidResponse
+  | Stage.InvalidResponse
   | Stage.AnswerValidationRejected<InvalidQuery, ValidatedPrompt>
 
 type _ValidationErrorIsExact = Expect<
-  Equal<
-    Effect.Error<typeof validatedExecution>,
-    ExpectedValidationError
-  >
+  Equal<Effect.Error<typeof validatedExecution>, ExpectedValidationError>
 >
 
 type _ValidationRequirementsAreExact = Expect<
-  Equal<
-    Effect.Services<typeof validatedExecution>,
-    Model.Service | QueryPolicy
-  >
+  Equal<Effect.Services<typeof validatedExecution>, Model.Service | QueryPolicy>
 >
 
 type ExpectedCommandError =
@@ -623,17 +665,11 @@ type _CommandErrorIsExact = Expect<
 >
 
 type _CommandRequirementsAreExact = Expect<
-  Equal<
-    Effect.Services<typeof commandExecution>,
-    Model.Service | Dependency
-  >
+  Equal<Effect.Services<typeof commandExecution>, Model.Service | Dependency>
 >
 
 type _ProfiledCollectRequirementsAreExact = Expect<
-  Equal<
-    Effect.Services<typeof profiledBriefExecution>,
-    typeof extractionModel
-  >
+  Equal<Effect.Services<typeof profiledBriefExecution>, typeof extractionModel>
 >
 
 type _ProfiledToolRequirementsAreExact = Expect<
@@ -668,16 +704,11 @@ type _DefaultModelLayerLeavesNamedRequirement = Expect<
 >
 
 type _NamedModelLayerSatisfiesNamedRequirement = Expect<
-  Equal<
-    Effect.Services<typeof namedProvidedProfiledExecution>,
-    never
-  >
+  Equal<Effect.Services<typeof namedProvidedProfiledExecution>, never>
 >
 
 type ExpectedToolSetError =
-  | DomainError
-  | Tool.InvalidCall
-  | Tool.InvalidProjection
+  DomainError | Tool.InvalidCall | Tool.InvalidProjection
 
 type _ToolSetErrorIsExact = Expect<
   Equal<Effect.Error<typeof setExecution>, ExpectedToolSetError>
@@ -697,24 +728,15 @@ type _ExplorationErrorIsExact = Expect<
 >
 
 type _ExplorationRequirementsAreExact = Expect<
-  Equal<
-    Effect.Services<typeof exploration>,
-    Session.Store | Dependency
-  >
+  Equal<Effect.Services<typeof exploration>, Session.Store | Dependency>
 >
 
 type _ExplorationPresentationIsExact = Expect<
-  Equal<
-    Effect.Success<typeof presentedExploration>,
-    Chat.ExplorationResponse
-  >
+  Equal<Effect.Success<typeof presentedExploration>, Chat.ExplorationResponse>
 >
 
 type _ExplorationDefinitionsAreExact = Expect<
-  Equal<
-    Chat.ExplorationsOf<typeof exploratoryChat>,
-    readonly [typeof tool]
-  >
+  Equal<Chat.ExplorationsOf<typeof exploratoryChat>, readonly [typeof tool]>
 >
 
 const _setEffect: Effect.Effect<
@@ -731,9 +753,7 @@ const _guardedEffect: Effect.Effect<
   | Model.Unavailable
   | Model.UnsupportedToolSchema
   | DomainError,
-  | Effect.Services<typeof setExecution>
-  | Model.Service
-  | SafetyPolicy
+  Effect.Services<typeof setExecution> | Model.Service | SafetyPolicy
 > = guardedExecution
 
 const _stageEffect: typeof guardedExecution = stageExecution
@@ -741,32 +761,61 @@ const _stageEffect: typeof guardedExecution = stageExecution
 const _part: View.Part<typeof Card> = Card.make({ value: "safe" })
 
 void _effect
+
 void _setEffect
+
 void _parsedSetEffect
+
 void _guardedEffect
+
 void _stageEffect
+
 void validatedExecution
+
 void commandExecution
+
 void profiledBriefExecution
+
 void profiledMatchingExecution
+
 void profiledCommandExecution
+
 void assertCommandBoundaries
+
 void assertModelProfileInputs
+
 void assertModelProfileProvision
+
 void assertExplorationBoundaries
+
 void assertScenarioTypes
+
 void assertEscapeValueTypes
+
 void assertVisibleAnswerBoundaries
+
 void _part
+
 void _answers
+
 void acceptedQuery
+
 void typedRepair
+
 void assertDefinitionAuthenticity
+
 void assertProviderAuthenticity
+
 void _assertPresentChatReplyAcceptsReplyDirectly
+
 void _assertDebugPresentAcceptsReplyDirectly
+
 void encodedToolCall
+
 void exploration
+
 void presentedExploration
+
 void visibleValidatedAnswer
+
 void visibleDateAnswer

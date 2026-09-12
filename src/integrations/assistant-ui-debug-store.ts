@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Predicate, Schema } from "effect"
 import type { StructuredChatDebugSnapshot } from "../core/debug.js"
 import type { StructuredChatDebugTurn } from "../core/debug-protocol.js"
 
@@ -45,6 +45,7 @@ export const createStructuredChatDebugStore = (
   const { maximumTurns = 100 } = Schema.decodeSync(
     StructuredChatDebugStoreOptionsSchema,
   )(options, { onExcessProperty: "error" })
+
   let current: StructuredChatDebugSnapshot | null = null
   let turns: ReadonlyArray<StructuredChatDebugTurn> = []
   let view: StructuredChatDebugStoreView = { snapshot: current, turns }
@@ -52,6 +53,7 @@ export const createStructuredChatDebugStore = (
 
   const notify = (): void => {
     view = { snapshot: current, turns }
+
     for (const listener of listeners) {
       try {
         listener()
@@ -66,19 +68,24 @@ export const createStructuredChatDebugStore = (
       if (Object.is(snapshot, current)) {
         return
       }
+
       current = snapshot
       notify()
     },
     receiveTurn: (turn) => {
       let currentSessionId: string | undefined
+
       for (let index = turns.length - 1; index >= 0; index -= 1) {
         const existingSession = turns[index]?.session
+
         if (existingSession !== undefined && existingSession !== null) {
           currentSessionId = existingSession.id
           break
         }
       }
+
       const incomingSessionId = turn.session?.id
+
       if (
         currentSessionId !== undefined &&
         incomingSessionId !== undefined &&
@@ -87,39 +94,45 @@ export const createStructuredChatDebugStore = (
         turns = []
         current = null
       }
-      const existingIndex =
-        turn._tag === "Succeeded"
-          ? turns.findIndex(
-              (existing) =>
-                existing._tag === "Succeeded" &&
-                existing.session.revision === turn.session.revision,
-            )
-          : -1
+
+      const existingIndex = Predicate.isTagged(turn, "Succeeded")
+        ? turns.findIndex(
+            (existing) =>
+              Predicate.isTagged(existing, "Succeeded") &&
+              existing.session.revision === turn.session.revision,
+          )
+        : -1
+
       const nextTurns =
         existingIndex === -1
           ? [...turns, turn]
           : turns.map((existing, index) =>
               index === existingIndex ? turn : existing,
             )
+
       turns =
         nextTurns.length > maximumTurns
           ? nextTurns.slice(-maximumTurns)
           : nextTurns
-      if (turn._tag === "Succeeded") {
+
+      if (Predicate.isTagged(turn, "Succeeded")) {
         current = turn.snapshot
       }
+
       notify()
     },
     clear: () => {
       if (current === null && turns.length === 0) {
         return
       }
+
       current = null
       turns = []
       notify()
     },
     subscribe: (listener) => {
       listeners.add(listener)
+
       return () => {
         listeners.delete(listener)
       }

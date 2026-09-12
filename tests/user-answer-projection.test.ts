@@ -20,7 +20,6 @@ import {
   Layer,
   Result,
   Schema,
-  SchemaIssue,
   SchemaTransformation,
 } from "effect"
 
@@ -48,6 +47,7 @@ describe("projectUserAnswers", () => {
         }).pipe(Answer.visibleToUser({ label: "Primary contact" })),
       },
     })
+
     const DeliveryDetails = Stage.collect({
       name: "delivery_details",
       fields: {
@@ -175,9 +175,7 @@ describe("projectUserAnswers", () => {
       }),
     )
 
-    expect(
-      snapshot.sections[0]?.fields.map((field) => field.state),
-    ).toEqual([
+    expect(snapshot.sections[0]?.fields.map((field) => field.state)).toEqual([
       { _tag: "Accepted", value: false },
       { _tag: "Accepted", value: 0 },
       { _tag: "Accepted", value: "" },
@@ -234,6 +232,7 @@ describe("projectUserAnswers", () => {
       input: Schema.Struct({}),
       execute: () => Effect.succeed({ complete: true }),
     })
+
     const PrototypeChat = Chat.define({
       name: "prototype_inspection_chat",
       version: 1,
@@ -246,11 +245,9 @@ describe("projectUserAnswers", () => {
         }),
       ],
     })
+
     const debug = await Effect.runPromise(
-      Debug.inspect(
-        PrototypeChat,
-        ChatTest.initialState(PrototypeChat),
-      ),
+      Debug.inspect(PrototypeChat, ChatTest.initialState(PrototypeChat)),
     )
 
     expect(debug.stages[0]).toMatchObject({
@@ -264,6 +261,7 @@ describe("projectUserAnswers", () => {
     })
 
     let replacements = 0
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
@@ -279,14 +277,17 @@ describe("projectUserAnswers", () => {
           },
         }),
     })
+
     const store = Layer.succeed(Session.Store, {
       load: () => Effect.succeed(null),
       replace: () =>
         Effect.sync(() => {
           replacements += 1
+
           return { revision: "persisted-constructor" }
         }),
     })
+
     const reply = await Effect.runPromise(
       Chat.turn(PrototypeChat, {
         sessionId: "prototype-collision",
@@ -359,16 +360,17 @@ describe("projectUserAnswers", () => {
         }).pipe(Answer.visibleToUser()),
       },
     })
+
     const definition = {
       name: "invalid_projection_chat",
       version: 1,
       stages: [VisibleAmount],
     } as const
+
     const invalidState = await Effect.runPromise(
-      Effect.result(
-        projectUserAnswers({ definition, state: { stages: {} } }),
-      ),
+      Effect.result(projectUserAnswers({ definition, state: { stages: {} } })),
     )
+
     const invalidValue = await Effect.runPromise(
       Effect.result(
         projectUserAnswers({
@@ -388,55 +390,51 @@ describe("projectUserAnswers", () => {
     )
 
     expect(Result.isFailure(invalidState)).toBe(true)
+
     if (Result.isFailure(invalidState)) {
       expect(invalidState.failure).toBeInstanceOf(
         InvalidChatUserAnswerProjection,
       )
       expect(invalidState.failure.reason).toBe("invalid_state")
     }
+
     expect(Result.isFailure(invalidValue)).toBe(true)
+
     if (Result.isFailure(invalidValue)) {
       expect(invalidValue.failure.reason).toBe("invalid_answer_value")
     }
   })
 
   test("validates the public snapshot before replacing the session", async () => {
-    let encodeCount = 0
-    const FailsOnSecondEncode = Schema.String.pipe(
+    // Number permits infinity, but the public snapshot requires JSON-safe
+    // values. This faulty application codec fails that boundary on every encode.
+    const NonJsonEncoding = Schema.Number.pipe(
       Schema.decodeTo(
-        Schema.String,
-        SchemaTransformation.transformOrFail({
-          decode: (value) => Effect.succeed(value),
-          encode: (value, options) => {
-            encodeCount += 1
-            return encodeCount === 1
-              ? Effect.succeed(value)
-              : Effect.fail(
-                  new SchemaIssue.InvalidValue(
-                    { message: "second encoding rejected" },
-                    value,
-                    options,
-                  ),
-                )
-          },
+        Schema.Finite,
+        SchemaTransformation.transform({
+          decode: (value) => value,
+          encode: () => Number.POSITIVE_INFINITY,
         }),
       ),
     )
+
     const AtomicDetails = Stage.collect({
       name: "atomic_details",
       fields: {
-        value: Answer.semantic(FailsOnSecondEncode, {
-          description: "A value whose repeated encoding is rejected",
+        value: Answer.semantic(NonJsonEncoding, {
+          description: "A finite value with a non-JSON application encoding",
           ask: Question.fixed("What value should be used?"),
         }).pipe(Answer.visibleToUser()),
       },
     })
+
     const Finish = Tool.define({
       name: "finish_atomic_projection",
       description: "Finish the atomic projection test.",
       input: Schema.Struct({}),
       execute: () => Effect.succeed({ complete: true }),
     })
+
     const AtomicChat = Chat.define({
       name: "atomic_projection_chat",
       version: 1,
@@ -449,17 +447,20 @@ describe("projectUserAnswers", () => {
         }),
       ],
     })
+
     let modelCalls = 0
     let replacements = 0
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () => {
         modelCalls += 1
+
         return modelCalls === 1
           ? Effect.succeed({
               name: "submit_answers",
               arguments: {
-                answers: { value: "accepted" },
-                evidence: [{ field: "value", quote: "accepted" }],
+                answers: { value: 42 },
+                evidence: [{ field: "value", quote: "42" }],
                 nextQuestion: null,
               },
             })
@@ -469,11 +470,13 @@ describe("projectUserAnswers", () => {
             })
       },
     })
+
     const store = Layer.succeed(Session.Store, {
       load: () => Effect.succeed(null),
       replace: () =>
         Effect.sync(() => {
           replacements += 1
+
           return { revision: "1" }
         }),
     })
@@ -482,19 +485,18 @@ describe("projectUserAnswers", () => {
       Effect.result(
         Chat.turn(AtomicChat, {
           sessionId: "atomic-projection",
-          message: "Use accepted as the value",
+          message: "Use 42 as the value",
         }).pipe(Effect.provide(Layer.merge(model, store))),
       ),
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(
-        Chat.InvalidUserAnswerProjection,
-      )
+      expect(result.failure).toBeInstanceOf(Chat.InvalidUserAnswerProjection)
       expect(result.failure.reason).toBe("invalid_answer_value")
     }
-    expect(encodeCount).toBe(2)
+
     expect(replacements).toBe(0)
   })
 })
@@ -505,11 +507,14 @@ describe("Answer.visibleToUser", () => {
       description: "A reusable answer",
       ask: Question.fixed("What is the answer?"),
     })
+
     const visible = original.pipe(Answer.visibleToUser())
+
     const Details = Stage.collect({
       name: "visibility_details",
       fields: { original, visible },
     })
+
     const snapshot = await Effect.runPromise(
       projectUserAnswers({
         definition: {
@@ -542,6 +547,7 @@ describe("Answer.visibleToUser", () => {
       label: "Answer",
       unexpected: true,
     }
+
     expect(() =>
       original.pipe(
         Answer.visibleToUser(

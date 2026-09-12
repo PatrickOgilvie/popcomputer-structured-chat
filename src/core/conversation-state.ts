@@ -5,19 +5,20 @@ import { ChatSessionIdSchema } from "./session.js"
 import { ToolNameSchema } from "./tool.js"
 
 const Index = Schema.Natural
+
 const ParentSchema = Schema.Struct({
   invocation: Index,
   branch: ToolNameSchema,
 })
 
 /** Stored lifecycle of one independently scoped chat invocation. */
-export const InvocationStatusSchema = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Active") }),
-  Schema.Struct({ _tag: Schema.Literal("Waiting"), child: Index }),
-  Schema.Struct({ _tag: Schema.Literal("Suspended") }),
-  Schema.Struct({ _tag: Schema.Literal("Completed"), output: Schema.Unknown }),
-  Schema.Struct({ _tag: Schema.Literal("Cancelled") }),
-])
+export const InvocationStatusSchema = Schema.TaggedUnion({
+  Active: {},
+  Waiting: { child: Index },
+  Suspended: {},
+  Completed: { output: Schema.Unknown },
+  Cancelled: {},
+})
 
 /** Persistence envelope; input, workflow and output use their definition-owned codecs. */
 export const InvocationSchema = Schema.Struct({
@@ -41,8 +42,7 @@ export const IssuedMessageSchema = Schema.Struct({
 })
 
 /** One session contains all invocations and issued-message identities. */
-export const ConversationStateSchema = Schema.Struct({
-  _tag: Schema.Literal("Conversation"),
+export const ConversationStateSchema = Schema.TaggedStruct("Conversation", {
   chat: ChatNameSchema,
   schemaVersion: ChatVersionSchema,
   status: Schema.Literals(["active", "complete"]),

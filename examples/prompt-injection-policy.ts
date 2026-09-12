@@ -1,9 +1,5 @@
 import { Model, Stage, Tool } from "@popcomputer/structured-chat"
-import {
-  Context,
-  Effect,
-  Schema,
-} from "effect"
+import { Context, Effect, Schema } from "effect"
 
 /** Application policy rejection retained in the Effect error channel. */
 export class UnsafeConversation extends Schema.TaggedError<UnsafeConversation>()(
@@ -33,11 +29,13 @@ export const PromptInjectionPolicy = Model.guard({
   check: (context) =>
     Effect.gen(function* () {
       const safety = yield* ConversationSafety
+
       return yield* safety.checkConversation(context)
     }),
   checkCall: (context) =>
     Effect.gen(function* () {
       const safety = yield* ConversationSafety
+
       return yield* safety.checkCall(context)
     }),
 })

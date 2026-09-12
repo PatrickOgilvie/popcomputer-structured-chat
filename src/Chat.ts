@@ -1,4 +1,6 @@
 import { Effect, Function as Fn } from "effect"
+import type { ChatSessionStore } from "./core/session.js"
+import type { ChatContext } from "./core/chat-context.js"
 import type {
   AcceptedAnswer,
   CollectAnswers,
@@ -84,10 +86,18 @@ import type {
   MessagesOf,
   PostMessageInput,
   PostedMessage,
+  TurnsOf,
 } from "./core/composition.js"
 import type { ConversationState } from "./core/conversation-state.js"
 import type { OutboundMessageContract } from "./core/outbound-message.js"
 import type { ToolTuple } from "./core/tool-set.js"
+import { TurnControl } from "./core/turn-control.js"
+import type { TurnControlFailure } from "./core/turn-control.js"
+import type {
+  AdvanceResult as ControlledResult,
+  ControlledTurnInput,
+  InvalidObservedTurn,
+} from "./core/observed-turn.js"
 
 /** Declarative definition of one sequential structured chat. */
 export interface Definition<
@@ -144,7 +154,7 @@ export type State<Chat extends AnyDefinition> =
 /** Extract one domain turn carried by a chat definition. */
 export type Turn<Chat extends AnyDefinition> =
   Chat extends AnyComposedDefinition
-    ? import("./core/composition.js").TurnsOf<Chat>
+    ? TurnsOf<Chat>
     : Chat extends Definition<
           infer Name,
           infer Version,
@@ -210,23 +220,30 @@ type PresentableExplorationRun<Explorations extends ToolTuple> =
 
 /** Define one opaque sequential structured chat. */
 export { define, branch } from "./internal/chat/composition-definition.js"
+
 export {
   chatInput as input,
   ChatContextUnavailable,
 } from "./core/chat-context.js"
+
 export { returned } from "./core/branch.js"
+
 export type {
   InputOf as Input,
   OutputOf as Output,
   Branch,
   BranchContract,
 } from "./core/branch.js"
+
 export type { ChatOutcome as Outcome } from "./core/chat-context.js"
+
 export { InvalidConversation } from "./core/conversation-state.js"
+
 export type {
   ConversationState,
   Invocation,
 } from "./core/conversation-state.js"
+
 export type {
   ComposedDefinition,
   ConversationReply,
@@ -245,40 +262,81 @@ export const turn = <C extends AnyDefinition>(
 ): Effect.Effect<
   Reply<C>,
   TurnError<C>,
-  import("./core/session.js").ChatSessionStore | Requirements<C>
+  ChatSessionStore | Requirements<C>
 > => {
   const effect = hasComposition(chat)
     ? readConversation(chat).reply(input)
     : read(chat).reply(input)
+
   // SAFETY: the opaque definition selects the runtime compiled from its exact stages and child contracts.
   return Fn.cast<
     typeof effect,
-    Effect.Effect<
-      Reply<C>,
-      TurnError<C>,
-      import("./core/session.js").ChatSessionStore | Requirements<C>
-    >
+    Effect.Effect<Reply<C>, TurnError<C>, ChatSessionStore | Requirements<C>>
   >(effect)
 }
+
+/** Result of a new controlled turn or an exact previously committed observation batch. */
+export type AdvanceResult<C extends AnyDefinition> = ControlledResult<Reply<C>>
+
+/** Expected failures of controlled input, execution, and persisted chat transitions. */
+export type AdvanceError<C extends AnyDefinition> =
+  TurnError<C> | InvalidObservedTurn | TurnControlFailure
+
+export {
+  TurnControl,
+  TurnSuperseded,
+  TurnControlUnavailable,
+} from "./core/turn-control.js"
+
+export type { TurnControlService } from "./core/turn-control.js"
+
+export { InvalidObservedTurn } from "./core/observed-turn.js"
+
+export type { ControlledTurnInput as AdvanceInput } from "./core/observed-turn.js"
+
+/**
+ * Advance one submitted or observed turn under an explicit session owner's
+ * execution authority. Exact observed replays never execute another turn.
+ * @template C The opaque definition retaining its precise replies, failures, and services.
+ */
+export const advance = <C extends AnyDefinition>(
+  chat: C,
+  input: ControlledTurnInput,
+): Effect.Effect<
+  AdvanceResult<C>,
+  AdvanceError<C>,
+  ChatSessionStore | TurnControl | Requirements<C>
+> =>
+  Effect.gen(function* () {
+    const control = yield* TurnControl
+
+    const effect = hasComposition(chat)
+      ? readConversation(chat).advance(input, control)
+      : read(chat).advance(input, control)
+
+    // SAFETY: the opaque definition selects the exact leaf/composed runtime;
+    // controlled execution adds only its explicit input and supersession failures.
+    return yield* Fn.cast<
+      typeof effect,
+      Effect.Effect<
+        AdvanceResult<C>,
+        AdvanceError<C>,
+        ChatSessionStore | Requirements<C>
+      >
+    >(effect)
+  })
 
 /** Initialize a standalone root invocation with its declared input; retries preserve the session. */
 export const start = <C extends AnyComposedDefinition>(
   chat: C,
   input: StartConversationInput<C>,
-): Effect.Effect<
-  StartedConversation,
-  ConversationError,
-  import("./core/session.js").ChatSessionStore
-> => {
+): Effect.Effect<StartedConversation, ConversationError, ChatSessionStore> => {
   const effect = readConversation(chat).start(input)
+
   // SAFETY: start uses only input/state parsers and the session store, with failures classified by that runtime.
   return Fn.cast<
     typeof effect,
-    Effect.Effect<
-      StartedConversation,
-      ConversationError,
-      import("./core/session.js").ChatSessionStore
-    >
+    Effect.Effect<StartedConversation, ConversationError, ChatSessionStore>
   >(effect)
 }
 
@@ -289,33 +347,24 @@ export const post = <
 >(
   chat: C,
   input: PostMessageInput<M>,
-): Effect.Effect<
-  PostedMessage,
-  ConversationError,
-  import("./core/session.js").ChatSessionStore
-> => {
+): Effect.Effect<PostedMessage, ConversationError, ChatSessionStore> => {
   const effect = readConversation(chat).post(input)
+
   // SAFETY: post checks message membership and uses only message codecs and the session store.
   return Fn.cast<
     typeof effect,
-    Effect.Effect<
-      PostedMessage,
-      ConversationError,
-      import("./core/session.js").ChatSessionStore
-    >
+    Effect.Effect<PostedMessage, ConversationError, ChatSessionStore>
   >(effect)
 }
 
 type ExplorationError<C extends AnyDefinition> =
   | ChatExploreError<ExplorationsOf<C>>
   | (C extends AnyComposedDefinition ? ConversationError : never)
+
 type ExplorationRequirements<C extends AnyDefinition> =
-  | import("./core/session.js").ChatSessionStore
+  | ChatSessionStore
   | (C extends AnyComposedDefinition
-      ? Exclude<
-          ChatExploreRequirements<ExplorationsOf<C>>,
-          import("./core/chat-context.js").ChatContext
-        >
+      ? Exclude<ChatExploreRequirements<ExplorationsOf<C>>, ChatContext>
       : ChatExploreRequirements<ExplorationsOf<C>>)
 
 /** Load the latest session and run one configured read-only exploration. */
@@ -332,6 +381,7 @@ export const explore = <
   const effect = hasComposition(chat)
     ? readConversation(chat).explore(input)
     : read(chat).explore(input)
+
   // SAFETY: both runtimes execute only this definition's root exploration tuple.
   return Fn.cast<
     typeof effect,
@@ -349,6 +399,7 @@ export const present = <C extends AnyDefinition>(
   options: PresentChatReplyOptions<Turn<C> & PresentableTurn> = {},
 ) => {
   read(chat)
+
   return <Error, Requirements>(
     effect: Effect.Effect<Reply<C>, Error, Requirements>,
   ): Effect.Effect<
@@ -363,11 +414,13 @@ export const present = <C extends AnyDefinition>(
           typeof reply,
           Parameters<typeof presentChatReply>[0]
         >(reply)
+
         // SAFETY: each callback receives the exact turn union carried by this opaque chat.
         const projections = Fn.cast<
           typeof options,
           PresentChatReplyOptions<PresentableTurn>
         >(options)
+
         return presentChatReply(presentable, projections)
       }),
     )
@@ -386,6 +439,7 @@ export const presentExploration = <
   > = {},
 ) => {
   read(chat)
+
   return <Error, Requirements>(
     effect: Effect.Effect<
       PresentableExplorationRun<Explorations>,

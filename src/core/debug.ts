@@ -1,5 +1,5 @@
 import { readInteractionStageRuntime } from "./interaction-stage.js"
-import { cast, Effect, Schema } from "effect"
+import { Predicate, cast, Effect, Schema } from "effect"
 import { AnswerModeSchema } from "./answer.js"
 import {
   inspectChatAnswers,
@@ -9,6 +9,7 @@ import {
   ChatNameSchema,
   ChatVersionSchema,
   type ChatDefinition,
+  type ChatExplorationTuple,
   type ChatStageTuple,
   type ChatState,
 } from "./chat.js"
@@ -176,7 +177,9 @@ type InvalidChatDebugProjectionReason = Schema.Schema.Type<
 >
 
 type DebugQuestion = Schema.Schema.Type<typeof DebugQuestionSchema>
+
 type DebugStage = StructuredChatDebugSnapshot["stages"][number]
+
 type DebugStageStatus = DebugStage["status"]
 
 interface RuntimeChatState extends TrustedChatAnswerState {
@@ -242,9 +245,11 @@ const stageStatus = (
   if (index === state.stage) {
     return state.status === "complete" ? "complete" : "current"
   }
+
   if (index < state.stage) {
     return "complete"
   }
+
   return "upcoming"
 }
 
@@ -257,56 +262,65 @@ export const inspectChatState = <
   const Version extends number,
   const Stages extends ChatStageTuple,
 >(
-  chat: ChatDefinition<Name, Version, Stages, import("./chat.js").ChatExplorationTuple>,
+  chat: ChatDefinition<Name, Version, Stages, ChatExplorationTuple>,
   state: ChatState<Name, Version, Stages>,
   options: InspectChatStateOptions = {},
-): Effect.Effect<
-  StructuredChatDebugSnapshot,
-  InvalidChatDebugProjection
-> =>
+): Effect.Effect<StructuredChatDebugSnapshot, InvalidChatDebugProjection> =>
   Effect.gen(function* () {
-    const parsedOptions = yield* Schema.decodeUnknownEffect(
+    const parsedOptions = yield* Schema.decodeEffect(
       InspectChatStateOptionsSchema,
     )(options, { onExcessProperty: "error" }).pipe(
       Effect.mapError(() => invalidProjection("invalid_options")),
     )
+
     const parsedState = yield* Schema.decodeUnknownEffect(
       Schema.toType(chat.stateSchema),
     )(state, { onExcessProperty: "error" }).pipe(
       Effect.mapError(() => invalidProjection("invalid_state")),
     )
+
     // SAFETY: this definition's exact state schema parsed the envelope and all
     // named collect-stage states immediately above; only tuple correlations are
     // erased for definition-ordered read-only projection.
     const runtimeState = cast<typeof parsedState, RuntimeChatState>(parsedState)
     const currentStage = chat.stages[runtimeState.stage]
+
     if (currentStage === undefined) {
-      return yield* Effect.fail(invalidProjection("invalid_state"))
+      return yield* invalidProjection("invalid_state")
     }
+
     const inspectedAnswers = yield* inspectChatAnswers({
       definition: chat,
       state: runtimeState,
       include: () => true,
-    }).pipe(
-      Effect.mapError(({ reason }) => invalidProjection(reason)),
-    )
+    }).pipe(Effect.mapError(({ reason }) => invalidProjection(reason)))
+
     const answerSections = new Map(
-      inspectedAnswers.sections.map((section) => [
-        section.stage,
-        section,
-      ]),
+      inspectedAnswers.sections.map((section) => [section.stage, section]),
     )
 
     const stages: Array<DebugStage> = []
+
     for (const [index, stage] of chat.stages.entries()) {
       const repairPending =
         runtimeState.repair?.pendingStages.includes(index) ?? false
-      if (stage._tag === "InteractionStage") {
+
+      if (Predicate.isTagged(stage, "InteractionStage")) {
         const runtime = readInteractionStageRuntime(stage)
-        stages.push({ _tag: "InteractionStage", index, name: stage.name, status: stageStatus(runtimeState, index), repairPending, tools: runtime.toolNames, commands: runtime.commandNames, completeOn: runtime.completeOn })
+        stages.push({
+          _tag: "InteractionStage",
+          index,
+          name: stage.name,
+          status: stageStatus(runtimeState, index),
+          repairPending,
+          tools: runtime.toolNames,
+          commands: runtime.commandNames,
+          completeOn: runtime.completeOn,
+        })
         continue
       }
-      if (stage._tag === "ToolStage") {
+
+      if (Predicate.isTagged(stage, "ToolStage")) {
         const runtime = readToolStageRuntime(stage)
         stages.push({
           _tag: "ToolStage",
@@ -319,7 +333,8 @@ export const inspectChatState = <
         })
         continue
       }
-      if (stage._tag === "CommandStage") {
+
+      if (Predicate.isTagged(stage, "CommandStage")) {
         stages.push({
           _tag: "CommandStage",
           index,
@@ -332,12 +347,15 @@ export const inspectChatState = <
       }
 
       const inspectedSection = answerSections.get(stage.name)
+
       if (inspectedSection === undefined) {
-        return yield* Effect.fail(invalidProjection("invalid_state"))
+        return yield* invalidProjection("invalid_state")
       }
+
       const fields: Array<
         Extract<DebugStage, { readonly _tag: "CollectStage" }>["fields"][number]
       > = []
+
       let satisfiedFields = 0
 
       for (const field of inspectedSection.fields) {
@@ -347,11 +365,16 @@ export const inspectChatState = <
           description: field.description,
           question: projectQuestion(field.question),
         }
-        if (field.state._tag === "Missing") {
+
+        if (
+          !Predicate.isTagged(field.state, "Asked") &&
+          !Predicate.isTagged(field.state, "Accepted")
+        ) {
           fields.push({ ...fieldBase, state: { _tag: "Missing" } })
           continue
         }
-        if (field.state._tag === "Asked") {
+
+        if (Predicate.isTagged(field.state, "Asked")) {
           fields.push({
             ...fieldBase,
             state: {
@@ -389,9 +412,7 @@ export const inspectChatState = <
       })
     }
 
-    return yield* Schema.decodeUnknownEffect(
-      StructuredChatDebugSnapshotSchema,
-    )(
+    return yield* Schema.decodeUnknownEffect(StructuredChatDebugSnapshotSchema)(
       {
         schemaVersion: 1,
         chat: { name: chat.name, version: chat.version },
@@ -404,7 +425,5 @@ export const inspectChatState = <
         stages,
       },
       { onExcessProperty: "error" },
-    ).pipe(
-      Effect.mapError(() => invalidProjection("invalid_snapshot")),
-    )
+    ).pipe(Effect.mapError(() => invalidProjection("invalid_snapshot")))
   })

@@ -1,4 +1,4 @@
-import { defineRule } from "@oxlint/plugins";
+import { defineRule } from "@oxlint/plugins"
 
 /** Disallow runtime typeof checks that narrow unparsed values instead of decoding them. */
 export const noRuntimeTypeofRule = defineRule({
@@ -17,9 +17,9 @@ export const noRuntimeTypeofRule = defineRule({
     return {
       UnaryExpression(node) {
         if (node.operator === "typeof") {
-          context.report({ node, messageId: "runtimeTypeof" });
+          context.report({ node, messageId: "runtimeTypeof" })
         }
       },
-    };
+    }
   },
-});
+})

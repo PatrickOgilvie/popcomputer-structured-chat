@@ -1,4 +1,4 @@
-import { Context, Effect, Schema } from "effect"
+import { Predicate, Context, Effect, Schema } from "effect"
 import {
   Answer,
   Chat,
@@ -16,11 +16,14 @@ const SupportText = View.define({
 })
 
 const SupportInput = Schema.Struct({ tenantId: Schema.String })
+
 const NoticeArguments = Schema.Struct({ noticeId: Schema.String })
+
 const DisputeInput = Schema.Struct({
   tenantId: Schema.String,
   noticeId: Schema.String,
 })
+
 const DisputeReceipt = Schema.Struct({ caseId: Schema.String })
 
 class NoticeUnavailable extends Schema.TaggedError<NoticeUnavailable>()(
@@ -69,12 +72,15 @@ const FileDispute = Tool.command({
   execute: (_, { commandId }) =>
     Effect.gen(function* () {
       const notice = yield* Chat.input(DisputeInput)
+
       const reason = yield* Tool.acceptedAnswer({
         stage: "details",
         field: "reason",
         schema: Schema.String,
       })
+
       const notices = yield* Notices
+
       return yield* notices.dispute({ ...notice, reason }, commandId)
     }),
 }).pipe(
@@ -113,6 +119,7 @@ const Dispute = Chat.branch({
       const notices = yield* Notices
       const input = { tenantId, noticeId }
       yield* notices.authorize(input)
+
       return input
     }),
 })
@@ -128,6 +135,7 @@ const Acknowledge = Tool.command({
       const input = { tenantId, noticeId }
       yield* notices.authorize(input)
       yield* notices.acknowledge(input, commandId)
+
       return "Receipt recorded."
     }),
 }).pipe(Tool.present(SupportText, (text) => ({ text })))
@@ -166,10 +174,9 @@ const ReadDispute = Tool.define({
   execute: () => Chat.returned(Dispute),
 }).pipe(
   Tool.present(SupportText, (result) => ({
-    text:
-      result._tag === "Completed"
-        ? `Your dispute reference is ${result.output.caseId}.`
-        : "The dispute was cancelled.",
+    text: Predicate.isTagged(result, "Completed")
+      ? `Your dispute reference is ${result.output.caseId}.`
+      : "The dispute was cancelled.",
   })),
 )
 
@@ -199,10 +206,12 @@ export const startSupport = (input: {
   Effect.gen(function* () {
     const notices = yield* Notices
     yield* notices.authorize(input)
+
     const started = yield* Chat.start(SupportChat, {
       sessionId: input.sessionId,
       input: { tenantId: input.tenantId },
     })
+
     return yield* Chat.post(SupportChat, {
       sessionId: input.sessionId,
       expectedRevision: started.revision,
@@ -221,6 +230,7 @@ export const startStandaloneDispute = (input: {
   Effect.gen(function* () {
     const notices = yield* Notices
     yield* notices.authorize(input)
+
     return yield* Chat.start(DisputeChat, {
       sessionId: input.sessionId,
       input: { tenantId: input.tenantId, noticeId: input.noticeId },

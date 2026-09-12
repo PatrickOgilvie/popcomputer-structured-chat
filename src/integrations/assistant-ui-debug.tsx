@@ -1,3 +1,4 @@
+import { Data, Effect, Predicate } from "effect"
 import {
   useEffect,
   useId,
@@ -22,10 +23,7 @@ export {
 
 /** Viewport corner used by the structured-chat debug panel. */
 export type StructuredChatDebugPanelPosition =
-  | "top-left"
-  | "top-right"
-  | "bottom-left"
-  | "bottom-right"
+  "top-left" | "top-right" | "bottom-left" | "bottom-right"
 
 /** Color treatment used by the structured-chat debug panel. */
 export type StructuredChatDebugPanelTheme = "system" | "light" | "dark"
@@ -40,26 +38,40 @@ export interface StructuredChatDebugPanelProps {
 }
 
 type DebugStage = StructuredChatDebugSnapshot["stages"][number]
+
 type DebugCollectStage = Extract<DebugStage, { readonly _tag: "CollectStage" }>
+
 type DebugField = DebugCollectStage["fields"][number]
+
 type DebugQuestion = DebugField["question"]
+
 type DebugFieldState = DebugField["state"]
+
 type DebugIssuedQuestion = Extract<
   DebugFieldState,
   { readonly _tag: "Asked" }
 >["issuedQuestion"]
+
 type DebugAcceptedState = Extract<
   DebugFieldState,
   { readonly _tag: "Accepted" }
 >
+
 type DebugEvidence = NonNullable<DebugAcceptedState["evidence"]>
+
 type DebugValue = DebugAcceptedState["value"]
+
 type DebugTraceEvent = StructuredChatDebugEvent
+
 type IconProps = { readonly className?: string }
-type CopyFeedback =
-  | { readonly _tag: "Idle" }
-  | { readonly _tag: "Copied"; readonly json: string }
-  | { readonly _tag: "Failed"; readonly json: string }
+
+type CopyFeedback = Data.TaggedEnum<{
+  Idle: {}
+  Copied: { readonly json: string }
+  Failed: { readonly json: string }
+}>
+
+const CopyFeedback = Data.taggedEnum<CopyFeedback>()
 
 const panelCss = `
 .pcsc-debug {
@@ -1294,6 +1306,7 @@ const StageStatusIcon = ({ stage }: { readonly stage: DebugStage }) => (
 
 const FieldStatusIcon = ({ state }: { readonly state: DebugFieldState }) => {
   const stateName = fieldStateName(state)
+
   return (
     <span
       className="pcsc-debug__status-icon"
@@ -1309,7 +1322,11 @@ const FieldStatusIcon = ({ state }: { readonly state: DebugFieldState }) => {
   )
 }
 
-const ChoiceList = ({ choices }: { readonly choices: ReadonlyArray<string> }) =>
+const ChoiceList = ({
+  choices,
+}: {
+  readonly choices: ReadonlyArray<string>
+}) =>
   choices.length === 0 ? null : (
     <ul className="pcsc-debug__choices" aria-label="Suggested choices">
       {choices.map((choice) => (
@@ -1328,9 +1345,7 @@ const questionContent = (question: DebugQuestion): ReactNode => {
       return (
         <>
           <p className="pcsc-debug__question-copy">{question.fallback}</p>
-          <p className="pcsc-debug__supporting-text">
-            Intent: {question.goal}
-          </p>
+          <p className="pcsc-debug__supporting-text">Intent: {question.goal}</p>
         </>
       )
     case "AdaptiveChoiceQuestion":
@@ -1353,7 +1368,11 @@ const questionContent = (question: DebugQuestion): ReactNode => {
   }
 }
 
-const QuestionDetails = ({ question }: { readonly question: DebugQuestion }) => (
+const QuestionDetails = ({
+  question,
+}: {
+  readonly question: DebugQuestion
+}) => (
   <section className="pcsc-debug__datum">
     <span className="pcsc-debug__datum-label">Planned Question</span>
     {questionContent(question)}
@@ -1402,18 +1421,23 @@ const answerValuePreview = (value: DebugValue): string => {
   if (value === "") {
     return "Empty"
   }
+
   if (value === true || value === false) {
     return value ? "Yes" : "No"
   }
+
   if (value === null) {
     return "Null"
   }
+
   if (Array.isArray(value)) {
     return `[${value.length}]`
   }
+
   if (value instanceof Object) {
     return `{${Object.keys(value).length}}`
   }
+
   return String(value)
 }
 
@@ -1442,13 +1466,13 @@ const AnswerValue = ({ value }: { readonly value: DebugValue }) => {
       </pre>
     )
   }
+
   if (value === "") {
     return (
-      <p className="pcsc-debug__value pcsc-debug__value--plain">
-        Empty answer
-      </p>
+      <p className="pcsc-debug__value pcsc-debug__value--plain">Empty answer</p>
     )
   }
+
   if (value === true || value === false) {
     return (
       <p className="pcsc-debug__value pcsc-debug__value--plain">
@@ -1456,11 +1480,11 @@ const AnswerValue = ({ value }: { readonly value: DebugValue }) => {
       </p>
     )
   }
+
   if (value === null) {
-    return (
-      <p className="pcsc-debug__value pcsc-debug__value--plain">Null</p>
-    )
+    return <p className="pcsc-debug__value pcsc-debug__value--plain">Null</p>
   }
+
   return (
     <p className="pcsc-debug__value pcsc-debug__value--plain">
       {String(value)}
@@ -1539,6 +1563,7 @@ const AnswerDetails = ({
   readonly isFocusedAnswer: boolean
 }) => {
   const stateName = fieldStateName(field.state)
+
   return (
     <details
       className="pcsc-debug__answer"
@@ -1572,7 +1597,7 @@ const AnswerDetails = ({
 
 /** Right-aligned stage metric: progress where it exists, otherwise the kind. */
 const stageMetaLabel = (stage: DebugStage): string =>
-  stage._tag === "CollectStage"
+  Predicate.isTagged(stage, "CollectStage")
     ? `${stage.satisfiedFields}/${stage.totalFields}`
     : stageKindLabel(stage)
 
@@ -1590,7 +1615,11 @@ const StageSummary = ({ stage }: { readonly stage: DebugStage }) => (
   </summary>
 )
 
-const RepairNotice = ({ repairPending }: { readonly repairPending: boolean }) =>
+const RepairNotice = ({
+  repairPending,
+}: {
+  readonly repairPending: boolean
+}) =>
   repairPending ? (
     <div className="pcsc-debug__notice">
       <span className="pcsc-debug__notice-dot" aria-hidden="true" />
@@ -1606,7 +1635,7 @@ const mostRecentlyFirstAskedField = (
 
   for (const field of fields) {
     if (
-      field.state._tag === "Asked" &&
+      Predicate.isTagged(field.state, "Asked") &&
       field.state.issuedQuestion.messageIndex > mostRecentMessageIndex
     ) {
       mostRecent = field
@@ -1617,7 +1646,11 @@ const mostRecentlyFirstAskedField = (
   return mostRecent
 }
 
-const CollectStageDetails = ({ stage }: { readonly stage: DebugCollectStage }) => {
+const CollectStageDetails = ({
+  stage,
+}: {
+  readonly stage: DebugCollectStage
+}) => {
   const focusedAnswer =
     stage.status === "current"
       ? mostRecentlyFirstAskedField(stage.fields)
@@ -1733,13 +1766,26 @@ const StageDetails = ({ stage }: { readonly stage: DebugStage }) => {
     case "ToolStage":
       return <ToolStageDetails stage={stage} />
     case "InteractionStage":
-      return <details className="pcsc-debug__stage" data-status={stage.status} open={stage.status === "current"}>
-        <StageSummary stage={stage} />
-        <div className="pcsc-debug__stage-body">
-          <p>Available actions: {stage.tools.map(humanizeIdentifier).join(", ")}</p>
-          <p>{stage.completeOn.length === 0 ? "This interaction stays open after every action." : `Completes after: ${stage.completeOn.map(humanizeIdentifier).join(", ")}`}</p>
-        </div>
-      </details>
+      return (
+        <details
+          className="pcsc-debug__stage"
+          data-status={stage.status}
+          open={stage.status === "current"}
+        >
+          <StageSummary stage={stage} />
+          <div className="pcsc-debug__stage-body">
+            <p>
+              Available actions:{" "}
+              {stage.tools.map(humanizeIdentifier).join(", ")}
+            </p>
+            <p>
+              {stage.completeOn.length === 0
+                ? "This interaction stays open after every action."
+                : `Completes after: ${stage.completeOn.map(humanizeIdentifier).join(", ")}`}
+            </p>
+          </div>
+        </details>
+      )
     case "CommandStage":
       return <CommandStageDetails stage={stage} />
   }
@@ -1757,13 +1803,11 @@ const ModelPayloadEvent = ({
   readonly event: DebugPayloadEvent
   readonly expanded: boolean
 }) => {
-  const input = event._tag === "ModelInput"
+  const input = Predicate.isTagged(event, "ModelInput")
   const payload = input ? event.request : event.response
+
   return (
-    <li
-      className="pcsc-debug__event"
-      data-kind={input ? "input" : "output"}
-    >
+    <li className="pcsc-debug__event" data-kind={input ? "input" : "output"}>
       <details className="pcsc-debug__event-details" open={expanded}>
         <summary>
           <span className="pcsc-debug__event-title">
@@ -1784,10 +1828,9 @@ const ModelPayloadEvent = ({
   )
 }
 
-const annotationContent = (event: Exclude<
-  DebugTraceEvent,
-  DebugPayloadEvent
->): ReactNode => {
+const annotationContent = (
+  event: Exclude<DebugTraceEvent, DebugPayloadEvent>,
+): ReactNode => {
   switch (event._tag) {
     case "ModelCallFailed":
       return (
@@ -1875,15 +1918,13 @@ const AnnotationEvent = ({
   <li
     className="pcsc-debug__event"
     data-kind={
-      event._tag === "ModelCallFailed" ||
-      event._tag === "ModelOutputRejected"
+      Predicate.isTagged(event, "ModelCallFailed") ||
+      Predicate.isTagged(event, "ModelOutputRejected")
         ? "failure"
         : "annotation"
     }
   >
-    <div className="pcsc-debug__annotation">
-      {annotationContent(event)}
-    </div>
+    <div className="pcsc-debug__annotation">{annotationContent(event)}</div>
   </li>
 )
 
@@ -1894,7 +1935,8 @@ const TraceEvent = ({
   readonly event: DebugTraceEvent
   readonly expanded: boolean
 }) =>
-  event._tag === "ModelInput" || event._tag === "ModelOutput" ? (
+  Predicate.isTagged(event, "ModelInput") ||
+  Predicate.isTagged(event, "ModelOutput") ? (
     <ModelPayloadEvent event={event} expanded={expanded} />
   ) : (
     <AnnotationEvent event={event} />
@@ -1910,15 +1952,18 @@ const TraceTurn = ({
   readonly latest: boolean
 }) => {
   const { trace } = turn
+
   return (
     <article
       className="pcsc-debug__trace-turn"
-      data-outcome={turn._tag === "Succeeded" ? "success" : "failure"}
+      data-outcome={
+        Predicate.isTagged(turn, "Succeeded") ? "success" : "failure"
+      }
     >
       <header className="pcsc-debug__trace-turn-header">
         <span>Turn {index + 1}</span>
         <span className="pcsc-debug__trace-revision">
-          {turn._tag === "Succeeded"
+          {Predicate.isTagged(turn, "Succeeded")
             ? `revision ${turn.session.revision}`
             : "no revision returned"}
         </span>
@@ -1949,8 +1994,8 @@ const TraceDetails = ({
 }) =>
   turns.length === 0 ? (
     <div className="pcsc-debug__trace-empty">
-      No literal model trace has arrived yet. Run the server turn with the
-      debug capture API to populate this view.
+      No literal model trace has arrived yet. Run the server turn with the debug
+      capture API to populate this view.
     </div>
   ) : (
     <div className="pcsc-debug__trace" aria-label="Literal LLM call trace">
@@ -1959,7 +2004,7 @@ const TraceDetails = ({
           turn={turn}
           index={index}
           latest={index === turns.length - 1}
-          key={`${turn.session?.id ?? "uncorrelated"}:${turn._tag}:${turn._tag === "Succeeded" ? turn.session.revision : index}`}
+          key={`${turn.session?.id ?? "uncorrelated"}:${turn._tag}:${Predicate.isTagged(turn, "Succeeded") ? turn.session.revision : index}`}
         />
       ))}
     </div>
@@ -1972,6 +2017,7 @@ const debugAnnouncement = (
   if (turns.at(-1)?._tag === "Failed") {
     return "The latest debug turn failed; no new session revision was returned."
   }
+
   if (snapshot === null) {
     return "Waiting for the first reply."
   }
@@ -1979,10 +2025,13 @@ const debugAnnouncement = (
   const stage = snapshot.stages.find(
     ({ index }) => index === snapshot.currentStage.index,
   )
+
   const stageName = humanizeIdentifier(snapshot.currentStage.name)
+
   if (stage?._tag === "CollectStage") {
     return `${stageName} is current. ${stage.satisfiedFields} of ${stage.totalFields} required answers are answered.`
   }
+
   return `${stageName} is the current step.`
 }
 
@@ -1999,12 +2048,15 @@ export const StructuredChatDebugPanel = ({
     store.getView,
     store.getView,
   )
+
   const { snapshot, turns } = storeView
   const [open, setOpen] = useState(defaultOpen)
   const [activeTab, setActiveTab] = useState(defaultTab)
-  const [copyFeedback, setCopyFeedback] = useState<CopyFeedback>({
-    _tag: "Idle",
-  })
+
+  const [copyFeedback, setCopyFeedback] = useState<CopyFeedback>(
+    CopyFeedback.Idle,
+  )
+
   const contentId = useId()
   const flowPanelId = useId()
   const callsPanelId = useId()
@@ -2012,47 +2064,48 @@ export const StructuredChatDebugPanel = ({
   const callsTabId = useId()
   const flowTab = useRef<HTMLButtonElement>(null)
   const callsTab = useRef<HTMLButtonElement>(null)
+
   const flowJson = useMemo(
     () => (snapshot === null ? "" : JSON.stringify(snapshot, null, 2)),
     [snapshot],
   )
-  const callsJson = useMemo(
-    () => JSON.stringify(turns, null, 2),
-    [turns],
-  )
+
+  const callsJson = useMemo(() => JSON.stringify(turns, null, 2), [turns])
+
   const rawJson = activeTab === "flow" ? flowJson : callsJson
-  const { modelCallCount, failedTurnCount } = useMemo(
-    () => {
-      let calls = 0
-      let failures = 0
-      for (const turn of turns) {
-        if (turn._tag === "Failed") {
-          failures += 1
-        }
-        for (const event of turn.trace.events) {
-          if (event._tag === "ModelInput") {
-            calls += 1
-          }
+
+  const { modelCallCount, failedTurnCount } = useMemo(() => {
+    let calls = 0
+    let failures = 0
+
+    for (const turn of turns) {
+      if (Predicate.isTagged(turn, "Failed")) {
+        failures += 1
+      }
+
+      for (const event of turn.trace.events) {
+        if (Predicate.isTagged(event, "ModelInput")) {
+          calls += 1
         }
       }
-      return { modelCallCount: calls, failedTurnCount: failures }
-    },
-    [turns],
-  )
+    }
+
+    return { modelCallCount: calls, failedTurnCount: failures }
+  }, [turns])
+
   const traceSubtitle =
     turns.length === 0
       ? "Waiting for a captured turn"
       : [
           `${modelCallCount} model ${modelCallCount === 1 ? "call" : "calls"}`,
           `${turns.length} ${turns.length === 1 ? "turn" : "turns"}`,
-          ...(failedTurnCount === 0
-            ? []
-            : [`${failedTurnCount} failed`]),
+          ...(failedTurnCount === 0 ? [] : [`${failedTurnCount} failed`]),
         ].join(" · ")
+
   const copyStatus =
-    copyFeedback._tag === "Idle" || copyFeedback.json !== rawJson
+    CopyFeedback.$is("Idle")(copyFeedback) || copyFeedback.json !== rawJson
       ? "idle"
-      : copyFeedback._tag === "Copied"
+      : CopyFeedback.$is("Copied")(copyFeedback)
         ? "copied"
         : "failed"
 
@@ -2069,10 +2122,12 @@ export const StructuredChatDebugPanel = ({
             ? currentTab === "flow"
               ? "calls"
               : "flow"
-          : undefined
+            : undefined
+
     if (nextTab === undefined) {
       return
     }
+
     event.preventDefault()
     setActiveTab(nextTab)
     const targetTab = nextTab === "flow" ? flowTab : callsTab
@@ -2085,7 +2140,7 @@ export const StructuredChatDebugPanel = ({
     }
 
     const timeoutId = window.setTimeout(() => {
-      setCopyFeedback({ _tag: "Idle" })
+      setCopyFeedback(CopyFeedback.Idle())
     }, 1600)
 
     return () => {
@@ -2093,18 +2148,21 @@ export const StructuredChatDebugPanel = ({
     }
   }, [copyStatus])
 
-  const copyJson = async (): Promise<void> => {
+  const copyJson = (): void => {
     const jsonToCopy = rawJson
-    try {
-      if (navigator.clipboard === undefined) {
-        setCopyFeedback({ _tag: "Failed", json: jsonToCopy })
-        return
-      }
-      await navigator.clipboard.writeText(jsonToCopy)
-      setCopyFeedback({ _tag: "Copied", json: jsonToCopy })
-    } catch {
-      setCopyFeedback({ _tag: "Failed", json: jsonToCopy })
-    }
+
+    // The click boundary owns clipboard completion and translates every failure
+    // into visible feedback; no rejected Promise escapes the event handler.
+    Effect.runCallback(
+      Effect.tryPromise(() => navigator.clipboard.writeText(jsonToCopy)).pipe(
+        Effect.match({
+          onFailure: () =>
+            setCopyFeedback(CopyFeedback.Failed({ json: jsonToCopy })),
+          onSuccess: () =>
+            setCopyFeedback(CopyFeedback.Copied({ json: jsonToCopy })),
+        }),
+      ),
+    )
   }
 
   return (
@@ -2153,13 +2211,9 @@ export const StructuredChatDebugPanel = ({
               className="pcsc-debug__copy"
               type="button"
               disabled={
-                activeTab === "flow"
-                  ? snapshot === null
-                  : turns.length === 0
+                activeTab === "flow" ? snapshot === null : turns.length === 0
               }
-              onClick={() => {
-                void copyJson()
-              }}
+              onClick={copyJson}
               aria-label={
                 activeTab === "flow"
                   ? "Copy debug state as JSON"
@@ -2261,11 +2315,15 @@ export const StructuredChatDebugPanel = ({
                 <div className="pcsc-debug__flow-heading">
                   <span>Conversation Flow</span>
                   <span className="pcsc-debug__step-count">
-                    Step {snapshot.currentStage.index + 1} of {snapshot.stages.length}
+                    Step {snapshot.currentStage.index + 1} of{" "}
+                    {snapshot.stages.length}
                   </span>
                 </div>
 
-                <div className="pcsc-debug__stage-list" aria-label="Chat stages">
+                <div
+                  className="pcsc-debug__stage-list"
+                  aria-label="Chat stages"
+                >
                   {snapshot.stages.map((stage) => (
                     <StageDetails
                       stage={stage}

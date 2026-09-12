@@ -32,7 +32,12 @@ import type {
   ToolCall,
   ToolExecution,
 } from "./tool.js"
-import { compileToolRegistry, compileRepairToolRegistry, type RepairDecision } from "./tool-registry.js"
+import {
+  compileToolRegistry,
+  compileRepairToolRegistry,
+  type RepairDecision,
+  type CommandContextSource,
+} from "./tool-registry.js"
 import type { RepairTool } from "./repair.js"
 import { defineInteractionStage } from "./interaction-stage.js"
 import { defineCollectStage } from "./collect-stage.js"
@@ -73,7 +78,9 @@ export type DefineToolStageInput<
 export interface ToolStageRuntime {
   readonly afterExecution: ToolStageAfterExecution
   readonly toolNames: ReadonlyArray<string>
-  readonly withRepair: (repair: RepairTool) => (
+  readonly withRepair: (
+    repair: RepairTool,
+  ) => (
     messages: ReadonlyArray<UntrustedMessage>,
   ) => Effect.Effect<RepairDecision, unknown, unknown>
   readonly run: (
@@ -81,13 +88,10 @@ export interface ToolStageRuntime {
   ) => Effect.Effect<unknown, unknown, unknown>
 }
 
-const toolStageRuntime = Symbol(
-  "@popcomputer/structured-chat/ToolStageRuntime",
-)
+const toolStageRuntime = Symbol("@popcomputer/structured-chat/ToolStageRuntime")
 
 /** Minimum sealed tool-stage shape accepted by a chat definition. */
-export interface ToolStageDefinitionContract
-  extends StructuredDefinition<"tool_stage"> {
+export interface ToolStageDefinitionContract extends StructuredDefinition<"tool_stage"> {
   readonly _tag: "ToolStage"
   readonly name: string
   readonly guards: ModelGuardTuple
@@ -107,6 +111,10 @@ export interface CommandStageRuntime {
     messages: ReadonlyArray<UntrustedMessage>,
     context: CommandExecutionContext,
   ) => Effect.Effect<unknown, unknown, unknown>
+  readonly runScoped: (
+    messages: ReadonlyArray<UntrustedMessage>,
+    context: CommandContextSource<unknown>,
+  ) => Effect.Effect<unknown, unknown, unknown>
 }
 
 const commandStageRuntime = Symbol(
@@ -114,8 +122,7 @@ const commandStageRuntime = Symbol(
 )
 
 /** Minimum sealed terminal command-stage shape accepted by a chat. */
-export interface CommandStageDefinitionContract
-  extends StructuredDefinition<"command_stage"> {
+export interface CommandStageDefinitionContract extends StructuredDefinition<"command_stage"> {
   readonly _tag: "CommandStage"
   readonly name: string
   readonly guards: ModelGuardTuple
@@ -150,8 +157,7 @@ export interface ToolStage<
     | UnsupportedModelToolSchema
     | InvalidToolCall
     | ModelGuardError<Guards>,
-    | ModelRequirement<Profile>
-    | ModelGuardRequirements<Guards>
+    ModelRequirement<Profile> | ModelGuardRequirements<Guards>
   >
 
   /** Run one required tool call against this stage's capabilities. */
@@ -169,53 +175,57 @@ export interface ToolStage<
   >
 }
 
-type CommandCall<Command> = Command extends StructuredCommand<
-  infer Name,
-  infer InputSchema,
-  infer _ServerResult,
-  infer _Error,
-  infer _Requirements,
-  infer _ModelSchema,
-  infer _Presenters
->
-  ? ToolCall<Name, InputSchema>
-  : never
+type CommandCall<Command> =
+  Command extends StructuredCommand<
+    infer Name,
+    infer InputSchema,
+    infer _ServerResult,
+    infer _Error,
+    infer _Requirements,
+    infer _ModelSchema,
+    infer _Presenters
+  >
+    ? ToolCall<Name, InputSchema>
+    : never
 
-type CommandResult<Command> = Command extends StructuredCommand<
-  infer _Name,
-  infer _InputSchema,
-  infer ServerResult,
-  infer _Error,
-  infer _Requirements,
-  infer ModelSchema,
-  infer Presenters
->
-  ? ToolExecution<ServerResult, ModelSchema, Presenters>
-  : never
+type CommandResult<Command> =
+  Command extends StructuredCommand<
+    infer _Name,
+    infer _InputSchema,
+    infer ServerResult,
+    infer _Error,
+    infer _Requirements,
+    infer ModelSchema,
+    infer Presenters
+  >
+    ? ToolExecution<ServerResult, ModelSchema, Presenters>
+    : never
 
-type CommandError<Command> = Command extends StructuredCommand<
-  infer _Name,
-  infer _InputSchema,
-  infer _ServerResult,
-  infer Error,
-  infer _Requirements,
-  infer _ModelSchema,
-  infer _Presenters
->
-  ? Error
-  : never
+type CommandError<Command> =
+  Command extends StructuredCommand<
+    infer _Name,
+    infer _InputSchema,
+    infer _ServerResult,
+    infer Error,
+    infer _Requirements,
+    infer _ModelSchema,
+    infer _Presenters
+  >
+    ? Error
+    : never
 
-type CommandRequirements<Command> = Command extends StructuredCommand<
-  infer _Name,
-  infer _InputSchema,
-  infer _ServerResult,
-  infer _Error,
-  infer Requirements,
-  infer _ModelSchema,
-  infer _Presenters
->
-  ? Requirements
-  : never
+type CommandRequirements<Command> =
+  Command extends StructuredCommand<
+    infer _Name,
+    infer _InputSchema,
+    infer _ServerResult,
+    infer _Error,
+    infer Requirements,
+    infer _ModelSchema,
+    infer _Presenters
+  >
+    ? Requirements
+    : never
 
 /** Definition input for one exactly-once-intent terminal command stage. */
 export type DefineCommandStageInput<
@@ -249,8 +259,7 @@ export interface CommandStage<
     | UnsupportedModelToolSchema
     | InvalidToolCall
     | ModelGuardError<Guards>,
-    | ModelRequirement<Profile>
-    | ModelGuardRequirements<Guards>
+    ModelRequirement<Profile> | ModelGuardRequirements<Guards>
   >
 
   readonly run: (
@@ -276,34 +285,30 @@ const defineToolStage = <
   const Guards extends ModelGuardTuple = readonly [],
   const Profile extends AnyModelProfile | undefined = undefined,
 >(
-  definition: DefineToolStageInput<
-    Name,
-    Tools,
-    Guards,
-    Profile
-  >,
+  definition: DefineToolStageInput<Name, Tools, Guards, Profile>,
 ): ToolStage<Name, Tools, Guards, Profile> => {
-  Schema.decodeSync(StageNameSchema)(definition.name)
+  StageNameSchema.make(definition.name)
   const instructions = definition.instructions.map(Instruction.make)
   const toolSet = defineToolSet(...definition.tools)
+
   // SAFETY: when guards are omitted, Guards uses its readonly [] default; an
   // explicitly supplied tuple is returned unchanged.
-  const guards =
-    definition.guards ?? Fn.cast<readonly [], Guards>([])
+  const guards = definition.guards ?? Fn.cast<readonly [], Guards>([])
+
   // SAFETY: ModelProfileInput requires a concrete model whenever Profile is
   // defined; when Profile is undefined, undefined is the only legal value.
-  const model = Fn.cast<typeof definition.model, Profile>(
-    definition.model,
-  )
+  const model = Fn.cast<typeof definition.model, Profile>(definition.model)
+
   // SAFETY: the selected value above preserves the conditional input proof;
   // this projection only restores that relationship for object construction.
   const modelInput = Fn.cast<
     { readonly model: Profile },
     ModelProfileInput<Profile>
   >({ model })
-  const afterExecution = Schema.decodeSync(
-    ToolStageAfterExecutionSchema,
-  )(definition.afterExecution ?? "stay")
+
+  const afterExecution = ToolStageAfterExecutionSchema.make(
+    definition.afterExecution ?? "stay",
+  )
 
   const plan = (messages: ReadonlyArray<UntrustedMessage>) =>
     planToolCall<Tools, Guards, Profile>({
@@ -320,8 +325,10 @@ const defineToolStage = <
 
   const run: ToolStage<Name, Tools, Guards, Profile>["run"] = (messages) =>
     plan(messages).pipe(Effect.flatMap(toolSet.execute))
+
   const withRepair = (repair: RepairTool) => {
     const combined = compileRepairToolRegistry(definition.tools, repair)
+
     return (messages: ReadonlyArray<UntrustedMessage>) =>
       planToolCall<readonly [RepairTool, ...Tools], Guards, Profile>({
         instructions,
@@ -355,30 +362,27 @@ const defineCommandStage = <
   const Guards extends ModelGuardTuple = readonly [],
   const Profile extends AnyModelProfile | undefined = undefined,
 >(
-  definition: DefineCommandStageInput<
-    Name,
-    Command,
-    Guards,
-    Profile
-  >,
+  definition: DefineCommandStageInput<Name, Command, Guards, Profile>,
 ): CommandStage<Name, Command, Guards, Profile> => {
-  Schema.decodeSync(StageNameSchema)(definition.name)
+  StageNameSchema.make(definition.name)
   const instructions = definition.instructions.map(Instruction.make)
+
   // SAFETY: when omitted, Guards is its readonly [] default.
-  const guards =
-    definition.guards ?? Fn.cast<readonly [], Guards>([])
+  const guards = definition.guards ?? Fn.cast<readonly [], Guards>([])
+
   // SAFETY: ModelProfileInput requires a concrete model whenever Profile is
   // defined; when Profile is undefined, undefined is the only legal value.
-  const model = Fn.cast<typeof definition.model, Profile>(
-    definition.model,
-  )
+  const model = Fn.cast<typeof definition.model, Profile>(definition.model)
+
   // SAFETY: the selected value above preserves the conditional input proof;
   // this projection only restores that relationship for object construction.
   const modelInput = Fn.cast<
     { readonly model: Profile },
     ModelProfileInput<Profile>
   >({ model })
+
   const registry = compileToolRegistry([definition.command] as const)
+
   const plan = (messages: ReadonlyArray<UntrustedMessage>) =>
     planToolCall<readonly [Command], Guards, Profile>({
       instructions,
@@ -391,18 +395,23 @@ const defineCommandStage = <
         attributes: { stage: definition.name },
       }),
     )
-  const runRuntime = (
+
+  const runScoped = <E>(
     messages: ReadonlyArray<UntrustedMessage>,
-    context: CommandExecutionContext,
+    context: CommandContextSource<E>,
   ) =>
     plan(messages).pipe(
-      Effect.flatMap((call) =>
-        registry.execute(call, () => Effect.succeed(context)),
-      ),
+      Effect.flatMap((call) => registry.execute(call, context)),
       Effect.withSpan("popcomputer.structured_chat.command_stage.run", {
         attributes: { stage: definition.name },
       }),
     )
+
+  const runRuntime = (
+    messages: ReadonlyArray<UntrustedMessage>,
+    context: CommandExecutionContext,
+  ) => runScoped(messages, () => Effect.succeed(context))
+
   // SAFETY: failures and requirements are not recovered; the command's
   // projections and result are preserved by its own execute operation.
   const run = Fn.cast<
@@ -420,6 +429,7 @@ const defineCommandStage = <
     [commandStageRuntime]: {
       commandName: definition.command.name,
       run: runRuntime,
+      runScoped,
     },
   })
 }

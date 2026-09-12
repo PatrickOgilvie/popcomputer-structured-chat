@@ -14,7 +14,7 @@ import { JsonValueSchema } from "../src/core/json-value.js"
 import { Chat as ChatTest } from "../src/testing.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Schema } from "effect"
+import { Predicate, Effect, Layer, Schema } from "effect"
 
 const DebugBrief = Stage.collect({
   name: "debug_brief",
@@ -104,9 +104,11 @@ describe("Debug.present", () => {
     )
 
     expect(response.outcome).toBe("success")
+
     if (response.outcome !== "success") {
       throw new Error("Expected a successful state-only response")
     }
+
     expect(response.message.content[0]).toMatchObject({
       type: "data",
       name: "collect_question",
@@ -128,6 +130,7 @@ describe("Debug.present", () => {
 
   test("captures literal provider input and output with semantic annotations", async () => {
     const providerRequests: Array<OpenAI.ProviderRequest> = []
+
     const providerResponses = [
       {
         id: "response-invalid-tool",
@@ -185,6 +188,7 @@ describe("Debug.present", () => {
         ],
       },
     ] as const
+
     const model = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.openAI({
@@ -192,6 +196,7 @@ describe("Debug.present", () => {
         complete: (request) => {
           providerRequests.push(request)
           const response = providerResponses[providerRequests.length - 1]
+
           return response === undefined
             ? Promise.reject(new Error("Unexpected provider call"))
             : Promise.resolve(response)
@@ -201,25 +206,33 @@ describe("Debug.present", () => {
 
     const response = await Effect.runPromise(
       Effect.gen(function* () {
-        const reply = yield* Debug.turn(DebugChat, {
-          sessionId: "debug:literal",
-          message: "I want to explore Effect",
-        }, { modelPayloads: "literal" })
-        return yield* Debug.present(DebugChat, { ...reply }, {
-          presentation: {
-            result: () => [{ type: "text", text: "Debug complete" }],
+        const reply = yield* Debug.turn(
+          DebugChat,
+          {
+            sessionId: "debug:literal",
+            message: "I want to explore Effect",
           },
-        })
-      }).pipe(
-        Effect.provide(Layer.merge(model, inMemoryChatSessionStore)),
-      ),
+          { modelPayloads: "literal" },
+        )
+
+        return yield* Debug.present(
+          DebugChat,
+          { ...reply },
+          {
+            presentation: {
+              result: () => [{ type: "text", text: "Debug complete" }],
+            },
+          },
+        )
+      }).pipe(Effect.provide(Layer.merge(model, inMemoryChatSessionStore))),
     )
 
-    const input = response.trace.events.find(
-      (event) => event._tag === "ModelInput",
+    const input = response.trace.events.find((event) =>
+      Predicate.isTagged(event, "ModelInput"),
     )
-    const output = response.trace.events.find(
-      (event) => event._tag === "ModelOutput",
+
+    const output = response.trace.events.find((event) =>
+      Predicate.isTagged(event, "ModelOutput"),
     )
 
     expect(input).toMatchObject({
@@ -229,17 +242,22 @@ describe("Debug.present", () => {
       model: "gpt-5-mini",
       providerAttempt: 1,
     })
+
     if (input?._tag !== "ModelInput") {
       throw new Error("Expected one literal model input")
     }
+
     const providerRequest = providerRequests[0]
+
     if (providerRequest === undefined) {
       throw new Error("Expected one provider request")
     }
+
     const expectedRequest = Schema.decodeUnknownSync(JsonValueSchema)({
       model: "gpt-5-mini",
       input: providerRequest.input,
     })
+
     expect(input.request).toEqual(expectedRequest)
     expect(output).toMatchObject({
       _tag: "ModelOutput",
@@ -259,49 +277,56 @@ describe("Debug.present", () => {
       "ModelOutput",
       "ToolCalled",
     ])
-    expect(response.trace.events).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        _tag: "ModelOutputRejected",
-        call: 0,
-        reason: "invalid_tool_call",
-      }),
-      expect.objectContaining({
-        _tag: "QuestionAnswered",
-        stage: "debug_brief",
-        field: "topic",
-      }),
-      expect.objectContaining({
-        _tag: "StageAdvanced",
-        from: "debug_brief",
-        to: "debug_result",
-      }),
-      expect.objectContaining({
-        _tag: "ToolCalled",
-        tool: "debug_search",
-      }),
-    ]))
+    expect(response.trace.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          _tag: "ModelOutputRejected",
+          call: 0,
+          reason: "invalid_tool_call",
+        }),
+        expect.objectContaining({
+          _tag: "QuestionAnswered",
+          stage: "debug_brief",
+          field: "topic",
+        }),
+        expect.objectContaining({
+          _tag: "StageAdvanced",
+          from: "debug_brief",
+          to: "debug_result",
+        }),
+        expect.objectContaining({
+          _tag: "ToolCalled",
+          tool: "debug_search",
+        }),
+      ]),
+    )
+
     if (response.outcome !== "success") {
       throw new Error("Expected a successful debug response")
     }
+
     expect(response.answers).toEqual(emptyUserAnswers)
   })
 
   test("truncates a successful trace before its protocol limit", async () => {
     const response = await Effect.runPromise(
       Effect.gen(function* () {
-        const outcome = yield* Debug.turn(DebugChat, {
-          sessionId: "debug:overflow-success",
-          message: "I want to explore Effect",
-        }, { modelPayloads: "literal" })
+        const outcome = yield* Debug.turn(
+          DebugChat,
+          {
+            sessionId: "debug:overflow-success",
+            message: "I want to explore Effect",
+          },
+          { modelPayloads: "literal" },
+        )
+
         return yield* Debug.present(DebugChat, outcome, {
           presentation: {
             result: () => [{ type: "text", text: "Debug complete" }],
           },
         })
       }).pipe(
-        Effect.provide(
-          Layer.merge(overflowModel, inMemoryChatSessionStore),
-        ),
+        Effect.provide(Layer.merge(overflowModel, inMemoryChatSessionStore)),
       ),
     )
 
@@ -324,21 +349,27 @@ describe("Debug.present", () => {
 
     const { outcome, response } = await Effect.runPromise(
       Effect.gen(function* () {
-        const outcome = yield* Debug.turn(DebugChat, {
-          sessionId: "debug:failed",
-          message: "I want to explore Effect",
-        }, { modelPayloads: "literal" })
+        const outcome = yield* Debug.turn(
+          DebugChat,
+          {
+            sessionId: "debug:failed",
+            message: "I want to explore Effect",
+          },
+          { modelPayloads: "literal" },
+        )
+
         const response = yield* Debug.present(DebugChat, outcome)
+
         return { outcome, response }
-      }).pipe(
-        Effect.provide(Layer.merge(model, inMemoryChatSessionStore)),
-      ),
+      }).pipe(Effect.provide(Layer.merge(model, inMemoryChatSessionStore))),
     )
 
     expect(outcome._tag).toBe("Failed")
-    if (outcome._tag !== "Failed") {
+
+    if (!Predicate.isTagged(outcome, "Failed")) {
       throw new Error("Expected a failed debug outcome")
     }
+
     expect(outcome.error).toMatchObject({
       _tag: "ChatModelUnavailable",
       reason: "request_failed",
@@ -381,14 +412,17 @@ describe("Debug.present", () => {
 
     const response = await Effect.runPromise(
       Effect.gen(function* () {
-        const outcome = yield* Debug.turn(DebugChat, {
-          sessionId: "debug:overflow-failure",
-          message: "I want to explore Effect",
-        }, { modelPayloads: "literal" })
+        const outcome = yield* Debug.turn(
+          DebugChat,
+          {
+            sessionId: "debug:overflow-failure",
+            message: "I want to explore Effect",
+          },
+          { modelPayloads: "literal" },
+        )
+
         return yield* Debug.present(DebugChat, outcome)
-      }).pipe(
-        Effect.provide(Layer.merge(overflowModel, store)),
-      ),
+      }).pipe(Effect.provide(Layer.merge(overflowModel, store))),
     )
 
     expect(response.outcome).toBe("failure")
@@ -406,20 +440,24 @@ describe("Debug.present", () => {
   test("presents an invalid input failure without echoing its session ID", async () => {
     const response = await Effect.runPromise(
       Effect.gen(function* () {
-        const outcome = yield* Debug.turn(DebugChat, {
-          sessionId: "invalid session id",
-          message: "I want to explore Effect",
-        }, { modelPayloads: "literal" })
+        const outcome = yield* Debug.turn(
+          DebugChat,
+          {
+            sessionId: "invalid session id",
+            message: "I want to explore Effect",
+          },
+          { modelPayloads: "literal" },
+        )
+
         expect(outcome).toMatchObject({
           _tag: "Failed",
           sessionId: null,
           error: { reason: "invalid_input" },
         })
+
         return yield* Debug.present(DebugChat, outcome)
       }).pipe(
-        Effect.provide(
-          Layer.merge(overflowModel, inMemoryChatSessionStore),
-        ),
+        Effect.provide(Layer.merge(overflowModel, inMemoryChatSessionStore)),
       ),
     )
 

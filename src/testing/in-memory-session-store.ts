@@ -1,4 +1,4 @@
-import { Effect, Layer, Ref } from "effect"
+import { Schema, Effect, Layer, Ref } from "effect"
 import {
   ChatSessionConflict,
   ChatSessionStore,
@@ -8,12 +8,7 @@ import {
 } from "../core/session.js"
 
 const scopeKey = (scope: ChatSessionScope): string =>
-  JSON.stringify([
-    scope.chat,
-    scope.version,
-    scope.namespace,
-    scope.sessionId,
-  ])
+  JSON.stringify([scope.chat, scope.version, scope.namespace, scope.sessionId])
 
 const nextRevision = (current: ChatSessionSnapshot | undefined): string =>
   current === undefined
@@ -29,15 +24,12 @@ const replaceSnapshot = (
 ] => {
   const key = scopeKey(input)
   const current = sessions.get(key)
+
   if (
     (current === undefined && input.expectedRevision !== null) ||
-    (current !== undefined &&
-      input.expectedRevision !== current.revision)
+    (current !== undefined && input.expectedRevision !== current.revision)
   ) {
-    return [
-      new ChatSessionConflict({ reason: "concurrent_update" }),
-      sessions,
-    ]
+    return [new ChatSessionConflict({ reason: "concurrent_update" }), sessions]
   }
 
   const snapshot: ChatSessionSnapshot = {
@@ -45,6 +37,7 @@ const replaceSnapshot = (
     state: input.state,
     messages: input.messages,
   }
+
   const next = new Map(sessions)
   next.set(key, snapshot)
 
@@ -67,7 +60,7 @@ export const inMemoryChatSessionStore: Layer.Layer<ChatSessionStore> =
               replaceSnapshot(current, input),
             ).pipe(
               Effect.flatMap((result) =>
-                result instanceof ChatSessionConflict
+                Schema.is(ChatSessionConflict)(result)
                   ? Effect.fail(result)
                   : Effect.succeed({ revision: result.revision }),
               ),

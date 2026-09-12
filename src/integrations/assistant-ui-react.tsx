@@ -25,17 +25,14 @@ import {
 import type { StructuredChatDebugPanelProps } from "./assistant-ui-debug.js"
 
 const LazyStructuredChatDebugPanel = lazy(() =>
-  import("./assistant-ui-debug.js").then(
-    ({ StructuredChatDebugPanel }) => ({
-      default: StructuredChatDebugPanel,
-    }),
-  ),
+  import("./assistant-ui-debug.js").then(({ StructuredChatDebugPanel }) => ({
+    default: StructuredChatDebugPanel,
+  })),
 )
 
 /** Package-owned debug-window retention and presentation options. */
-export type StructuredChatDebugWindowOptions =
-  StructuredChatDebugStoreOptions &
-    Omit<StructuredChatDebugPanelProps, "store">
+export type StructuredChatDebugWindowOptions = StructuredChatDebugStoreOptions &
+  Omit<StructuredChatDebugPanelProps, "store">
 
 /** High-level assistant-ui runtime and optional debug-window configuration. */
 export interface StructuredChatAssistantProviderProps {
@@ -49,8 +46,7 @@ export interface StructuredChatAssistantProviderProps {
   /** Authorized debug endpoint; defaults to `endpoint` when omitted. */
   readonly debugEndpoint?: string
   readonly fetch?: AssistantChatFetch
-  readonly onAnswerSnapshot?:
-    AssistantChatModelAdapterOptions["onAnswerSnapshot"]
+  readonly onAnswerSnapshot?: AssistantChatModelAdapterOptions["onAnswerSnapshot"]
   readonly runtimeOptions?: LocalRuntimeOptions
   readonly debugWindow?: StructuredChatDebugWindowOptions
 }
@@ -61,9 +57,7 @@ interface AssistantChatModelAdapterOptionsBuilder {
   onAnswerSnapshot?: NonNullable<
     AssistantChatModelAdapterOptions["onAnswerSnapshot"]
   >
-  onDebugTurn?: NonNullable<
-    AssistantChatModelAdapterOptions["onDebugTurn"]
-  >
+  onDebugTurn?: NonNullable<AssistantChatModelAdapterOptions["onDebugTurn"]>
 }
 
 type StructuredChatAssistantRuntimeProps = Omit<
@@ -83,9 +77,10 @@ const StructuredChatAssistantRuntime: FC<
   runtimeOptions,
   debugWindow,
 }) => {
-  const resolvedEndpoint =
-    debug ? (debugEndpoint ?? endpoint) : endpoint
+  const resolvedEndpoint = debug ? (debugEndpoint ?? endpoint) : endpoint
+
   const maximumTurns = debugWindow?.maximumTurns
+
   const debugStore = useMemo(
     () =>
       debug
@@ -95,25 +90,27 @@ const StructuredChatAssistantRuntime: FC<
         : null,
     [debug, maximumTurns],
   )
-  const model = useMemo(
-    () => {
-      const options: AssistantChatModelAdapterOptionsBuilder = {
-        endpoint: resolvedEndpoint,
-      }
-      if (fetch !== undefined) {
-        options.fetch = fetch
-      }
-      if (onAnswerSnapshot !== undefined) {
-        options.onAnswerSnapshot = onAnswerSnapshot
-      }
-      if (debugStore !== null) {
-        options.onDebugTurn = debugStore.receiveTurn
-      }
 
-      return makeAssistantChatModelAdapter(options)
-    },
-    [debugStore, fetch, onAnswerSnapshot, resolvedEndpoint],
-  )
+  const model = useMemo(() => {
+    const options: AssistantChatModelAdapterOptionsBuilder = {
+      endpoint: resolvedEndpoint,
+    }
+
+    if (fetch !== undefined) {
+      options.fetch = fetch
+    }
+
+    if (onAnswerSnapshot !== undefined) {
+      options.onAnswerSnapshot = onAnswerSnapshot
+    }
+
+    if (debugStore !== null) {
+      options.onDebugTurn = debugStore.receiveTurn
+    }
+
+    return makeAssistantChatModelAdapter(options)
+  }, [debugStore, fetch, onAnswerSnapshot, resolvedEndpoint])
+
   const runtime = useLocalRuntime(model, runtimeOptions)
 
   useEffect(
@@ -123,20 +120,14 @@ const StructuredChatAssistantRuntime: FC<
     [debugStore],
   )
 
-  const {
-    maximumTurns: _maximumTurns,
-    ...panelOptions
-  } = debugWindow ?? {}
+  const { maximumTurns: _maximumTurns, ...panelOptions } = debugWindow ?? {}
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       {children}
       {debugStore === null ? null : (
         <Suspense fallback={null}>
-          <LazyStructuredChatDebugPanel
-            {...panelOptions}
-            store={debugStore}
-          />
+          <LazyStructuredChatDebugPanel {...panelOptions} store={debugStore} />
         </Suspense>
       )}
     </AssistantRuntimeProvider>

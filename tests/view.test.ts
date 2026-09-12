@@ -24,9 +24,7 @@ describe("View.define", () => {
     const part = EventCard.make({ when })
 
     expect(part.data.when).toBeInstanceOf(Date)
-    expect(part.data.when.toISOString()).toBe(
-      "2026-08-10T12:00:00.000Z",
-    )
+    expect(part.data.when.toISOString()).toBe("2026-08-10T12:00:00.000Z")
   })
 
   test("decodes transformed Encoded-side browser data", async () => {
@@ -67,6 +65,7 @@ describe("View.define", () => {
       agencyIds: ["agency:1"],
       privateNotes: "must not reach the browser",
     }
+
     const parsed = await Effect.runPromise(
       Effect.result(AgencyCards.parseData(applicationData)),
     )

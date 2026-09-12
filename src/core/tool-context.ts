@@ -40,20 +40,23 @@ export const acceptedAnswer = <A>(input: {
 }): Effect.Effect<A, AcceptedAnswerUnavailable, ToolContext> =>
   Effect.gen(function* () {
     const context = yield* ToolContext
+
     const stage = Object.hasOwn(context.stages, input.stage)
       ? context.stages[input.stage]
       : undefined
-    const answer = stage !== undefined && Object.hasOwn(stage.accepted, input.field)
-      ? stage.accepted[input.field]
-      : undefined
+
+    const answer =
+      stage !== undefined && Object.hasOwn(stage.accepted, input.field)
+        ? stage.accepted[input.field]
+        : undefined
+
     if (answer === undefined)
-      return yield* Effect.fail(
-        new AcceptedAnswerUnavailable({
-          stage: input.stage,
-          field: input.field,
-          reason: "missing",
-        }),
-      )
+      return yield* new AcceptedAnswerUnavailable({
+        stage: input.stage,
+        field: input.field,
+        reason: "missing",
+      })
+
     return yield* Schema.decodeUnknownEffect(Schema.toType(input.schema))(
       answer.value,
     ).pipe(

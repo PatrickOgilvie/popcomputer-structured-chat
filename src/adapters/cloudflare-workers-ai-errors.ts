@@ -11,8 +11,7 @@ const maximumCauseDepth = 4
 
 const blockedCodePattern = /\b2017\b/
 
-const blockedMessagePattern =
-  /response blocked due to security configurations/i
+const blockedMessagePattern = /response blocked due to security configurations/i
 
 /**
  * Documented Workers AI error codes considered safe enough to extract from
@@ -63,9 +62,7 @@ const BlockedCodeSchema = Schema.Struct({
 const carriesBlockedCode = Schema.is(BlockedCodeSchema)
 
 /** Provider code fields may be strings or numbers before classification. */
-const isCodeValue = Schema.is(
-  Schema.Union([Schema.String, Schema.Number]),
-)
+const isCodeValue = Schema.is(Schema.Union([Schema.String, Schema.Number]))
 
 const indicatesBlockedResponse = (cause: unknown): boolean =>
   carriesBlockedCode(cause) ||
@@ -73,9 +70,7 @@ const indicatesBlockedResponse = (cause: unknown): boolean =>
     blockedCodePattern.test(cause.message) &&
     blockedMessagePattern.test(cause.message))
 
-const parseDocumentedErrorCode = (
-  code: string | number,
-): string | undefined =>
+const parseDocumentedErrorCode = (code: string | number): string | undefined =>
   documentedCodes.has(String(code)) ? String(code) : undefined
 
 /**
@@ -92,19 +87,24 @@ export const cloudflareWorkersAiClassifyError = (
 ): ChatModelUnavailableReason => {
   const visited = new Set<object>()
   let candidate: unknown = cause
+
   for (let depth = 0; depth < maximumCauseDepth; depth += 1) {
     if (indicatesBlockedResponse(candidate)) {
       return "response_blocked"
     }
+
     if (!isCauseCarrier(candidate)) {
       break
     }
+
     if (visited.has(candidate)) {
       break
     }
+
     visited.add(candidate)
     candidate = candidate.cause
   }
+
   return "request_failed"
 }
 
@@ -121,29 +121,37 @@ export const cloudflareWorkersAiErrorCode = (
 ): string | undefined => {
   const visited = new Set<object>()
   let candidate: unknown = cause
+
   for (let depth = 0; depth < maximumCauseDepth; depth += 1) {
     if (!isCauseCarrier(candidate)) {
       return undefined
     }
+
     const codeField = candidate.code
+
     if (codeField !== undefined && isCodeValue(codeField)) {
       const directCode = parseDocumentedErrorCode(codeField)
+
       if (directCode !== undefined) {
         return directCode
       }
     }
+
     if (candidate instanceof Error) {
-      const documentedCode =
-        documentedCodePattern.exec(candidate.message)?.[1]
+      const documentedCode = documentedCodePattern.exec(candidate.message)?.[1]
+
       if (documentedCode !== undefined) {
         return documentedCode
       }
     }
+
     if (visited.has(candidate)) {
       return undefined
     }
+
     visited.add(candidate)
     candidate = candidate.cause
   }
+
   return undefined
 }

@@ -84,10 +84,13 @@ export interface ChatExplorationClient {
   readonly run: (
     input: StructuredChatExplorationRequest,
     options?: ChatClientRunOptions,
-  ) => Promise<Result.Result<StructuredChatExplorationResponse, ChatClientError>>
+  ) => Promise<
+    Result.Result<StructuredChatExplorationResponse, ChatClientError>
+  >
 }
 
 type Operation = Schema.Schema.Type<typeof ChatClientOperationSchema>
+
 type FailureReason = Schema.Schema.Type<typeof ChatClientFailureReasonSchema>
 
 const failed = (operation: Operation, reason: FailureReason) =>
@@ -100,17 +103,20 @@ const cancellation = (
   cause?: unknown,
 ): ChatClientCancelled | undefined => {
   const aborted = signal?.aborted === true
+
   if (
     !aborted &&
     !(cause instanceof DOMException && cause.name === "AbortError")
   ) {
     return undefined
   }
+
   const error = new ChatClientCancelled({ operation, reason: "cancelled" })
   Object.defineProperty(error, "cause", {
     value: aborted ? signal.reason : cause,
     enumerable: false,
   })
+
   return error
 }
 
@@ -128,19 +134,25 @@ const postJson = async <Input>(
   signal: AbortSignal | undefined,
 ): Promise<Result.Result<JsonResponse, ChatClientError>> => {
   const cancelled = cancellation(operation, signal)
+
   if (cancelled !== undefined) return Result.fail(cancelled)
+
   const encoded = Schema.encodeUnknownResult(schema)(input, {
     onExcessProperty: "error",
   })
+
   if (Result.isFailure(encoded)) return failed(operation, "invalid_request")
   let body: string
+
   try {
     body = JSON.stringify(encoded.success)
   } catch {
     return failed(operation, "invalid_request")
   }
+
   const fetch_ = options.fetch ?? globalThis.fetch
   let response: Response
+
   try {
     const init: RequestInit = {
       method: "POST",
@@ -151,30 +163,41 @@ const postJson = async <Input>(
       },
       body,
     }
+
     if (signal !== undefined) init.signal = signal
     response = await fetch_(options.endpoint, init)
   } catch (cause: unknown) {
     const cancelled = cancellation(operation, signal, cause)
+
     return cancelled === undefined
       ? failed(operation, "request_failed")
       : Result.fail(cancelled)
   }
+
   const afterFetch = cancellation(operation, signal)
+
   if (afterFetch !== undefined) return Result.fail(afterFetch)
+
   if (!response.ok && operation !== "debug_turn") {
     return failed(operation, "request_failed")
   }
+
   let responseBody: unknown
+
   try {
     responseBody = await response.json()
   } catch (cause: unknown) {
     const cancelled = cancellation(operation, signal, cause)
+
     return cancelled === undefined
       ? failed(operation, response.ok ? "invalid_response" : "request_failed")
       : Result.fail(cancelled)
   }
+
   const afterBody = cancellation(operation, signal)
+
   if (afterBody !== undefined) return Result.fail(afterBody)
+
   return Result.succeed({ ok: response.ok, body: responseBody })
 }
 
@@ -187,8 +210,11 @@ const decodeResponse = <Output>(
   const decoded = Schema.decodeUnknownResult(schema)(response.body, {
     onExcessProperty: "error",
   })
+
   const cancelled = cancellation(operation, signal)
+
   if (cancelled !== undefined) return Result.fail(cancelled)
+
   return Result.isFailure(decoded)
     ? failed(operation, response.ok ? "invalid_response" : "request_failed")
     : Result.succeed(decoded.success)
@@ -200,11 +226,20 @@ export const makeChatTurnClient = (
 ): ChatTurnClient => ({
   run: async (input, runOptions = {}) => {
     const response = await postJson(
-      "turn", StructuredChatTurnRequestSchema, input, options, runOptions.signal,
+      "turn",
+      StructuredChatTurnRequestSchema,
+      input,
+      options,
+      runOptions.signal,
     )
+
     if (Result.isFailure(response)) return Result.fail(response.failure)
+
     return decodeResponse(
-      "turn", StructuredChatTurnResponseSchema, response.success, runOptions.signal,
+      "turn",
+      StructuredChatTurnResponseSchema,
+      response.success,
+      runOptions.signal,
     )
   },
 })
@@ -215,26 +250,40 @@ export const makeChatDebugTurnClient = (
 ): ChatDebugTurnClient => ({
   run: async (input, runOptions = {}) => {
     const response = await postJson(
-      "debug_turn", StructuredChatTurnRequestSchema, input, options, runOptions.signal,
+      "debug_turn",
+      StructuredChatTurnRequestSchema,
+      input,
+      options,
+      runOptions.signal,
     )
+
     if (Result.isFailure(response)) return Result.fail(response.failure)
     let schema: Schema.Codec<StructuredChatDebugTurnResponse>
+
     try {
       const protocol = await import("../core/debug-protocol.js")
       schema = protocol.StructuredChatDebugTurnResponseSchema
     } catch (cause: unknown) {
       const cancelled = cancellation("debug_turn", runOptions.signal, cause)
+
       return cancelled === undefined
         ? failed("debug_turn", "request_failed")
         : Result.fail(cancelled)
     }
+
     const decoded = decodeResponse(
-      "debug_turn", schema, response.success, runOptions.signal,
+      "debug_turn",
+      schema,
+      response.success,
+      runOptions.signal,
     )
+
     if (Result.isFailure(decoded)) return decoded
+
     if (!response.success.ok && decoded.success.outcome === "success") {
       return failed("debug_turn", "request_failed")
     }
+
     return decoded
   },
 })
@@ -245,11 +294,20 @@ export const makeChatExplorationClient = (
 ): ChatExplorationClient => ({
   run: async (input, runOptions = {}) => {
     const response = await postJson(
-      "exploration", StructuredChatExplorationRequestSchema, input, options, runOptions.signal,
+      "exploration",
+      StructuredChatExplorationRequestSchema,
+      input,
+      options,
+      runOptions.signal,
     )
+
     if (Result.isFailure(response)) return Result.fail(response.failure)
+
     return decodeResponse(
-      "exploration", StructuredChatExplorationResponseSchema, response.success, runOptions.signal,
+      "exploration",
+      StructuredChatExplorationResponseSchema,
+      response.success,
+      runOptions.signal,
     )
   },
 })

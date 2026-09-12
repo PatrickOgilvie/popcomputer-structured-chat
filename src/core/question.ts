@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Data, Schema } from "effect"
 
 const QuestionTextSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
@@ -74,19 +74,29 @@ export type QuestionDefinitionContract =
   | AdaptiveChoiceQuestion
   | ChoiceQuestion<unknown>
 
-const fixed = (text: string): FixedQuestion => ({
-  _tag: "FixedQuestion",
-  text: Schema.decodeSync(QuestionTextSchema)(text),
-})
+interface QuestionConstructors extends Data.TaggedEnum.WithGenerics<1> {
+  readonly taggedEnum:
+    | FixedQuestion
+    | AdaptiveQuestion
+    | AdaptiveChoiceQuestion
+    | ChoiceQuestion<this["A"]>
+}
+
+const Definition = Data.taggedEnum<QuestionConstructors>()
+
+const fixed = (text: string): FixedQuestion =>
+  Definition.FixedQuestion({
+    text: QuestionTextSchema.make(text),
+  })
 
 const adaptive = (
   goal: string,
   options: { readonly fallback: string },
-): AdaptiveQuestion => ({
-  _tag: "AdaptiveQuestion",
-  goal: Schema.decodeSync(QuestionGoalSchema)(goal),
-  fallback: Schema.decodeSync(QuestionTextSchema)(options.fallback),
-})
+): AdaptiveQuestion =>
+  Definition.AdaptiveQuestion({
+    goal: QuestionGoalSchema.make(goal),
+    fallback: QuestionTextSchema.make(options.fallback),
+  })
 
 const adaptiveChoice = (
   prompt: string,
@@ -96,26 +106,28 @@ const adaptiveChoice = (
     readonly fallbackOptions?: ReadonlyArray<string>
   },
 ): AdaptiveChoiceQuestion => {
-  const minimumOptions = Schema.decodeSync(ChoiceCountSchema)(
-    options.minimumOptions,
-  )
-  const maximumOptions = Schema.decodeSync(ChoiceCountSchema)(
-    options.maximumOptions,
-  )
+  const minimumOptions = ChoiceCountSchema.make(options.minimumOptions)
+
+  const maximumOptions = ChoiceCountSchema.make(options.maximumOptions)
+
   if (minimumOptions > maximumOptions) {
     throw new Error(
       "Adaptive choice minimumOptions cannot exceed maximumOptions",
     )
   }
+
   const fallbackOptions = (options.fallbackOptions ?? []).map((label) =>
-    Schema.decodeSync(ChoiceLabelSchema)(label),
+    ChoiceLabelSchema.make(label),
   )
+
   const normalizedFallbacks = fallbackOptions.map((label) =>
     label.toLocaleLowerCase("en"),
   )
+
   if (new Set(normalizedFallbacks).size !== fallbackOptions.length) {
     throw new Error("Adaptive choice fallback options must be unique")
   }
+
   if (
     fallbackOptions.length > 0 &&
     (fallbackOptions.length < minimumOptions ||
@@ -126,13 +138,12 @@ const adaptiveChoice = (
     )
   }
 
-  return {
-    _tag: "AdaptiveChoiceQuestion",
-    prompt: Schema.decodeSync(QuestionTextSchema)(prompt),
+  return Definition.AdaptiveChoiceQuestion({
+    prompt: QuestionTextSchema.make(prompt),
     minimumOptions,
     maximumOptions,
     fallbackOptions,
-  }
+  })
 }
 
 const choice = <
@@ -146,24 +157,26 @@ const choice = <
 ): ChoiceQuestion<Options[number]["value"]> => {
   const firstOption = {
     ...options[0],
-    label: Schema.decodeSync(ChoiceLabelSchema)(options[0].label),
+    label: ChoiceLabelSchema.make(options[0].label),
   }
+
   const remainingOptions = options.slice(1).map((option) => ({
     ...option,
-    label: Schema.decodeSync(ChoiceLabelSchema)(option.label),
+    label: ChoiceLabelSchema.make(option.label),
   }))
+
   const normalized = [firstOption, ...remainingOptions].map(({ label }) =>
     label.toLocaleLowerCase("en"),
   )
+
   if (new Set(normalized).size !== normalized.length) {
     throw new Error("Choice question labels must be unique")
   }
 
-  return {
-    _tag: "ChoiceQuestion",
-    text: Schema.decodeSync(QuestionTextSchema)(text),
+  return Definition.ChoiceQuestion({
+    text: QuestionTextSchema.make(text),
     options: [firstOption, ...remainingOptions],
-  }
+  })
 }
 
 /** Constructors for static, adaptive, and typed choice questions. */

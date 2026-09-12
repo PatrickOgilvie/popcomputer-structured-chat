@@ -1,5 +1,5 @@
 import { Chat } from "../src/index.js"
-import * as Debug from "../src/debug.js"
+import type * as Debug from "../src/debug.js"
 import { describe, expect, test } from "bun:test"
 import type {
   ChatModelAdapter,
@@ -17,8 +17,9 @@ import {
   type StructuredChatUserAnswerUpdate,
 } from "../src/integrations/assistant-ui.js"
 
-const compatibleAdapter: ChatModelAdapter =
-  makeAssistantChatModelAdapter({ endpoint: "/api/chat" })
+const compatibleAdapter: ChatModelAdapter = makeAssistantChatModelAdapter({
+  endpoint: "/api/chat",
+})
 
 void compatibleAdapter
 
@@ -172,19 +173,21 @@ const runOptions = (
 })
 
 const runAdapter = async (
-  result: ReturnType<
-    ReturnType<typeof makeAssistantChatModelAdapter>["run"]
-  >,
+  result: ReturnType<ReturnType<typeof makeAssistantChatModelAdapter>["run"]>,
 ): Promise<ChatModelRunResult> => result
 
 describe("makeAssistantChatModelAdapter", () => {
   test("sends only current text and the latest opaque revision", async () => {
-    const requests: Array<{ readonly input: string; readonly init: RequestInit }> =
-      []
+    const requests: Array<{
+      readonly input: string
+      readonly init: RequestInit
+    }> = []
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat",
       fetch: (input, init) => {
         requests.push({ input, init })
+
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -206,20 +209,21 @@ describe("makeAssistantChatModelAdapter", () => {
         )
       },
     })
+
     const abortSignal = new AbortController().signal
+
     const result = await runAdapter(
-      adapter.run(
-        {
-          ...runOptions([
-            userMessage("An older message"),
-            assistantMessage("2"),
-            userMessage("The current answer"),
-          ]),
-          abortSignal,
-        },
-      ),
+      adapter.run({
+        ...runOptions([
+          userMessage("An older message"),
+          assistantMessage("2"),
+          userMessage("The current answer"),
+        ]),
+        abortSignal,
+      }),
     )
-    const body = Schema.decodeUnknownSync(
+
+    const body = Schema.decodeSync(
       Schema.fromJsonString(Chat.TurnRequestSchema),
     )(String(requests[0]?.init.body))
 
@@ -246,13 +250,16 @@ describe("makeAssistantChatModelAdapter", () => {
 
   test("rejects attachments before making a request", async () => {
     let requested = false
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat",
       fetch: () => {
         requested = true
+
         return Promise.reject(new Error("must not run"))
       },
     })
+
     await expect(
       adapter.run({
         messages: [
@@ -275,10 +282,12 @@ describe("makeAssistantChatModelAdapter", () => {
     ["a blank user final message", [userMessage("   ")]],
   ] as const)("rejects %s before making a request", async (_name, messages) => {
     let requested = false
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat",
       fetch: () => {
         requested = true
+
         return Promise.reject(new Error("must not run"))
       },
     })
@@ -289,10 +298,12 @@ describe("makeAssistantChatModelAdapter", () => {
 
   test("omits invalid prior session metadata from the request", async () => {
     const requests: Array<RequestInit> = []
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat",
       fetch: (_input, init) => {
         requests.push(init)
+
         return Promise.resolve(successfulResponse())
       },
     })
@@ -303,7 +314,8 @@ describe("makeAssistantChatModelAdapter", () => {
         userMessage("The current answer"),
       ]),
     )
-    const body = Schema.decodeUnknownSync(
+
+    const body = Schema.decodeSync(
       Schema.fromJsonString(Chat.TurnRequestSchema),
     )(String(requests[0]?.body))
 
@@ -396,6 +408,7 @@ describe("makeAssistantChatModelAdapter", () => {
 
   test("delivers one correlated answer update without selecting debug mode", async () => {
     const updates: Array<StructuredChatUserAnswerUpdate> = []
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat",
       fetch: () =>
@@ -428,6 +441,7 @@ describe("makeAssistantChatModelAdapter", () => {
 
   test("does not notify for a non-progressing response that retains a session", async () => {
     let notified = false
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat",
       fetch: () =>
@@ -465,6 +479,7 @@ describe("makeAssistantChatModelAdapter", () => {
     let notified = false
     const section = answerSnapshot.sections[0]
     const field = section.fields[0]
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat",
       fetch: () =>
@@ -513,10 +528,12 @@ describe("makeAssistantChatModelAdapter", () => {
   test("does not publish a decoded answer update after cancellation", async () => {
     const controller = new AbortController()
     let notified = false
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat",
       fetch: () => {
         controller.abort()
+
         return Promise.resolve(
           new Response(JSON.stringify(persistedResponseBody), {
             status: 200,
@@ -540,18 +557,22 @@ describe("makeAssistantChatModelAdapter", () => {
 
   test("preserves cancellation while reading the response body", async () => {
     const controller = new AbortController()
+
     const cancellation = new DOMException(
       "The response body was aborted",
       "AbortError",
     )
+
     const response = new Response(JSON.stringify(persistedResponseBody), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })
+
     Object.defineProperty(response, "json", {
       value: () => Promise.reject(cancellation),
     })
     let notified = false
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat",
       fetch: () => Promise.resolve(response),
@@ -572,6 +593,7 @@ describe("makeAssistantChatModelAdapter", () => {
 
   test("delivers an explicitly requested debug snapshot outside message metadata", async () => {
     const snapshots: Array<Debug.Snapshot> = []
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat/debug",
       fetch: () =>
@@ -604,6 +626,7 @@ describe("makeAssistantChatModelAdapter", () => {
   test("delivers public answers and debug state from one debug success", async () => {
     const turns: Array<Debug.Turn> = []
     const updates: Array<StructuredChatUserAnswerUpdate> = []
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat/debug",
       fetch: () =>
@@ -641,6 +664,7 @@ describe("makeAssistantChatModelAdapter", () => {
 
   test("delivers a failed trace before rejecting the model run", async () => {
     const turns: Array<Debug.Turn> = []
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat/debug",
       fetch: () =>
@@ -672,23 +696,36 @@ describe("makeAssistantChatModelAdapter", () => {
 
   test("does not publish a debug success sent with a failed HTTP status", async () => {
     const observed: unknown[] = []
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat/debug",
-      fetch: async () => Response.json(successfulDebugResponseBody, { status: 503 }),
-      onAnswerSnapshot: (update) => { observed.push(update) },
-      onDebugSnapshot: (update) => { observed.push(update) },
-      onDebugTurn: (update) => { observed.push(update) },
+      fetch: async () =>
+        Response.json(successfulDebugResponseBody, { status: 503 }),
+      onAnswerSnapshot: (update) => {
+        observed.push(update)
+      },
+      onDebugSnapshot: (update) => {
+        observed.push(update)
+      },
+      onDebugTurn: (update) => {
+        observed.push(update)
+      },
     })
-    await expect(adapter.run(runOptions([userMessage("Continue")]))).rejects.toThrow("Structured chat is temporarily unavailable")
+
+    await expect(
+      adapter.run(runOptions([userMessage("Continue")])),
+    ).rejects.toThrow("Structured chat is temporarily unavailable")
     expect(observed).toEqual([])
   })
 
   test("delivers an uncorrelated failed trace without inventing a session", async () => {
     const turns: Array<Debug.Turn> = []
+
     const responseBody = {
       ...failedDebugResponseBody,
       session: null,
     } as const
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat/debug",
       fetch: () =>
@@ -735,6 +772,7 @@ describe("makeAssistantChatModelAdapter", () => {
 
   test("rejects nested excess debug data before notifying the observer", async () => {
     let notified = false
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat/debug",
       fetch: () =>
@@ -772,6 +810,7 @@ describe("makeAssistantChatModelAdapter", () => {
 
   test("rejects malformed literal trace data before notifying the observer", async () => {
     let notified = false
+
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat/debug",
       fetch: () =>
@@ -852,10 +891,7 @@ describe("makeAssistantChatModelAdapter", () => {
         throw new Error("debug observer failed")
       },
     ],
-    [
-      "asynchronous",
-      () => Promise.reject(new Error("debug observer failed")),
-    ],
+    ["asynchronous", () => Promise.reject(new Error("debug observer failed"))],
   ] as const)("isolates %s debug observer failures", async (_name, observe) => {
     const adapter = makeAssistantChatModelAdapter({
       endpoint: "/api/chat/debug",
@@ -883,55 +919,69 @@ describe("makeAssistantChatModelAdapter", () => {
         throw new Error("answer observer failed")
       },
     ],
-    [
-      "asynchronous",
-      () => Promise.reject(new Error("answer observer failed")),
-    ],
-  ] as const)("isolates %s answer observer failures", async (_name, observe) => {
-    const adapter = makeAssistantChatModelAdapter({
-      endpoint: "/api/chat",
-      fetch: () =>
-        Promise.resolve(
-          new Response(JSON.stringify(persistedResponseBody), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-        ),
-      onAnswerSnapshot: observe,
-    })
+    ["asynchronous", () => Promise.reject(new Error("answer observer failed"))],
+  ] as const)(
+    "isolates %s answer observer failures",
+    async (_name, observe) => {
+      const adapter = makeAssistantChatModelAdapter({
+        endpoint: "/api/chat",
+        fetch: () =>
+          Promise.resolve(
+            new Response(JSON.stringify(persistedResponseBody), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+          ),
+        onAnswerSnapshot: observe,
+      })
 
-    const result = await runAdapter(
-      adapter.run(runOptions([userMessage("Continue")])),
-    )
+      const result = await runAdapter(
+        adapter.run(runOptions([userMessage("Continue")])),
+      )
 
-    expect(result.content).toEqual(successfulResponseBody.message.content)
-  })
+      expect(result.content).toEqual(successfulResponseBody.message.content)
+    },
+  )
 })
 
 describe("makeAssistantExplorationClient", () => {
   test("sends the stable session id and call without the chat revision", async () => {
-    const requests: Array<{ readonly input: string; readonly init: RequestInit }> = []
+    const requests: Array<{
+      readonly input: string
+      readonly init: RequestInit
+    }> = []
+
     const client = makeAssistantExplorationClient({
       endpoint: "/api/chat/explore",
       fetch: (input, init) => {
         requests.push({ input, init })
+
         return Promise.resolve(
-          new Response(JSON.stringify({
-            schemaVersion: 1,
-            content: [{ type: "text", text: "Related result" }],
-          }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
+          new Response(
+            JSON.stringify({
+              schemaVersion: 1,
+              content: [{ type: "text", text: "Related result" }],
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
         )
       },
     })
+
     const signal = new AbortController().signal
-    const result = await client.run({
-      session: { id: "chat:01", revision: "7" },
-      call: { name: "related_query", arguments: { query: "nearby" } },
-    }, { signal })
-    const body = Schema.decodeUnknownSync(
+
+    const result = await client.run(
+      {
+        session: { id: "chat:01", revision: "7" },
+        call: { name: "related_query", arguments: { query: "nearby" } },
+      },
+      { signal },
+    )
+
+    const body = Schema.decodeSync(
       Schema.fromJsonString(Chat.ExplorationRequestSchema),
     )(String(requests[0]?.init.body), { onExcessProperty: "error" })
 
@@ -943,6 +993,7 @@ describe("makeAssistantExplorationClient", () => {
     })
     expect(JSON.stringify(body)).not.toContain("revision")
     expect(Result.isSuccess(result)).toBe(true)
+
     if (Result.isSuccess(result)) {
       expect(result.success.content).toEqual([
         { type: "text", text: "Related result" },
@@ -955,13 +1006,21 @@ describe("makeAssistantExplorationClient", () => {
       endpoint: "/api/chat/explore",
       fetch: () => Promise.resolve(new Response("private", { status: 503 })),
     })
+
     const invalid = makeAssistantExplorationClient({
       endpoint: "/api/chat/explore",
-      fetch: () => Promise.resolve(new Response(JSON.stringify({
-        schemaVersion: 1,
-        content: [],
-      }), { status: 200 })),
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              schemaVersion: 1,
+              content: [],
+            }),
+            { status: 200 },
+          ),
+        ),
     })
+
     const input = {
       session: { id: "chat:01", revision: "7" },
       call: { name: "related_query", arguments: {} },
@@ -973,13 +1032,16 @@ describe("makeAssistantExplorationClient", () => {
     ])
 
     expect(Result.isFailure(unavailableResult)).toBe(true)
+
     if (Result.isFailure(unavailableResult)) {
       expect(unavailableResult.failure).toMatchObject({
         _tag: "AssistantExplorationClientError",
         reason: "request_failed",
       })
     }
+
     expect(Result.isFailure(invalidResult)).toBe(true)
+
     if (Result.isFailure(invalidResult)) {
       expect(invalidResult.failure).toMatchObject({
         _tag: "AssistantExplorationClientError",
@@ -991,32 +1053,38 @@ describe("makeAssistantExplorationClient", () => {
   test("returns caller cancellation through the typed result", async () => {
     const controller = new AbortController()
     const cancellation = new Error("cancelled by caller")
+
     const client = makeAssistantExplorationClient({
       endpoint: "/api/chat/explore",
       fetch: () => Promise.reject(cancellation),
     })
+
     controller.abort()
 
-    const result = await client.run({
-      session: { id: "chat:01", revision: "7" },
-      call: { name: "related_query", arguments: {} },
-    }, { signal: controller.signal })
+    const result = await client.run(
+      {
+        session: { id: "chat:01", revision: "7" },
+        call: { name: "related_query", arguments: {} },
+      },
+      { signal: controller.signal },
+    )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(
-        AssistantExplorationClientError,
-      )
+      expect(result.failure).toBeInstanceOf(AssistantExplorationClientError)
       expect(result.failure).toMatchObject({ reason: "cancelled" })
     }
   })
 
   test("reads the latest valid assistant-held session reference", () => {
-    expect(readLatestAssistantChatSession([
-      assistantMessage("2"),
-      assistantMessageWithInvalidSession(),
-      userMessage("Continue"),
-      assistantMessage("4"),
-    ])).toEqual({ id: "chat:01", revision: "4" })
+    expect(
+      readLatestAssistantChatSession([
+        assistantMessage("2"),
+        assistantMessageWithInvalidSession(),
+        userMessage("Continue"),
+        assistantMessage("4"),
+      ]),
+    ).toEqual({ id: "chat:01", revision: "4" })
   })
 })

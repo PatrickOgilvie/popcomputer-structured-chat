@@ -10,23 +10,28 @@ test("a mixed stage parses query inputs once without resolving command context",
     input: Schema.Struct({ date: Schema.DateFromString }),
     execute: ({ date }) => Effect.succeed(date.toISOString()),
   })
+
   const Edit = Tool.command({
     name: "edit_date",
     description: "Edit records for a date.",
     input: Schema.Struct({ date: Schema.DateFromString }),
     execute: ({ date }) => Effect.succeed(date.toISOString()),
   })
+
   const stage = Stage.interact({
     name: "dates",
     instructions: ["Inspect the requested date."],
     tools: [Inspect, Edit],
   })
+
   const date = new Date("2026-09-01T00:00:00.000Z")
+
   const result = await Effect.runPromise(
-    stage.run(
-      [Model.Message.user("Inspect September 1")],
-      () => Effect.die(new Error("Queries must not resolve command identity")),
-    ).pipe(Effect.provide(Scenario.model(Scenario.call(Inspect, { date })))),
+    stage
+      .run([Model.Message.user("Inspect September 1")], () =>
+        Effect.die(new Error("Queries must not resolve command identity")),
+      )
+      .pipe(Effect.provide(Scenario.model(Scenario.call(Inspect, { date })))),
   )
 
   expect(result.name).toBe(Inspect.name)
@@ -36,12 +41,14 @@ test("a mixed stage parses query inputs once without resolving command context",
 
 test("an interaction can inspect, edit, clarify and edit again without completing", async () => {
   const commandIds: string[] = []
+
   const Inspect = Tool.define({
     name: "inspect",
     description: "Read the draft",
     input: Schema.Struct({}),
     execute: () => Effect.succeed({ revision: 0 }),
   })
+
   const Clarify = Tool.define({
     name: "clarify",
     description: "Ask a question",
@@ -51,6 +58,7 @@ test("an interaction can inspect, edit, clarify and edit again without completin
     }),
     execute: Effect.succeed,
   })
+
   const Edit = Tool.command({
     name: "edit",
     description: "Edit the draft",
@@ -58,9 +66,11 @@ test("an interaction can inspect, edit, clarify and edit again without completin
     execute: (input, { commandId }) =>
       Effect.sync(() => {
         commandIds.push(commandId)
+
         return input
       }),
   })
+
   const chat = Chat.define({
     name: "authoring",
     version: 1,
@@ -72,6 +82,7 @@ test("an interaction can inspect, edit, clarify and edit again without completin
       }),
     ],
   })
+
   const calls = [
     { name: "inspect", arguments: {} },
     { name: "edit", arguments: { name: "Partners" } },
@@ -81,26 +92,34 @@ test("an interaction can inspect, edit, clarify and edit again without completin
     },
     { name: "edit", arguments: { name: "Partners in GBP" } },
   ]
+
   let index = 0
+
   const model = Layer.succeed(Model.Service, {
     requestTool: () =>
       Effect.sync(() => {
         const call = calls[index++]
+
         if (call === undefined) throw new Error("Unexpected model request")
+
         return call
       }),
   })
+
   await Effect.runPromise(
     Effect.gen(function* () {
       let revision: string | undefined
+
       for (const message of ["Show me", "Rename", "Add budget", "GBP"]) {
         const input = { sessionId: "builder", message }
+
         const reply = yield* Chat.turn(
           chat,
           revision === undefined
             ? input
             : { ...input, expectedRevision: revision },
         )
+
         expect(reply.turn._tag).toBe("ToolResult")
         expect(reply.turn.state.status).toBe("active")
         revision = reply.revision
@@ -113,6 +132,7 @@ test("an interaction can inspect, edit, clarify and edit again without completin
 
 test("interaction command identity survives a failed session write", async () => {
   const ids: string[] = []
+
   const Edit = Tool.command({
     name: "edit",
     description: "Edit",
@@ -120,9 +140,11 @@ test("interaction command identity survives a failed session write", async () =>
     execute: (_, { commandId }) =>
       Effect.sync(() => {
         ids.push(commandId)
+
         return { edited: true }
       }),
   })
+
   const chat = Chat.define({
     name: "retry_author",
     version: 1,
@@ -134,6 +156,7 @@ test("interaction command identity survives a failed session write", async () =>
       }),
     ],
   })
+
   const live = Layer.merge(
     Layer.succeed(Model.Service, {
       requestTool: () => Effect.succeed({ name: "edit", arguments: {} }),
@@ -141,11 +164,10 @@ test("interaction command identity survives a failed session write", async () =>
     Layer.succeed(Session.Store, {
       load: () => Effect.succeed(null),
       replace: () =>
-        Effect.fail(
-          new Session.StoreUnavailable({ reason: "write_failed" }),
-        ),
+        Effect.fail(new Session.StoreUnavailable({ reason: "write_failed" })),
     }),
   )
+
   for (let attempt = 0; attempt < 2; attempt++)
     await Effect.runPromise(
       Chat.turn(chat, { sessionId: "retry", message: "Edit" }).pipe(
@@ -165,30 +187,37 @@ test("a retry cannot bypass a turn receipt by selecting a different command", as
 
   const receipts = new Map<Tool.CommandId, "edit" | "publish">()
   const writes: Array<"edit" | "publish"> = []
+
   const execute = (command: "edit" | "publish", commandId: Tool.CommandId) =>
     Effect.suspend(() => {
       const prior = receipts.get(commandId)
+
       if (prior !== undefined && prior !== command) {
         return Effect.fail(new CommandReplayMismatch())
       }
+
       if (prior === undefined) {
         receipts.set(commandId, command)
         writes.push(command)
       }
+
       return Effect.succeed({ command })
     })
+
   const Edit = Tool.command({
     name: "edit",
     description: "Edit the draft",
     input: Schema.Struct({}),
     execute: (_, { commandId }) => execute("edit", commandId),
   })
+
   const Publish = Tool.command({
     name: "publish",
     description: "Publish the draft",
     input: Schema.Struct({}),
     execute: (_, { commandId }) => execute("publish", commandId),
   })
+
   const chat = Chat.define({
     name: "retry_command_choice",
     version: 1,
@@ -200,11 +229,13 @@ test("a retry cannot bypass a turn receipt by selecting a different command", as
       }),
     ],
   })
+
   const model = Scenario.model(
     Scenario.call(Edit, {}),
     Scenario.call(Publish, {}),
     Scenario.call(Edit, {}),
   )
+
   const store = Layer.succeed(Session.Store, {
     load: () => Effect.succeed(null),
     replace: () =>
@@ -221,9 +252,9 @@ test("a retry cannot bypass a turn receipt by selecting a different command", as
       expect(Result.isFailure(first) && first.failure._tag).toBe(
         "ChatSessionStoreUnavailable",
       )
-      expect(Result.isFailure(changedCommand) && changedCommand.failure._tag).toBe(
-        "CommandReplayMismatch",
-      )
+      expect(
+        Result.isFailure(changedCommand) && changedCommand.failure._tag,
+      ).toBe("CommandReplayMismatch")
       expect(Result.isFailure(replay) && replay.failure._tag).toBe(
         "ChatSessionStoreUnavailable",
       )
@@ -235,6 +266,7 @@ test("a retry cannot bypass a turn receipt by selecting a different command", as
 
 test("out-of-stage calls fail before execution and declared completion is terminal", async () => {
   let executions = 0
+
   const Finish = Tool.define({
     name: "finish",
     description: "Finish",
@@ -242,47 +274,57 @@ test("out-of-stage calls fail before execution and declared completion is termin
     execute: () =>
       Effect.sync(() => {
         executions++
+
         return { done: true }
       }),
   })
+
   const interaction = Stage.interact({
     name: "author",
     instructions: ["Finish when requested"],
     tools: [Finish],
     completeOn: ["finish"],
   })
+
   const chat = Chat.define({
     name: "finish_author",
     version: 1,
     stages: [interaction],
   })
+
   const unknown = Layer.succeed(Model.Service, {
-    requestTool: () =>
-      Effect.succeed({ name: "unregistered", arguments: {} }),
+    requestTool: () => Effect.succeed({ name: "unregistered", arguments: {} }),
   })
+
   const rejected = await Effect.runPromise(
     Chat.turn(chat, { sessionId: "rejected", message: "Run it" }).pipe(
       Effect.provide(Layer.merge(unknown, inMemoryChatSessionStore)),
       Effect.result,
     ),
   )
+
   expect(Result.isFailure(rejected)).toBe(true)
   expect(executions).toBe(0)
+
   const model = Layer.succeed(Model.Service, {
     requestTool: () => Effect.succeed({ name: "finish", arguments: {} }),
   })
+
   await Effect.runPromise(
     Effect.gen(function* () {
       const reply = yield* Chat.turn(chat, {
         sessionId: "finish",
         message: "Finish",
       })
+
       expect(reply.turn._tag).toBe("Complete")
+
       const repeated = yield* Chat.turn(chat, {
         sessionId: "finish",
         expectedRevision: reply.revision,
         message: "Again",
       }).pipe(Effect.result)
+
       expect(Result.isFailure(repeated)).toBe(true)
     }).pipe(Effect.provide(Layer.merge(model, inMemoryChatSessionStore))),
   )

@@ -51,9 +51,7 @@ const maximumCorrectionsSchema = Schema.Number.check(
   Schema.isBetween({ minimum: 1, maximum: 20 }),
 )
 
-const standard = (
-  options: StandardRepairOptions = {},
-): StandardRepair =>
+const standard = (options: StandardRepairOptions = {}): StandardRepair =>
   structuredDefinition("repair")({
     _tag: "StandardRepair",
     maximumCorrections: Schema.decodeSync(maximumCorrectionsSchema)(

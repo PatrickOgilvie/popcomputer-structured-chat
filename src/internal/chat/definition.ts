@@ -28,6 +28,7 @@ export const compile = <
   input: DefineChatInput<Name, Version, Stages, Explorations>,
 ): Definition<Name, Version, Stages, Explorations> => {
   const runtime = defineChat(input)
+
   const definition = structuredDefinition("chat")<
     Definition<Name, Version, Stages, Explorations>
   >({
@@ -44,6 +45,7 @@ export const compile = <
     definition,
     Fn.cast<typeof runtime, AnyRuntimeDefinition>(runtime),
   )
+
   return definition
 }
 
@@ -57,6 +59,7 @@ export const read = <
   definition: Definition<Name, Version, Stages, Explorations>,
 ): RuntimeDefinition<Name, Version, Stages, Explorations> => {
   const runtime = compiledDefinitions.get(definition)
+
   if (runtime === undefined) {
     throw new Error(
       "Structured chat definitions must be created with Chat.define",

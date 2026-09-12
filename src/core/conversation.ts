@@ -1,4 +1,4 @@
-import { Data, Effect, Function as Fn, Schema } from "effect"
+import { Predicate, Data, Effect, Function as Fn, Schema } from "effect"
 import type { AnyDefinition } from "../Chat.js"
 import { readBranch, type BranchContract, type Branches } from "./branch.js"
 import { ChatContext, type ChatOutcome } from "./chat-context.js"
@@ -18,17 +18,31 @@ import type {
 } from "./composition.js"
 import {
   ConversationStateSchema,
+  InvocationStatusSchema,
   InvalidConversation,
   type ConversationState,
   type Invocation,
 } from "./conversation-state.js"
 import { JsonValueSchema, type JsonValue } from "./json-value.js"
+import { Instruction, planToolCall, UntrustedMessageSchema } from "./model.js"
 import {
-  Instruction,
-  planToolCall,
-  UntrustedMessageSchema,
-  type UntrustedMessage,
-} from "./model.js"
+  authored,
+  isAuthored,
+  type ConversationMessage,
+} from "./conversation-message.js"
+import {
+  isAppliedTurn,
+  parseControlledTurn,
+  turnMessages,
+  AdvanceResult,
+  ControlledTurnInputSchema,
+  type ControlledTurnInput,
+} from "./observed-turn.js"
+import {
+  uncontrolledTurn,
+  type TurnControlService,
+  type TurnControlFailure,
+} from "./turn-control.js"
 import { runModelCallGuards } from "./model-guard.js"
 import {
   InvalidOutboundMessage,
@@ -58,13 +72,15 @@ import { readToolStageRuntime } from "./stage.js"
 import {
   defineTool,
   readToolExecutionModelContext,
-  type CommandExecutionContext,
   type ToolDefinitionContract,
   type ToolSchema,
   type RuntimeToolExecutionContext,
 } from "./tool.js"
 import { ToolContext } from "./tool-context.js"
-import { compileToolRegistry } from "./tool-registry.js"
+import {
+  compileToolRegistry,
+  type CommandContextSource,
+} from "./tool-registry.js"
 import { defineToolSet, type ToolTuple } from "./tool-set.js"
 import type { ModelToolTuple } from "./tool-set.js"
 import { projectUserAnswers } from "./user-answer-projection.js"
@@ -135,12 +151,14 @@ type ReplyAction = Data.TaggedEnum<{
   Suspend: {}
   Cancel: {}
 }>
+
 const ReplyAction = Data.taggedEnum<ReplyAction>()
 
 const SessionInputSchema = Schema.Struct({
   namespace: Schema.optional(ChatSessionNamespaceSchema),
   sessionId: ChatSessionIdSchema,
 })
+
 const TurnInputSchema = Schema.Struct({
   ...SessionInputSchema.fields,
   expectedRevision: Schema.optionalKey(ChatSessionRevisionSchema),
@@ -148,8 +166,11 @@ const TurnInputSchema = Schema.Struct({
 })
 
 const invalidState = () => new InvalidConversation({ reason: "invalid_state" })
+
 const invalidSession = () => new InvalidChatSession({ reason: "invalid_input" })
+
 const conflict = () => new ChatSessionConflict({ reason: "concurrent_update" })
+
 const parseJson = Schema.decodeUnknownEffect(JsonValueSchema)
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- schema-owned serialization boundary for heterogeneous inputs and outputs
@@ -161,7 +182,9 @@ const encodeValue = (schema: ToolSchema, value: unknown) =>
 const canonicalJson = (value: JsonValue): string => {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JSON has already been parsed; canonicalization sorts only object keys
   if (value === null || typeof value !== "object") return JSON.stringify(value)
+
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+
   return `{${Object.entries(value)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
@@ -170,8 +193,8 @@ const canonicalJson = (value: JsonValue): string => {
 
 const frameMessages = (
   frame: ParsedInvocation,
-  messages: ReadonlyArray<UntrustedMessage>,
-): ReadonlyArray<UntrustedMessage> =>
+  messages: ReadonlyArray<ConversationMessage>,
+): ReadonlyArray<ConversationMessage> =>
   frame.messages.flatMap((index) =>
     messages[index] === undefined ? [] : [messages[index]],
   )
@@ -185,6 +208,7 @@ const replaceFrame = (
     ReadonlyArray<ParsedInvocation>,
     ParsedConversation["invocations"]
   >(state.invocations.map((entry) => (entry.id === frame.id ? frame : entry)))
+
   return { ...state, invocations }
 }
 
@@ -197,60 +221,72 @@ export const makeConversation = (input: {
 }) => {
   const nodeFor = (frame: Invocation): ConversationNode => {
     const node = input.nodes.get(frame.definition)
+
     if (node === undefined)
       throw new Error("Parsed invocation lost its compiled chat")
+
     return node
   }
 
   const parseState = Effect.fn("Conversation.parseState")(function* (
     // oxlint-disable-next-line anti-slop/no-unknown-parameters -- persistence boundary decodes the envelope and every registered invocation codec
     value: unknown,
-    messages: ReadonlyArray<UntrustedMessage>,
+    messages: ReadonlyArray<ConversationMessage>,
   ) {
     const state = yield* Schema.decodeUnknownEffect(ConversationStateSchema)(
       value,
       { onExcessProperty: "error" },
     ).pipe(Effect.mapError(invalidState))
+
     if (
       state.chat !== input.root.leaf.name ||
       state.schemaVersion !== input.root.leaf.version ||
       state.invocations[0].definition !== input.root.key
     )
-      return yield* Effect.fail(invalidState())
+      return yield* invalidState()
+
     const frames = yield* Effect.forEach(state.invocations, (frame, index) =>
       Effect.gen(function* () {
         const node = input.nodes.get(frame.definition)
+
         if (node === undefined || frame.id !== index)
-          return yield* Effect.fail(invalidState())
+          return yield* invalidState()
+
         if (
           index === 0
             ? frame.parent !== null
             : frame.parent === null || frame.parent.invocation >= index
         )
-          return yield* Effect.fail(invalidState())
+          return yield* invalidState()
         let depth = 1
         let ancestor = frame.parent
+
         while (ancestor !== null) {
           depth += 1
           ancestor = state.invocations[ancestor.invocation]?.parent ?? null
-          if (depth > input.maximumDepth)
-            return yield* Effect.fail(invalidState())
+
+          if (depth > input.maximumDepth) return yield* invalidState()
         }
+
         if (frame.parent !== null) {
           const parent = state.invocations[frame.parent.invocation]
+
           const parentNode =
             parent === undefined
               ? undefined
               : input.nodes.get(parent.definition)
+
           const branch = parentNode?.branches.find(
             (entry) => entry.name === frame.parent?.branch,
           )
+
           if (
             branch === undefined ||
             parentNode?.children.get(branch) !== node.key
           )
-            return yield* Effect.fail(invalidState())
+            return yield* invalidState()
         }
+
         if (
           frame.messages.some(
             (entry, position) =>
@@ -258,24 +294,30 @@ export const makeConversation = (input: {
               (position > 0 && entry <= (frame.messages[position - 1] ?? -1)),
           )
         )
-          return yield* Effect.fail(invalidState())
+          return yield* invalidState()
+
         const decodedInput = yield* Schema.decodeUnknownEffect(node.input)(
           frame.input,
           { onExcessProperty: "error" },
         ).pipe(Effect.mapError(invalidState))
+
         const decodedWorkflow = yield* node.leaf
           .parseState(frame.workflow)
           .pipe(Effect.mapError(invalidState))
+
         // SAFETY: each workflow was decoded by its exact registered stage tuple.
         const workflow = Fn.cast<typeof decodedWorkflow, RuntimeChatState>(
           decodedWorkflow,
         )
+
         const localMessages = frame.messages.flatMap((entry) =>
           messages[entry] === undefined ? [] : [messages[entry]],
         )
+
         for (const stage of node.leaf.stages) {
-          if (stage._tag !== "CollectStage") continue
+          if (!Predicate.isTagged(stage, "CollectStage")) continue
           const stageState = workflow.stages[stage.name]
+
           if (
             stageState === undefined ||
             !readCollectStageRuntime(stage).isGroundedInMessages(
@@ -283,89 +325,107 @@ export const makeConversation = (input: {
               localMessages,
             )
           )
-            return yield* Effect.fail(invalidState())
+            return yield* invalidState()
         }
+
         if (
-          (frame.status._tag === "Completed") !==
+          Predicate.isTagged(frame.status, "Completed") !==
           (workflow.status === "complete")
         )
-          return yield* Effect.fail(invalidState())
-        const status =
-          frame.status._tag === "Completed"
-            ? {
-                _tag: "Completed" as const,
-                output: yield* Schema.decodeUnknownEffect(node.output)(
-                  frame.status.output,
-                  { onExcessProperty: "error" },
-                ).pipe(Effect.mapError(invalidState)),
-              }
-            : frame.status
+          return yield* invalidState()
+
+        const status = Predicate.isTagged(frame.status, "Completed")
+          ? {
+              _tag: "Completed" as const,
+              output: yield* Schema.decodeUnknownEffect(node.output)(
+                frame.status.output,
+                { onExcessProperty: "error" },
+              ).pipe(Effect.mapError(invalidState)),
+            }
+          : frame.status
+
         return { ...frame, input: decodedInput, workflow, status }
       }),
     )
+
     const active = frames[state.active]
+
     if (
       active === undefined ||
       (state.status === "active"
-        ? active.status._tag !== "Active"
-        : state.active !== 0 || active.status._tag !== "Completed")
+        ? !Predicate.isTagged(active.status, "Active")
+        : state.active !== 0 || !Predicate.isTagged(active.status, "Completed"))
     )
-      return yield* Effect.fail(invalidState())
+      return yield* invalidState()
+
     if (
-      frames.filter((frame) => frame.status._tag === "Active").length !==
-      (state.status === "active" ? 1 : 0)
+      frames.filter((frame) => Predicate.isTagged(frame.status, "Active"))
+        .length !== (state.status === "active" ? 1 : 0)
     )
-      return yield* Effect.fail(invalidState())
+      return yield* invalidState()
+
     for (const frame of frames) {
-      if (frame.status._tag === "Waiting") {
+      if (Predicate.isTagged(frame.status, "Waiting")) {
         const child = frames[frame.status.child]
+
         if (
           child?.parent?.invocation !== frame.id ||
-          (child.status._tag !== "Active" && child.status._tag !== "Waiting")
+          (!Predicate.isTagged(child.status, "Active") &&
+            !Predicate.isTagged(child.status, "Waiting"))
         )
-          return yield* Effect.fail(invalidState())
+          return yield* invalidState()
       }
+
       if (
         frame.parent !== null &&
-        (frame.status._tag === "Active" || frame.status._tag === "Waiting")
+        (Predicate.isTagged(frame.status, "Active") ||
+          Predicate.isTagged(frame.status, "Waiting"))
       ) {
         const parent = frames[frame.parent.invocation]
+
         if (
           parent?.status._tag !== "Waiting" ||
           parent.status.child !== frame.id
         )
-          return yield* Effect.fail(invalidState())
+          return yield* invalidState()
       }
     }
+
     if (
       (frames[0]?.status._tag === "Completed") !==
       (state.status === "complete")
     )
-      return yield* Effect.fail(invalidState())
+      return yield* invalidState()
     const identities = new Set<string>()
     const issuedIndices = new Set<number>()
+
     for (const issued of state.issued) {
+      const message = messages[issued.messageIndex]
       const owner = frames[issued.invocation]
+
       const definition =
         owner === undefined
           ? undefined
           : nodeFor(owner).messages.find(
               (message) => message.name === issued.definition,
             )
+
       if (
         definition === undefined ||
         identities.has(issued.id) ||
         issuedIndices.has(issued.messageIndex) ||
-        messages[issued.messageIndex]?.role !== "assistant" ||
+        message === undefined ||
+        !isAuthored(message) ||
         !owner?.messages.includes(issued.messageIndex)
       )
-        return yield* Effect.fail(invalidState())
-      yield* Schema.decodeUnknownEffect(definition.inputSchema)(issued.input, {
+        return yield* invalidState()
+      yield* Schema.decodeEffect(definition.inputSchema)(issued.input, {
         onExcessProperty: "error",
       }).pipe(Effect.mapError(invalidState))
       identities.add(issued.id)
       issuedIndices.add(issued.messageIndex)
     }
+
     // SAFETY: the outer schema requires a root and every frame was decoded above.
     return {
       ...state,
@@ -380,6 +440,7 @@ export const makeConversation = (input: {
       const invocations = yield* Effect.forEach(state.invocations, (frame) =>
         Effect.gen(function* () {
           const node = nodeFor(frame)
+
           return {
             ...frame,
             input: yield* encodeValue(node.input, frame.input),
@@ -387,19 +448,16 @@ export const makeConversation = (input: {
               frame.workflow,
               { onExcessProperty: "error" },
             ),
-            status:
-              frame.status._tag === "Completed"
-                ? {
-                    _tag: "Completed" as const,
-                    output: yield* encodeValue(
-                      node.output,
-                      frame.status.output,
-                    ),
-                  }
-                : frame.status,
+            status: Predicate.isTagged(frame.status, "Completed")
+              ? {
+                  _tag: "Completed" as const,
+                  output: yield* encodeValue(node.output, frame.status.output),
+                }
+              : frame.status,
           }
         }),
       )
+
       return yield* parseJson({ ...state, invocations })
     }).pipe(Effect.mapError(invalidState))
 
@@ -417,21 +475,23 @@ export const makeConversation = (input: {
     readonly namespace?: string | undefined
     readonly sessionId: string
   }): Effect.fn.Return<LoadedConversation, unknown, ChatSessionStore> {
-    const parsed = yield* Schema.decodeUnknownEffect(SessionInputSchema)(
-      session,
-      { onExcessProperty: "error" },
-    ).pipe(Effect.mapError(invalidSession))
+    const parsed = yield* Schema.decodeEffect(SessionInputSchema)(session, {
+      onExcessProperty: "error",
+    }).pipe(Effect.mapError(invalidSession))
+
     const scope = scopeFor(parsed)
     const store = yield* ChatSessionStore
     const raw = yield* store.load(scope)
+
     if (raw === null)
-      return yield* Effect.fail(
-        new ChatSessionNotFound({ reason: "not_found" }),
-      )
+      return yield* new ChatSessionNotFound({ reason: "not_found" })
+
     const snapshot = yield* Schema.decodeUnknownEffect(
       ChatSessionSnapshotSchema,
     )(raw, { onExcessProperty: "error" }).pipe(Effect.mapError(invalidState))
+
     const state = yield* parseState(snapshot.state, snapshot.messages)
+
     return { scope, snapshot, state }
   })
 
@@ -439,21 +499,21 @@ export const makeConversation = (input: {
     scope: ChatSessionScope,
     revision: string | null,
     state: ParsedConversation,
-    messages: ReadonlyArray<UntrustedMessage>,
+    messages: ReadonlyArray<ConversationMessage>,
   ) {
     if (messages.length > 200)
-      return yield* Effect.fail(
-        new InvalidChatSession({ reason: "history_limit" }),
-      )
+      return yield* new InvalidChatSession({ reason: "history_limit" })
     const encoded = yield* encodeState(state)
     yield* parseState(encoded, messages)
     const store = yield* ChatSessionStore
+
     const replacement = yield* store.replace({
       ...scope,
       expectedRevision: revision,
       state: encoded,
       messages,
     })
+
     return yield* Schema.decodeUnknownEffect(ChatSessionReplacementSchema)(
       replacement,
       { onExcessProperty: "error" },
@@ -469,11 +529,12 @@ export const makeConversation = (input: {
     readonly sessionId: string
     readonly input: unknown
   }): Effect.fn.Return<StartedConversation, unknown, ChatSessionStore> {
-    const parsed = yield* Schema.decodeUnknownEffect(
+    const parsed = yield* Schema.decodeEffect(
       Schema.Struct({ ...SessionInputSchema.fields, input: Schema.Unknown }),
     )(request, { onExcessProperty: "error" }).pipe(
       Effect.mapError(invalidSession),
     )
+
     const value = yield* Schema.decodeUnknownEffect(
       Schema.toType(input.root.input),
     )(parsed.input, { onExcessProperty: "error" }).pipe(
@@ -481,34 +542,42 @@ export const makeConversation = (input: {
         () => new InvalidConversation({ reason: "invalid_input" }),
       ),
     )
+
     const encodedInput = yield* encodeValue(input.root.input, value).pipe(
       Effect.mapError(
         () => new InvalidConversation({ reason: "invalid_input" }),
       ),
     )
+
     const scope = scopeFor(parsed)
     const store = yield* ChatSessionStore
     const existing = yield* store.load(scope)
+
     if (existing !== null) {
       const snapshot = yield* Schema.decodeUnknownEffect(
         ChatSessionSnapshotSchema,
       )(existing, { onExcessProperty: "error" }).pipe(
         Effect.mapError(invalidState),
       )
+
       const state = yield* parseState(snapshot.state, snapshot.messages)
       const loaded = { snapshot, state }
+
       const previousInput = yield* encodeValue(
         input.root.input,
         loaded.state.invocations[0].input,
       )
+
       if (canonicalJson(previousInput) !== canonicalJson(encodedInput))
-        return yield* Effect.fail(conflict())
+        return yield* conflict()
+
       return {
         sessionId: scope.sessionId,
         revision: loaded.snapshot.revision,
         state: loaded.state,
       }
     }
+
     const state: ParsedConversation = {
       _tag: "Conversation",
       chat: input.root.leaf.name,
@@ -528,18 +597,22 @@ export const makeConversation = (input: {
             RuntimeChatState
           >(input.root.leaf.initialState),
           messages: [],
-          status: { _tag: "Active" },
+          status: InvocationStatusSchema.cases.Active.make({}),
         },
       ],
     }
+
     const replacement = yield* commit(scope, null, state, [])
+
     return { sessionId: scope.sessionId, revision: replacement.revision, state }
   })
 
   const activeFrame = (state: ParsedConversation): ParsedInvocation => {
     const frame = state.invocations[state.active]
+
     if (frame === undefined)
       throw new Error("Parsed conversation lost its active invocation")
+
     return frame
   }
 
@@ -547,6 +620,7 @@ export const makeConversation = (input: {
     frame: ParsedInvocation,
   ): ReadonlyArray<ToolDefinitionContract> => {
     const stage = nodeFor(frame).leaf.stages[frame.workflow.stage]
+
     switch (stage?._tag) {
       case "ToolStage":
         return stage.toolSet.tools
@@ -554,39 +628,45 @@ export const makeConversation = (input: {
         return stage.tools
       case "CommandStage":
         return [stage.command]
-      default:
+      case "CollectStage":
+      case undefined:
         return []
     }
   }
 
   const checkMessage = (frame: ParsedInvocation, message: PreparedMessage) => {
     const node = nodeFor(frame)
+
     if (!node.messages.includes(message.definition))
       return Effect.fail(
         new InvalidOutboundMessage({ reason: "not_registered" }),
       )
+
     for (const hint of message.hints) {
-      const registered =
-        hint.target._tag === "ChatBranch"
-          ? node.branches.includes(hint.target)
-          : toolsFor(frame).includes(hint.target)
+      const registered = Predicate.isTagged(hint.target, "ChatBranch")
+        ? node.branches.includes(hint.target)
+        : toolsFor(frame).includes(hint.target)
+
       if (!registered)
         return Effect.fail(
           new InvalidOutboundMessage({ reason: "invalid_hint" }),
         )
     }
+
     return Effect.void
   }
 
   const append = (
     state: ParsedConversation,
-    messages: ReadonlyArray<UntrustedMessage>,
+    messages: ReadonlyArray<ConversationMessage>,
     owner: number,
-    message: UntrustedMessage,
+    message: ConversationMessage,
   ) => {
     const frame = state.invocations[owner]
+
     if (frame === undefined)
       throw new Error("Message owner is not an invocation")
+
     return {
       state: replaceFrame(state, {
         ...frame,
@@ -598,15 +678,13 @@ export const makeConversation = (input: {
 
   const issue = (
     state: ParsedConversation,
-    messages: ReadonlyArray<UntrustedMessage>,
+    messages: ReadonlyArray<ConversationMessage>,
     owner: number,
     id: string,
     message: PreparedMessage,
   ) => {
-    const next = append(state, messages, owner, {
-      role: "assistant",
-      content: message.text,
-    })
+    const next = append(state, messages, owner, authored(message.text))
+
     return {
       ...next,
       state: {
@@ -634,7 +712,7 @@ export const makeConversation = (input: {
     readonly message: OutboundMessageContract
     readonly input: unknown
   }): Effect.fn.Return<PostedMessage, unknown, ChatSessionStore> {
-    const parsed = yield* Schema.decodeUnknownEffect(
+    const parsed = yield* Schema.decodeEffect(
       Schema.Struct({
         ...SessionInputSchema.fields,
         expectedRevision: ChatSessionRevisionSchema,
@@ -645,25 +723,31 @@ export const makeConversation = (input: {
     )(request, { onExcessProperty: "error" }).pipe(
       Effect.mapError(invalidSession),
     )
+
     const loaded = yield* load({
       sessionId: parsed.sessionId,
       namespace: parsed.namespace,
     })
+
     const previous = loaded.state.issued.find(
       (entry) => entry.id === parsed.messageId,
     )
+
     if (previous !== undefined) {
       const owner = loaded.state.invocations[previous.invocation]
+
       const registered =
         owner === undefined
           ? undefined
           : nodeFor(owner).messages.find(
               (entry) => entry.name === previous.definition,
             )
+
       if (registered !== request.message)
-        return yield* Effect.fail(
-          new InvalidOutboundMessage({ reason: "identity_conflict" }),
-        )
+        return yield* new InvalidOutboundMessage({
+          reason: "identity_conflict",
+        })
+
       const encoded = yield* encodeValue(
         request.message.inputSchema,
         parsed.input,
@@ -672,12 +756,15 @@ export const makeConversation = (input: {
           () => new InvalidOutboundMessage({ reason: "invalid_input" }),
         ),
       )
+
       if (canonicalJson(previous.input) !== canonicalJson(encoded))
-        return yield* Effect.fail(
-          new InvalidOutboundMessage({ reason: "identity_conflict" }),
-        )
+        return yield* new InvalidOutboundMessage({
+          reason: "identity_conflict",
+        })
       const text = loaded.snapshot.messages[previous.messageIndex]?.content
-      if (text === undefined) return yield* Effect.fail(invalidState())
+
+      if (text === undefined) return yield* invalidState()
+
       return {
         disposition: "replayed",
         messageId: previous.id,
@@ -688,22 +775,22 @@ export const makeConversation = (input: {
         message: { role: "assistant", content: [Text.make(text)] },
       }
     }
+
     if (loaded.snapshot.revision !== parsed.expectedRevision)
-      return yield* Effect.fail(conflict())
+      return yield* conflict()
+
     if (loaded.state.status === "complete")
-      return yield* Effect.fail(
-        new InvalidChatTransition({
-          chat: input.root.leaf.name,
-          reason: "already_complete",
-        }),
-      )
+      return yield* new InvalidChatTransition({
+        chat: input.root.leaf.name,
+        reason: "already_complete",
+      })
     const frame = activeFrame(loaded.state)
+
     if (!nodeFor(frame).messages.includes(request.message))
-      return yield* Effect.fail(
-        new InvalidOutboundMessage({ reason: "not_registered" }),
-      )
+      return yield* new InvalidOutboundMessage({ reason: "not_registered" })
     const message = yield* prepareMessage(request.message, parsed.input)
     yield* checkMessage(frame, message)
+
     const next = issue(
       loaded.state,
       loaded.snapshot.messages,
@@ -711,12 +798,14 @@ export const makeConversation = (input: {
       parsed.messageId,
       message,
     )
+
     const replaced = yield* commit(
       loaded.scope,
       loaded.snapshot.revision,
       next.state,
       next.messages,
     )
+
     return {
       disposition: "recorded",
       messageId: parsed.messageId,
@@ -733,12 +822,15 @@ export const makeConversation = (input: {
     returns: state.invocations.flatMap((child) => {
       if (
         child.parent?.invocation !== frame.id ||
-        (child.status._tag !== "Completed" && child.status._tag !== "Cancelled")
+        (!Predicate.isTagged(child.status, "Completed") &&
+          !Predicate.isTagged(child.status, "Cancelled"))
       )
         return []
+
       const branch = nodeFor(frame).branches.find(
         (entry) => entry.name === child.parent?.branch,
       )
+
       return branch === undefined ? [] : [{ branch, outcome: child.status }]
     }),
   })
@@ -746,12 +838,14 @@ export const makeConversation = (input: {
   const plan = Effect.fn("Conversation.plan")(function* (
     state: ParsedConversation,
     frame: ParsedInvocation,
-    messages: ReadonlyArray<UntrustedMessage>,
+    messages: ReadonlyArray<ConversationMessage>,
     allowParentControl: boolean,
   ): Effect.fn.Return<ReplyAction, unknown, unknown> {
     const node = nodeFor(frame)
     const stage = node.leaf.stages[frame.workflow.stage]
-    if (stage === undefined) return yield* Effect.fail(invalidState())
+
+    if (stage === undefined) return yield* invalidState()
+
     const Continue = defineTool({
       name: "continue_chat",
       description:
@@ -759,7 +853,9 @@ export const makeConversation = (input: {
       input: Schema.Struct({}),
       execute: () => Effect.succeed(ReplyAction.Continue()),
     })
+
     const candidates: Array<ToolDefinitionContract> = [Continue]
+
     for (const branch of node.branches) {
       candidates.push(
         defineTool({
@@ -777,21 +873,28 @@ export const makeConversation = (input: {
         }),
       )
     }
+
     for (const issued of state.issued) {
       if (issued.invocation !== frame.id || issued.status !== "pending")
         continue
+
       const definition = node.messages.find(
         (entry) => entry.name === issued.definition,
       )
-      if (definition === undefined) return yield* Effect.fail(invalidState())
-      const value = yield* Schema.decodeUnknownEffect(definition.inputSchema)(
+
+      if (definition === undefined) return yield* invalidState()
+
+      const value = yield* Schema.decodeEffect(definition.inputSchema)(
         issued.input,
       ).pipe(Effect.mapError(invalidState))
+
       const hints = yield* prepareReplyHints(definition, value)
+
       for (const [index, hint] of hints.entries()) {
         const target = hint.target
+
         if (
-          target._tag === "ChatBranch"
+          Predicate.isTagged(target, "ChatBranch")
             ? !node.branches.includes(target)
             : !toolsFor(frame).includes(target)
         )
@@ -803,11 +906,10 @@ export const makeConversation = (input: {
             description: `For a reply to assistant message ${localIndex}: ${hint.when} Select only when the user's actual reply matches this condition. Declining the offer or changing topic does not match. The handler's arguments are already bound by the application.`,
             input: Schema.Struct({}),
             execute: (): Effect.Effect<ReplyAction, Schema.SchemaError> =>
-              target._tag === "ChatBranch"
-                ? Schema.decodeUnknownEffect(target.argumentsSchema)(
-                    hint.arguments,
-                    { onExcessProperty: "error" },
-                  ).pipe(
+              Predicate.isTagged(target, "ChatBranch")
+                ? Schema.decodeEffect(target.argumentsSchema)(hint.arguments, {
+                    onExcessProperty: "error",
+                  }).pipe(
                     Effect.map((arguments_) =>
                       ReplyAction.Enter({
                         branch: target,
@@ -826,10 +928,11 @@ export const makeConversation = (input: {
         )
       }
     }
+
     for (const child of state.invocations) {
       if (
         child.parent?.invocation !== frame.id ||
-        child.status._tag !== "Suspended"
+        !Predicate.isTagged(child.status, "Suspended")
       )
         continue
       candidates.push(
@@ -842,6 +945,7 @@ export const makeConversation = (input: {
         }),
       )
     }
+
     if (frame.parent !== null && allowParentControl) {
       candidates.push(
         defineTool({
@@ -862,10 +966,12 @@ export const makeConversation = (input: {
         }),
       )
     }
+
     if (candidates.length === 1) return ReplyAction.Continue()
     // SAFETY: Continue is always the first capability; the remaining capabilities are package-constructed definitions.
     const tuple = Fn.cast<typeof candidates, ModelToolTuple>(candidates)
     const registry = compileToolRegistry(tuple)
+
     const call = yield* planToolCall({
       instructions: [
         Instruction.make(
@@ -876,9 +982,11 @@ export const makeConversation = (input: {
       tools: registry,
       guards: stage.guards,
     })
+
     const result = yield* registry.execute(call, () =>
       Effect.die(new Error("Routing capabilities cannot execute commands")),
     )
+
     // SAFETY: every generated capability above returns precisely one ReplyAction and performs no business command.
     return Fn.cast<typeof result, { readonly serverResult: ReplyAction }>(
       result,
@@ -887,36 +995,39 @@ export const makeConversation = (input: {
 
   const executeHint = (
     frame: ParsedInvocation,
-    messages: ReadonlyArray<UntrustedMessage>,
+    messages: ReadonlyArray<ConversationMessage>,
     action: Extract<ReplyAction, { readonly _tag: "Tool" }>,
-    commandContext: () => Effect.Effect<CommandExecutionContext>,
+    commandContext: CommandContextSource<TurnControlFailure>,
   ) =>
     Effect.gen(function* () {
       const node = nodeFor(frame)
       const stage = node.leaf.stages[frame.workflow.stage]
+
       if (stage === undefined || !toolsFor(frame).includes(action.tool))
-        return yield* Effect.fail(
-          new InvalidConversation({ reason: "invalid_transition" }),
-        )
+        return yield* new InvalidConversation({ reason: "invalid_transition" })
       const registry = compileToolRegistry([action.tool])
+
       const call = yield* registry.parseCall({
         name: action.tool.name,
         arguments: action.arguments,
       })
+
       yield* runModelCallGuards(stage.guards, {
         messages: frameMessages(frame, messages),
         toolNames: toolsFor(frame).map((tool) => tool.name),
         call,
       })
       const execution = yield* registry.execute(call, commandContext)
+
       const complete =
-        stage._tag === "CommandStage" ||
-        (stage._tag === "ToolStage" &&
+        Predicate.isTagged(stage, "CommandStage") ||
+        (Predicate.isTagged(stage, "ToolStage") &&
           readToolStageRuntime(stage).afterExecution === "complete") ||
-        (stage._tag === "InteractionStage" &&
+        (Predicate.isTagged(stage, "InteractionStage") &&
           readInteractionStageRuntime(stage).completeOn.includes(
             action.tool.name,
           ))
+
       return {
         _tag: complete ? ("Complete" as const) : ("ToolResult" as const),
         stage: stage.name,
@@ -930,48 +1041,64 @@ export const makeConversation = (input: {
       }
     })
 
-  const reply = Effect.fn("Conversation.reply")(function* (
-    request: ChatReplyInput,
-  ): Effect.fn.Return<ConversationReply<AnyDefinition>, unknown, unknown> {
-    const parsed = yield* Schema.decodeUnknownEffect(TurnInputSchema)(request, {
-      onExcessProperty: "error",
-    }).pipe(Effect.mapError(invalidSession))
+  const advance = Effect.fn("Conversation.advance")(function* (
+    request: ControlledTurnInput,
+    control: TurnControlService,
+  ): Effect.fn.Return<
+    AdvanceResult<ConversationReply<AnyDefinition>>,
+    unknown,
+    unknown
+  > {
+    const parsed = yield* parseControlledTurn(request)
+
     const loaded = yield* load({
       sessionId: parsed.sessionId,
       namespace: parsed.namespace,
     })
+
+    if (yield* isAppliedTurn(parsed.turn, loaded.snapshot.messages))
+      return AdvanceResult.AlreadyApplied({
+        currentRevision: loaded.snapshot.revision,
+      })
+
     if (loaded.snapshot.revision !== parsed.expectedRevision)
-      return yield* Effect.fail(conflict())
+      return yield* conflict()
+
     if (loaded.state.status === "complete")
-      return yield* Effect.fail(
-        new InvalidChatTransition({
-          chat: input.root.leaf.name,
-          reason: "already_complete",
-        }),
-      )
+      return yield* new InvalidChatTransition({
+        chat: input.root.leaf.name,
+        reason: "already_complete",
+      })
     let state = loaded.state
     let messages = loaded.snapshot.messages
-    if (messages.length >= 199)
-      return yield* Effect.fail(
-        new InvalidChatSession({ reason: "history_limit" }),
-      )
+    const incoming = turnMessages(parsed.turn)
+
+    if (messages.length + incoming.length + 1 > 200)
+      return yield* new InvalidChatSession({ reason: "history_limit" })
     const initialFrame = activeFrame(state)
     const userIndex = messages.length
-    const appended = append(state, messages, initialFrame.id, {
-      role: "user",
-      content: parsed.message,
-    })
-    state = appended.state
-    messages = appended.messages
+    const incomingIndexes = incoming.map((_, index) => userIndex + index)
+    yield* control.check()
+
+    for (const message of incoming) {
+      const appended = append(state, messages, initialFrame.id, message)
+      state = appended.state
+      messages = appended.messages
+    }
+
     const emitted: Array<{
       readonly owner: number
       readonly message: PreparedMessage
     }> = []
+
     const commandContext = () =>
       deriveCommandId({
         ...loaded.scope,
         expectedRevision: loaded.snapshot.revision,
-      }).pipe(Effect.map((commandId) => ({ commandId })))
+      }).pipe(
+        Effect.tap((commandId) => control.admitCommand(commandId)),
+        Effect.map((commandId) => ({ commandId })),
+      )
 
     const scoped = <A, E, R>(
       effect: Effect.Effect<A, E, R>,
@@ -991,6 +1118,7 @@ export const makeConversation = (input: {
                 ),
         }),
       )
+
     const consumeHints = (owner: number) => {
       state = {
         ...state,
@@ -1001,40 +1129,55 @@ export const makeConversation = (input: {
         ),
       }
     }
-    const attachLatest = (frame: ParsedInvocation): ParsedInvocation =>
-      frame.messages.includes(userIndex)
-        ? frame
-        : { ...frame, messages: [...frame.messages, userIndex] }
+
+    const attachLatest = (frame: ParsedInvocation): ParsedInvocation => ({
+      ...frame,
+      messages: [
+        ...frame.messages,
+        ...incomingIndexes.filter((index) => !frame.messages.includes(index)),
+      ],
+    })
+
     const restoreParent = (child: ParsedInvocation) => {
       const parent =
         child.parent === null
           ? undefined
           : state.invocations[child.parent.invocation]
+
       if (parent === undefined) throw new Error("A called chat lost its caller")
-      state = replaceFrame(state, { ...parent, status: { _tag: "Active" } })
+      state = replaceFrame(state, {
+        ...parent,
+        status: InvocationStatusSchema.cases.Active.make({}),
+      })
       state = { ...state, active: parent.id }
     }
+
     const cancelDescendants = (owner: number) => {
       for (const child of state.invocations) {
         if (
           child.id === owner ||
-          child.status._tag === "Completed" ||
-          child.status._tag === "Cancelled"
+          Predicate.isTagged(child.status, "Completed") ||
+          Predicate.isTagged(child.status, "Cancelled")
         )
           continue
         let parent = child.parent
+
         while (parent !== null && parent.invocation !== owner)
           parent = state.invocations[parent.invocation]?.parent ?? null
+
         if (parent?.invocation === owner)
           state = replaceFrame(state, {
             ...child,
-            status: { _tag: "Cancelled" },
+            status: InvocationStatusSchema.cases.Cancelled.make({}),
           })
       }
     }
+
     let allowParentControl = true
+
     let executed:
       { readonly frame: ParsedInvocation; readonly turn: LeafTurn } | undefined
+
     for (
       let transition = 0;
       transition < input.maximumTransitionsPerTurn;
@@ -1042,38 +1185,46 @@ export const makeConversation = (input: {
     ) {
       const frame = activeFrame(state)
       const node = nodeFor(frame)
+
       const action = yield* scoped(
         plan(state, frame, messages, allowParentControl),
         frame,
       )
+
       consumeHints(frame.id)
+
       switch (action._tag) {
         case "Enter": {
           let depth = 1
           let parent = frame.parent
+
           while (parent !== null) {
             depth += 1
             parent = state.invocations[parent.invocation]?.parent ?? null
           }
+
           if (depth >= input.maximumDepth)
-            return yield* Effect.fail(
-              new InvalidConversation({ reason: "depth_limit" }),
-            )
+            return yield* new InvalidConversation({ reason: "depth_limit" })
+
           if (state.invocations.length >= 100)
-            return yield* Effect.fail(
-              new InvalidConversation({ reason: "invocation_limit" }),
-            )
+            return yield* new InvalidConversation({
+              reason: "invocation_limit",
+            })
           const childKey = node.children.get(action.branch)
+
           const childNode =
             childKey === undefined ? undefined : input.nodes.get(childKey)
+
           if (childNode === undefined)
-            return yield* Effect.fail(
-              new InvalidConversation({ reason: "invalid_transition" }),
-            )
+            return yield* new InvalidConversation({
+              reason: "invalid_transition",
+            })
+
           const bound = yield* scoped(
             readBranch(action.branch).bind(action.arguments),
             frame,
           )
+
           const childInput = yield* Schema.decodeUnknownEffect(
             Schema.toType(childNode.input),
           )(bound, { onExcessProperty: "error" }).pipe(
@@ -1081,11 +1232,13 @@ export const makeConversation = (input: {
               () => new InvalidConversation({ reason: "invalid_input" }),
             ),
           )
+
           yield* encodeValue(childNode.input, childInput).pipe(
             Effect.mapError(
               () => new InvalidConversation({ reason: "invalid_input" }),
             ),
           )
+
           const child: ParsedInvocation = {
             id: state.invocations.length,
             definition: childNode.key,
@@ -1098,13 +1251,16 @@ export const makeConversation = (input: {
             >(childNode.leaf.initialState),
             messages:
               action.sourceMessage === undefined
-                ? [userIndex]
-                : [action.sourceMessage, userIndex],
-            status: { _tag: "Active" },
+                ? incomingIndexes
+                : [action.sourceMessage, ...incomingIndexes],
+            status: InvocationStatusSchema.cases.Active.make({}),
           }
+
           state = replaceFrame(state, {
             ...frame,
-            status: { _tag: "Waiting", child: child.id },
+            status: InvocationStatusSchema.cases.Waiting.make({
+              child: child.id,
+            }),
           })
           state = {
             ...state,
@@ -1114,50 +1270,59 @@ export const makeConversation = (input: {
           allowParentControl = false
           continue
         }
+
         case "Resume": {
           const child = state.invocations[action.invocation]
+
           if (
             child?.parent?.invocation !== frame.id ||
-            child.status._tag !== "Suspended"
+            !Predicate.isTagged(child.status, "Suspended")
           )
-            return yield* Effect.fail(
-              new InvalidConversation({ reason: "invalid_transition" }),
-            )
+            return yield* new InvalidConversation({
+              reason: "invalid_transition",
+            })
           state = replaceFrame(state, {
             ...frame,
-            status: { _tag: "Waiting", child: child.id },
+            status: InvocationStatusSchema.cases.Waiting.make({
+              child: child.id,
+            }),
           })
           state = replaceFrame(state, {
             ...attachLatest(child),
-            status: { _tag: "Active" },
+            status: InvocationStatusSchema.cases.Active.make({}),
           })
           state = { ...state, active: child.id }
           allowParentControl = false
           continue
         }
+
         case "Suspend":
         case "Cancel": {
           if (frame.parent === null)
-            return yield* Effect.fail(
-              new InvalidConversation({ reason: "invalid_transition" }),
-            )
-          if (action._tag === "Cancel") cancelDescendants(frame.id)
+            return yield* new InvalidConversation({
+              reason: "invalid_transition",
+            })
+
+          if (Predicate.isTagged(action, "Cancel")) cancelDescendants(frame.id)
           state = replaceFrame(state, {
             ...frame,
-            messages: frame.messages.filter((index) => index !== userIndex),
-            status: {
-              _tag: action._tag === "Suspend" ? "Suspended" : "Cancelled",
-            },
+            messages: frame.messages.filter(
+              (index) => !incomingIndexes.includes(index),
+            ),
+            status: ReplyAction.$is("Suspend")(action)
+              ? InvocationStatusSchema.cases.Suspended.make({})
+              : InvocationStatusSchema.cases.Cancelled.make({}),
           })
           restoreParent(frame)
           state = replaceFrame(state, attachLatest(activeFrame(state)))
           allowParentControl = true
           continue
         }
+
         case "Continue":
         case "Tool": {
           const result = yield* scoped(
-            action._tag === "Tool"
+            Predicate.isTagged(action, "Tool")
               ? executeHint(frame, messages, action, commandContext)
               : node.leaf.runScoped(
                   frame.workflow,
@@ -1166,22 +1331,24 @@ export const makeConversation = (input: {
                 ),
             frame,
           )
+
           // SAFETY: both paths use the registered stage's tool/collection parsers and construct its existing turn shape.
           executed = { frame, turn: Fn.cast<typeof result, LeafTurn>(result) }
           break
         }
       }
+
       break
     }
+
     if (executed === undefined)
-      return yield* Effect.fail(
-        new InvalidConversation({ reason: "transition_limit" }),
-      )
+      return yield* new InvalidConversation({ reason: "transition_limit" })
     const { frame, turn } = executed
     const node = nodeFor(frame)
     let nextFrame: ParsedInvocation = { ...frame, workflow: turn.state }
     let outcome: ChatOutcome<null> | undefined
-    if (turn._tag === "Complete") {
+
+    if (Predicate.isTagged(turn, "Complete")) {
       const output = yield* Effect.try({
         try: () => node.projectOutput(turn),
         catch: () => new InvalidConversation({ reason: "invalid_output" }),
@@ -1191,13 +1358,18 @@ export const makeConversation = (input: {
           () => new InvalidConversation({ reason: "invalid_output" }),
         ),
       )
+
       yield* encodeValue(node.output, output).pipe(
         Effect.mapError(
           () => new InvalidConversation({ reason: "invalid_output" }),
         ),
       )
-      nextFrame = { ...nextFrame, status: { _tag: "Completed", output } }
+      nextFrame = {
+        ...nextFrame,
+        status: InvocationStatusSchema.cases.Completed.make({ output }),
+      }
       cancelDescendants(frame.id)
+
       if (frame.parent === null) {
         state = { ...state, status: "complete", active: 0 }
         // SAFETY: the public composed definition restores the root output type.
@@ -1207,43 +1379,50 @@ export const makeConversation = (input: {
         }
       } else restoreParent(frame)
     }
+
     state = replaceFrame(state, nextFrame)
-    const modelText =
-      turn._tag === "Question"
-        ? turn.question?.text
-        : turn.result === undefined
-          ? undefined
-          : readToolExecutionModelContext(turn.result)
+
+    const modelText = Predicate.isTagged(turn, "Question")
+      ? turn.question?.text
+      : turn.result === undefined
+        ? undefined
+        : readToolExecutionModelContext(turn.result)
+
     if (modelText !== undefined) {
-      const next = append(state, messages, frame.id, {
-        role: "assistant",
-        content: modelText,
-      })
+      const next = append(state, messages, frame.id, authored(modelText))
       state = next.state
       messages = next.messages
     }
+
     for (const entry of emitted) {
       const owner = state.invocations[entry.owner]
-      if (owner === undefined) return yield* Effect.fail(invalidState())
+
+      if (owner === undefined) return yield* invalidState()
       // Collection may have advanced since emission; eligibility uses the committed stage.
       yield* checkMessage(owner, entry.message)
       let messageId = `message:${messages.length}`
+
       while (state.issued.some((issued) => issued.id === messageId))
         messageId += ":next"
       const next = issue(state, messages, entry.owner, messageId, entry.message)
       state = next.state
       messages = next.messages
     }
+
     const userAnswers = yield* projectUserAnswers({
       definition: node.leaf,
       state: turn.state,
     })
+
+    yield* control.beforeCommit()
+
     const replacement = yield* commit(
       loaded.scope,
       loaded.snapshot.revision,
       state,
       messages,
     )
+
     // SAFETY: leaf results retain their established Question/ToolResult/Complete shape.
     const publicTurn = Fn.cast<
       unknown,
@@ -1251,49 +1430,84 @@ export const makeConversation = (input: {
     >({
       ...turn,
       _tag:
-        turn._tag === "Complete" && frame.parent !== null
+        Predicate.isTagged(turn, "Complete") && frame.parent !== null
           ? "ToolResult"
           : turn._tag,
       state,
     })
-    return {
-      sessionId: loaded.scope.sessionId,
-      revision: replacement.revision,
-      turn: publicTurn,
-      invocation: {
-        id: frame.id,
-        chat: node.leaf.name,
-        version: node.leaf.version,
+
+    return AdvanceResult.Applied({
+      reply: {
+        sessionId: loaded.scope.sessionId,
+        revision: replacement.revision,
+        turn: publicTurn,
+        invocation: {
+          id: frame.id,
+          chat: node.leaf.name,
+          version: node.leaf.version,
+        },
+        userAnswers,
+        emittedMessages: emitted.map(({ message }) => ({
+          role: "assistant" as const,
+          content: [Text.make(message.text)],
+        })),
+        outcome,
       },
-      userAnswers,
-      emittedMessages: emitted.map(({ message }) => ({
-        role: "assistant" as const,
-        content: [Text.make(message.text)],
-      })),
-      outcome,
-    }
+    })
+  })
+
+  const reply = Effect.fn("Conversation.reply")(function* (
+    request: ChatReplyInput,
+  ) {
+    const parsed = yield* Schema.decodeUnknownEffect(TurnInputSchema)(request, {
+      onExcessProperty: "error",
+    }).pipe(Effect.mapError(invalidSession))
+
+    const { message, ...scope } = parsed
+
+    const result = yield* advance(
+      {
+        ...scope,
+        turn: ControlledTurnInputSchema.fields.turn.cases.Submitted.make({
+          message,
+        }),
+      },
+      uncontrolledTurn,
+    )
+
+    if (!Predicate.isTagged(result, "Applied"))
+      return yield* Effect.die(
+        new Error("Submitted turns cannot replay observations"),
+      )
+
+    return result.reply
   })
 
   // Explorations explicitly belong to the root definition, including while a child is active.
   const explore = Effect.fn("Conversation.explore")(function* (
     request: ChatExploreInput,
   ) {
-    const parsed = yield* Schema.decodeUnknownEffect(
+    const parsed = yield* Schema.decodeEffect(
       Schema.Struct({ ...SessionInputSchema.fields, call: JsonValueSchema }),
     )(request, { onExcessProperty: "error" }).pipe(
       Effect.mapError(invalidSession),
     )
+
     const loaded = yield* load({
       sessionId: parsed.sessionId,
       namespace: parsed.namespace,
     })
+
     const frame = loaded.state.invocations[0]
+
     if (input.root.leaf.explorations.length === 0)
-      return yield* Effect.fail(invalidSession())
+      return yield* invalidSession()
+
     // SAFETY: compiled explorations are query-only and this branch checks the non-empty tuple.
     const tuple = Fn.cast<typeof input.root.leaf.explorations, ToolTuple>(
       input.root.leaf.explorations,
     )
+
     return yield* defineToolSet(...tuple)
       .runCall(parsed.call)
       .pipe(
@@ -1307,28 +1521,33 @@ export const makeConversation = (input: {
 
   const getInvocation = (state: ConversationState, id: number) =>
     Effect.gen(function* () {
-      const envelope = yield* Schema.decodeUnknownEffect(
+      const envelope = yield* Schema.decodeEffect(
         Schema.toType(ConversationStateSchema),
       )(state, { onExcessProperty: "error" }).pipe(
         Effect.mapError(invalidState),
       )
+
       if (
         envelope.chat !== input.root.leaf.name ||
         envelope.schemaVersion !== input.root.leaf.version
       )
-        return yield* Effect.fail(invalidState())
+        return yield* invalidState()
       const frame = envelope.invocations[id]
+
       const node =
         frame === undefined ? undefined : input.nodes.get(frame.definition)
+
       if (frame === undefined || node === undefined || frame.id !== id)
-        return yield* Effect.fail(invalidState())
+        return yield* invalidState()
+
       const workflow = yield* Schema.decodeUnknownEffect(
         Schema.toType(node.leaf.stateSchema),
       )(frame.workflow, { onExcessProperty: "error" }).pipe(
         Effect.mapError(invalidState),
       )
+
       return { definition: node.leaf, state: workflow }
     })
 
-  return { start, post, reply, explore, parseState, getInvocation }
+  return { start, post, reply, advance, explore, parseState, getInvocation }
 }

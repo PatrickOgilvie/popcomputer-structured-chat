@@ -1,4 +1,6 @@
-import { Effect, Function as Fn, Result, Schema } from "effect"
+import { Predicate, Effect, Function as Fn, Result, Schema } from "effect"
+import type { ChatSessionStore } from "./core/session.js"
+import type { ConversationState } from "./core/conversation-state.js"
 import {
   turn as runTurn,
   type AnyDefinition,
@@ -79,11 +81,12 @@ export const turn = <C extends AnyDefinition>(
 ): Effect.Effect<
   CapturedOutcome<C>,
   never,
-  import("./core/session.js").ChatSessionStore | Requirements<C>
+  ChatSessionStore | Requirements<C>
 > => {
   Schema.decodeSync(TurnOptionsSchema)(options, {
     onExcessProperty: "error",
   })
+
   const sessionId = Schema.is(ChatSessionIdSchema)(input.sessionId)
     ? input.sessionId
     : null
@@ -117,12 +120,11 @@ export const inspect = <C extends AnyDefinition>(
 ): Effect.Effect<StructuredChatDebugSnapshot, InvalidChatDebugProjection> => {
   if (hasComposition(chat)) {
     // SAFETY: composition membership selects this definition's conversation state contract.
-    const conversation = Fn.cast<
-      typeof state,
-      import("./core/conversation-state.js").ConversationState
-    >(state)
+    const conversation = Fn.cast<typeof state, ConversationState>(state)
+
     return inspectInvocation(chat, conversation, conversation.active, options)
   }
+
   // SAFETY: the ordinary definition owns the corresponding sequential state schema.
   return inspectChatState(
     read(chat),
@@ -133,7 +135,7 @@ export const inspect = <C extends AnyDefinition>(
 
 const inspectInvocation = (
   chat: AnyDefinition,
-  state: import("./core/conversation-state.js").ConversationState,
+  state: ConversationState,
   id: number,
   options: InspectChatStateOptions,
 ) =>
@@ -179,15 +181,19 @@ export const present = <C extends AnyDefinition>(
       >(options),
     )
   }
+
   const outcome =
     "_tag" in input
       ? input
       : { _tag: "Succeeded" as const, reply: input, events: [] }
+
   const trace = { schemaVersion: 1 as const, events: outcome.events }
+
   const parse = Schema.decodeUnknownEffect(
     StructuredChatDebugTurnResponseSchema,
   )
-  if (outcome._tag === "Failed")
+
+  if (Predicate.isTagged(outcome, "Failed"))
     return parse(
       {
         schemaVersion: 2,
@@ -201,11 +207,13 @@ export const present = <C extends AnyDefinition>(
         () => new InvalidChatDebugProjection({ reason: "invalid_trace" }),
       ),
     )
+
   return Effect.gen(function* () {
     // SAFETY: the runtime membership check above identifies a composed reply with an invocation reference.
     const reply = Fn.cast<typeof outcome.reply, ReplyOf<AnyComposedDefinition>>(
       outcome.reply,
     )
+
     const response = yield* presentChatReply(
       reply,
       Fn.cast<
@@ -216,12 +224,14 @@ export const present = <C extends AnyDefinition>(
         | undefined
       >(options.presentation),
     )
+
     const debug = yield* inspectInvocation(
       chat,
       reply.turn.state,
       reply.invocation.id,
       options.inspection ?? {},
     )
+
     return yield* parse(
       { ...response, outcome: "success", debug, trace },
       { onExcessProperty: "error" },

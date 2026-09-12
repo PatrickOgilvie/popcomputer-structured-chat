@@ -1,5 +1,10 @@
 import type { Effect, Schema } from "effect"
 import type { Definition } from "../Chat.js"
+import type { AnyComposedDefinition } from "../core/composition.js"
+import type {
+  ConversationState,
+  InvalidConversation,
+} from "../core/conversation-state.js"
 import type {
   ChatError,
   ChatExplorationTuple,
@@ -8,7 +13,7 @@ import type {
   ChatState,
   ChatTurn,
 } from "../core/chat.js"
-import type { UntrustedMessage } from "../core/model.js"
+import type { ConversationMessage } from "../core/conversation-message.js"
 import { readConversation } from "../internal/chat/composition-definition.js"
 import { read } from "../internal/chat/definition.js"
 
@@ -45,7 +50,7 @@ export const run = <
   chat: Definition<Name, Version, Stages, Explorations>,
   input: {
     readonly state: ChatState<Name, Version, Stages>
-    readonly messages: ReadonlyArray<UntrustedMessage>
+    readonly messages: ReadonlyArray<ConversationMessage>
   },
 ): Effect.Effect<
   ChatTurn<Name, Version, Stages>,
@@ -55,11 +60,9 @@ export const run = <
 
 /** Decode a complete conversation snapshot, including per-invocation evidence grounding. */
 export const parseConversationState = (
-  chat: import("../core/composition.js").AnyComposedDefinition,
+  chat: AnyComposedDefinition,
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- specialist persistence parser validates malformed snapshots
   state: unknown,
-  messages: ReadonlyArray<UntrustedMessage>,
-): Effect.Effect<
-  import("../core/conversation-state.js").ConversationState,
-  import("../core/conversation-state.js").InvalidConversation
-> => readConversation(chat).parseState(state, messages)
+  messages: ReadonlyArray<ConversationMessage>,
+): Effect.Effect<ConversationState, InvalidConversation> =>
+  readConversation(chat).parseState(state, messages)

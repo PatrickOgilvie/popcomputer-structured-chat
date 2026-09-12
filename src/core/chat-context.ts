@@ -38,6 +38,7 @@ export const chatInput = <A>(
 ): Effect.Effect<A, ChatContextUnavailable, ChatContext> =>
   Effect.gen(function* () {
     const context = yield* ChatContext
+
     return yield* Schema.decodeUnknownEffect(Schema.toType(schema))(
       context.input,
       { onExcessProperty: "error" },

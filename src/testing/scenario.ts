@@ -10,14 +10,8 @@ import {
   type ToolModelRequest,
 } from "../core/model.js"
 import type { ModelGuardTuple } from "../core/model-guard.js"
-import type {
-  StructuredTool,
-  ToolDefinitionContract,
-} from "../core/tool.js"
-import {
-  JsonValueSchema,
-  type JsonValue,
-} from "../core/json-value.js"
+import type { StructuredTool, ToolDefinitionContract } from "../core/tool.js"
+import { JsonValueSchema, type JsonValue } from "../core/json-value.js"
 
 const scenarioQuote = Symbol(
   "@popcomputer/structured-chat/testing/ScenarioQuote",
@@ -41,9 +35,7 @@ interface ScenarioStep {
 }
 
 type QuotedAnswers<Fields extends AnswerFields> = Partial<{
-  readonly [Field in keyof Fields]: ScenarioQuote<
-    CollectAnswers<Fields>[Field]
-  >
+  readonly [Field in keyof Fields]: ScenarioQuote<CollectAnswers<Fields>[Field]>
 }>
 
 type ScenarioNextQuestion<Fields extends AnswerFields> = {
@@ -68,18 +60,19 @@ interface ScenarioRepair {
   readonly respond: (request: ToolModelRequest) => JsonValue
 }
 
-type ToolInput<Tool> = Tool extends StructuredTool<
-  infer _Name,
-  infer InputSchema,
-  infer _ServerResult,
-  infer _Error,
-  infer _Requirements,
-  infer _ModelSchema,
-  infer _Presenters,
-  infer _Operation
->
-  ? Schema.Schema.Type<InputSchema>
-  : never
+type ToolInput<Tool> =
+  Tool extends StructuredTool<
+    infer _Name,
+    infer InputSchema,
+    infer _ServerResult,
+    infer _Error,
+    infer _Requirements,
+    infer _ModelSchema,
+    infer _Presenters,
+    infer _Operation
+  >
+    ? Schema.Schema.Type<InputSchema>
+    : never
 
 const evidenceIndex = <Value>(
   request: ToolModelRequest,
@@ -87,6 +80,7 @@ const evidenceIndex = <Value>(
 ): number => {
   if (quoted.messageIndex !== undefined) {
     const message = request.untrustedMessages[quoted.messageIndex]
+
     if (
       message === undefined ||
       message.role !== "user" ||
@@ -96,6 +90,7 @@ const evidenceIndex = <Value>(
         `Scenario quote does not match user message ${quoted.messageIndex}`,
       )
     }
+
     return quoted.messageIndex
   }
 
@@ -104,6 +99,7 @@ const evidenceIndex = <Value>(
       ? [index]
       : [],
   )
+
   if (matches.length !== 1) {
     throw new Error(
       `Scenario quote must match exactly one user message; matched ${matches.length}`,
@@ -111,9 +107,11 @@ const evidenceIndex = <Value>(
   }
 
   const match = matches[0]
+
   if (match === undefined) {
     throw new Error("Scenario quote match disappeared")
   }
+
   return match
 }
 
@@ -126,6 +124,7 @@ const quoted = <Value>(
     quote: Schema.decodeSync(ScenarioQuoteSchema)(options.quote),
     [scenarioQuote]: true as const,
   }
+
   return options.messageIndex === undefined
     ? base
     : { ...base, messageIndex: options.messageIndex }
@@ -145,9 +144,11 @@ const answers = <
 ): ScenarioStep => ({
   respond: (request) => {
     const encodedAnswers: Record<string, JsonValue> = {}
+
     for (const field of Object.keys(stage.fields)) {
       encodedAnswers[field] = null
     }
+
     const evidence: Array<{
       readonly field: string
       readonly quote: string
@@ -159,9 +160,11 @@ const answers = <
     >) {
       const value = proposed[field]
       const answer = stage.fields[field]
+
       if (value === undefined || answer === undefined) {
         continue
       }
+
       encodedAnswers[field] = Schema.decodeUnknownSync(JsonValueSchema)(
         Schema.encodeSync(answer.schema)(value.value),
       )
@@ -178,16 +181,13 @@ const answers = <
         answers: encodedAnswers,
         evidence,
         nextQuestion:
-          options.nextQuestion === undefined ||
-          options.nextQuestion === null
+          options.nextQuestion === undefined || options.nextQuestion === null
             ? null
             : {
                 field: options.nextQuestion.field,
                 text: options.nextQuestion.text,
                 options:
-                  options.nextQuestion.options?.map(
-                    ({ label }) => label,
-                  ) ?? [],
+                  options.nextQuestion.options?.map(({ label }) => label) ?? [],
               },
       },
     }
@@ -220,12 +220,15 @@ const replace = <
 ): ScenarioRepair => {
   const support = quoted(value, options)
   const answer = stage.fields[field]
+
   if (answer === undefined) {
     throw new Error(`Unknown scenario repair field: ${String(field)}`)
   }
+
   return {
     respond: (request) => {
       evidenceIndex(request, support)
+
       return {
         _tag: "ReplaceAcceptedAnswer",
         stage: stage.name,
@@ -253,9 +256,11 @@ const reconfirm = <
   options: { readonly quote: string; readonly messageIndex?: number },
 ): ScenarioRepair => {
   const support = quoted(undefined, options)
+
   return {
     respond: (request) => {
       evidenceIndex(request, support)
+
       return {
         _tag: "ReconfirmAnswer",
         stage: stage.name,
@@ -291,11 +296,13 @@ const model = (
     Ref.make(0).pipe(
       Effect.map((cursor) => {
         const steps = [first, ...remaining]
+
         return StructuredChatModel.of({
           requestTool: (request: ToolModelRequest) =>
             Ref.getAndUpdate(cursor, (index) => index + 1).pipe(
               Effect.flatMap((index) => {
                 const step = steps[index]
+
                 return step === undefined
                   ? Effect.die(
                       new Error(

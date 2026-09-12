@@ -1,4 +1,5 @@
-import { Effect, Schema } from "effect"
+import type { Schema } from "effect"
+import { Effect } from "effect"
 import type {
   InvalidToolCall,
   InvalidToolProjection,
@@ -25,100 +26,100 @@ export type ToolTuple = readonly [
   ...ReadonlyArray<QueryToolDefinitionContract>,
 ]
 
-type ToolExecutionOf<Tool> = Tool extends StructuredTool<
-  infer _Name,
-  infer _InputSchema,
-  infer ServerResult,
-  infer _Error,
-  infer _Requirements,
-  infer ModelSchema,
-  infer Presenters,
-  infer _Operation
->
-  ? ToolExecution<ServerResult, ModelSchema, Presenters>
-  : never
+type ToolExecutionOf<Tool> =
+  Tool extends StructuredTool<
+    infer _Name,
+    infer _InputSchema,
+    infer ServerResult,
+    infer _Error,
+    infer _Requirements,
+    infer ModelSchema,
+    infer Presenters,
+    infer _Operation
+  >
+    ? ToolExecution<ServerResult, ModelSchema, Presenters>
+    : never
 
-type ToolCallOf<Tool> = Tool extends StructuredTool<
-  infer Name,
-  infer InputSchema,
-  infer _ServerResult,
-  infer _Error,
-  infer _Requirements,
-  infer _ModelSchema,
-  infer _Presenters,
-  infer _Operation
->
-  ? ToolCall<Name, InputSchema>
-  : never
+type ToolCallOf<Tool> =
+  Tool extends StructuredTool<
+    infer Name,
+    infer InputSchema,
+    infer _ServerResult,
+    infer _Error,
+    infer _Requirements,
+    infer _ModelSchema,
+    infer _Presenters,
+    infer _Operation
+  >
+    ? ToolCall<Name, InputSchema>
+    : never
 
 /** Parsed call union accepted by any member of one tool set. */
-export type ToolSetCall<Tools extends ModelToolTuple> =
-  ToolCallOf<Tools[number]>
+export type ToolSetCall<Tools extends ModelToolTuple> = ToolCallOf<
+  Tools[number]
+>
 
 /** Encoded call union accepted by any member of one tool set. */
 export type EncodedToolSetCall<Tools extends ModelToolTuple> =
   EncodedToolCallOf<Tools[number]>
 
-type ToolErrorOf<Tool> = Tool extends StructuredTool<
-  infer _Name,
-  infer _InputSchema,
-  infer _ServerResult,
-  infer Error,
-  infer _Requirements,
-  infer _ModelSchema,
-  infer _Presenters,
-  infer _Operation
->
-  ? Error
-  : never
+type ToolErrorOf<Tool> =
+  Tool extends StructuredTool<
+    infer _Name,
+    infer _InputSchema,
+    infer _ServerResult,
+    infer Error,
+    infer _Requirements,
+    infer _ModelSchema,
+    infer _Presenters,
+    infer _Operation
+  >
+    ? Error
+    : never
 
-type ToolRequirementsOf<Tool> = Tool extends StructuredTool<
-  infer _Name,
-  infer _InputSchema,
-  infer _ServerResult,
-  infer _Error,
-  infer Requirements,
-  infer _ModelSchema,
-  infer _Presenters,
-  infer _Operation
->
-  ? Requirements
-  : never
+type ToolRequirementsOf<Tool> =
+  Tool extends StructuredTool<
+    infer _Name,
+    infer _InputSchema,
+    infer _ServerResult,
+    infer _Error,
+    infer Requirements,
+    infer _ModelSchema,
+    infer _Presenters,
+    infer _Operation
+  >
+    ? Requirements
+    : never
 
 /** Execution union produced by any member of a tool set. */
-export type ToolSetExecution<Tools extends ModelToolTuple> =
-  ToolExecutionOf<Tools[number]>
-
-type ToolRunOf<Tool> = Tool extends StructuredTool<
-  infer Name,
-  infer InputSchema,
-  infer ServerResult,
-  infer _Error,
-  infer _Requirements,
-  infer ModelSchema,
-  infer Presenters,
-  infer _Operation
+export type ToolSetExecution<Tools extends ModelToolTuple> = ToolExecutionOf<
+  Tools[number]
 >
-  ? {
-      readonly name: Name
-      readonly input: Schema.Schema.Type<InputSchema>
-      readonly execution: ToolExecution<
-        ServerResult,
-        ModelSchema,
-        Presenters
-      >
-    }
-  : never
+
+type ToolRunOf<Tool> =
+  Tool extends StructuredTool<
+    infer Name,
+    infer InputSchema,
+    infer ServerResult,
+    infer _Error,
+    infer _Requirements,
+    infer ModelSchema,
+    infer Presenters,
+    infer _Operation
+  >
+    ? {
+        readonly name: Name
+        readonly input: Schema.Schema.Type<InputSchema>
+        readonly execution: ToolExecution<ServerResult, ModelSchema, Presenters>
+      }
+    : never
 
 /** Correlated call and execution union produced by one tool set. */
-export type ToolSetRun<Tools extends ModelToolTuple> =
-  ToolRunOf<Tools[number]>
+export type ToolSetRun<Tools extends ModelToolTuple> = ToolRunOf<Tools[number]>
 
 /** Application failure union produced by any member of a tool set. */
 export type ToolSetError<Tools extends ModelToolTuple> =
-  | InvalidToolCall
-  | InvalidToolProjection
-  | ToolErrorOf<Tools[number]>
+  InvalidToolCall | InvalidToolProjection | ToolErrorOf<Tools[number]>
 
 /** Effect services required by any member of a tool set. */
 export type ToolSetRequirements<Tools extends ModelToolTuple> =
@@ -133,8 +134,9 @@ export interface ToolCallPlanner<Tools extends ModelToolTuple> {
 }
 
 /** A closed, stage-safe registry of tools that may execute. */
-export interface ToolSet<Tools extends ToolTuple>
-  extends ToolCallPlanner<Tools> {
+export interface ToolSet<
+  Tools extends ToolTuple,
+> extends ToolCallPlanner<Tools> {
   readonly tools: Tools
   readonly models: ReadonlyArray<ModelToolDefinition>
 
@@ -183,29 +185,43 @@ export const defineToolSet = <const Tools extends ToolTuple>(
       throw new Error("Repeatable tool sets accept query tools only")
     }
   }
+
   const registry = compileToolRegistry(tools)
+
   const parseCall: ToolSet<Tools>["parseCall"] = (input) =>
     registry.parseCall(input).pipe(
       Effect.withSpan("popcomputer.structured_chat.tool_set.parse", {
         attributes: { toolCount: tools.length },
       }),
     )
+
   const execute: ToolSet<Tools>["execute"] = (call) =>
     registry.execute(call).pipe(
       Effect.withSpan("popcomputer.structured_chat.tool_set.execute", {
         attributes: { toolCount: tools.length },
       }),
     )
+
   const executeCall: ToolSet<Tools>["executeCall"] = (input) =>
     parseCall(input).pipe(Effect.flatMap(execute))
+
   const runCall: ToolSet<Tools>["runCall"] = (input) =>
     parseCall(input).pipe(
-      Effect.flatMap((call) => registry.run(call).pipe(
-        Effect.withSpan("popcomputer.structured_chat.tool_set.run", {
-          attributes: { toolCount: tools.length },
-        }),
-      )),
+      Effect.flatMap((call) =>
+        registry.run(call).pipe(
+          Effect.withSpan("popcomputer.structured_chat.tool_set.run", {
+            attributes: { toolCount: tools.length },
+          }),
+        ),
+      ),
     )
 
-  return { tools, models: registry.models, parseCall, execute, executeCall, runCall }
+  return {
+    tools,
+    models: registry.models,
+    parseCall,
+    execute,
+    executeCall,
+    runCall,
+  }
 }

@@ -1,4 +1,4 @@
-import { Effect, Function as Fn, Schema } from "effect"
+import { Effect, Function as Fn } from "effect"
 import {
   structuredDefinition,
   type StructuredDefinition,
@@ -19,9 +19,7 @@ import type {
   ModelGuardRequirements,
 } from "./model-guard.js"
 import { StageNameSchema } from "./stage-name.js"
-import {
-  InvalidToolCall,
-} from "./tool.js"
+import type { InvalidToolCall } from "./tool.js"
 import type {
   ModelToolTuple,
   ToolSetCall,
@@ -29,10 +27,13 @@ import type {
   ToolSetError,
   ToolSetRequirements,
 } from "./tool-set.js"
-import { compileToolRegistry, type CommandContextSource } from "./tool-registry.js"
+import {
+  compileToolRegistry,
+  type CommandContextSource,
+} from "./tool-registry.js"
 
 /** Resolves the shared turn identity after planning selects a command. */
-export type InteractionCommandContext = CommandContextSource
+export type InteractionCommandContext<E = never> = CommandContextSource<E>
 
 /** Input for a repeatable stage with a closed set of queries and commands. */
 export type DefineInteractionStageInput<
@@ -54,7 +55,7 @@ interface InteractionStageRuntime {
   readonly completeOn: ReadonlyArray<string>
   readonly run: (
     messages: ReadonlyArray<UntrustedMessage>,
-    context: InteractionCommandContext,
+    context: InteractionCommandContext<unknown>,
   ) => Effect.Effect<
     {
       readonly name: string
@@ -65,13 +66,13 @@ interface InteractionStageRuntime {
     unknown
   >
 }
+
 const interactionStageRuntime = Symbol(
   "@popcomputer/structured-chat/InteractionStageRuntime",
 )
 
 /** Minimum sealed interaction-stage shape accepted by a chat. */
-export interface InteractionStageDefinitionContract
-  extends StructuredDefinition<"interaction_stage"> {
+export interface InteractionStageDefinitionContract extends StructuredDefinition<"interaction_stage"> {
   readonly _tag: "InteractionStage"
   readonly name: string
   readonly guards: ModelGuardTuple
@@ -131,20 +132,24 @@ export const defineInteractionStage = <
 >(
   definition: DefineInteractionStageInput<Name, Tools, Guards, Profile>,
 ): InteractionStage<Name, Tools, Guards, Profile> => {
-  Schema.decodeSync(StageNameSchema)(definition.name)
+  StageNameSchema.make(definition.name)
   const registry = compileToolRegistry(definition.tools)
   const toolNames = registry.models.map(({ name }) => name)
   const completeOn = [...(definition.completeOn ?? [])]
+
   if (completeOn.some((name) => !toolNames.includes(name))) {
     throw new Error("Interaction completion tools must belong to the stage")
   }
+
   // SAFETY: omitted guards use the readonly [] generic default.
   const guards = definition.guards ?? Fn.cast<readonly [], Guards>([])
+
   // SAFETY: ModelProfileInput requires a concrete model whenever Profile is defined.
   const modelInput = Fn.cast<
     { readonly model: typeof definition.model },
     ModelProfileInput<Profile>
   >({ model: definition.model })
+
   const plan = (messages: ReadonlyArray<UntrustedMessage>) =>
     planToolCall<Tools, Guards, Profile>({
       instructions: definition.instructions.map(Instruction.make),
@@ -153,9 +158,10 @@ export const defineInteractionStage = <
       guards,
       ...modelInput,
     })
-  const runRuntime = (
+
+  const runRuntime = <E>(
     messages: ReadonlyArray<UntrustedMessage>,
-    context: InteractionCommandContext,
+    context: InteractionCommandContext<E>,
   ) =>
     plan(messages).pipe(
       Effect.flatMap((call) =>
@@ -171,11 +177,13 @@ export const defineInteractionStage = <
         attributes: { stage: definition.name },
       }),
     )
+
   // SAFETY: dispatch preserves each registered tool's result, failures and requirements.
   const run = Fn.cast<
     typeof runRuntime,
     InteractionStage<Name, Tools, Guards, Profile>["run"]
   >(runRuntime)
+
   return structuredDefinition("interaction_stage")({
     _tag: "InteractionStage",
     name: definition.name,

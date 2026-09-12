@@ -22,14 +22,13 @@ describe("Tool.set", () => {
       name: "changed_since",
       description: "Find records changed since one instant.",
       input: Schema.Struct({ since: Schema.DateFromString }),
-      execute: ({ since }) =>
-        Effect.succeed({ timestamp: since.getTime() }),
+      execute: ({ since }) => Effect.succeed({ timestamp: since.getTime() }),
     })
+
     const since = new Date("2026-08-22T10:00:00.000Z")
     const call = Tool.makeCall(ChangedSince, { since })
-    const run = await Effect.runPromise(
-      Tool.set(ChangedSince).runCall(call),
-    )
+
+    const run = await Effect.runPromise(Tool.set(ChangedSince).runCall(call))
 
     expect(call).toEqual({
       name: "changed_since",
@@ -48,12 +47,11 @@ describe("Tool.set", () => {
 
   test("classifies envelope, name, and argument failures without sentinels", async () => {
     const tools = Tool.set(Search)
+
     const [envelope, name, arguments_] = await Effect.runPromise(
       Effect.all([
         Effect.result(tools.parseCall({ arguments: {} })),
-        Effect.result(
-          tools.parseCall({ name: "missing", arguments: {} }),
-        ),
+        Effect.result(tools.parseCall({ name: "missing", arguments: {} })),
         Effect.result(
           tools.parseCall({
             name: "search",
@@ -66,6 +64,7 @@ describe("Tool.set", () => {
     expect(Result.isFailure(envelope)).toBe(true)
     expect(Result.isFailure(name)).toBe(true)
     expect(Result.isFailure(arguments_)).toBe(true)
+
     if (
       Result.isFailure(envelope) &&
       Result.isFailure(name) &&
@@ -100,6 +99,7 @@ describe("Tool.set", () => {
         () => ({ value: 42 }) as never,
       ),
     )
+
     const result = await Effect.runPromise(
       Effect.result(
         Tool.set(InvalidProjection).executeCall({
@@ -110,6 +110,7 @@ describe("Tool.set", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Tool.InvalidProjection)
     }
@@ -117,6 +118,7 @@ describe("Tool.set", () => {
 
   test("advertises and executes only registered tools", async () => {
     const tools = Tool.set(Search)
+
     const execution = await Effect.runPromise(
       tools.executeCall({
         name: "search",
@@ -131,6 +133,7 @@ describe("Tool.set", () => {
 
   test("rejects a valid tool that is outside the current set", async () => {
     const tools = Tool.set(Search)
+
     const result = await Effect.runPromise(
       Effect.result(
         tools.executeCall({
@@ -141,6 +144,7 @@ describe("Tool.set", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Tool.InvalidCall)
     }

@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Predicate, Effect, Schema } from "effect"
 import {
   inspectChatAnswers,
   type InspectChatAnswersInput,
@@ -49,9 +49,9 @@ const StructuredChatUserAnswerFieldSchema = Schema.Struct({
 const StructuredChatUserAnswerSectionSchema = Schema.Struct({
   key: StageNameSchema,
   label: UserAnswerLabelSchema,
-  fields: Schema.NonEmptyArray(
-    StructuredChatUserAnswerFieldSchema,
-  ).check(Schema.isMaxLength(20)),
+  fields: Schema.NonEmptyArray(StructuredChatUserAnswerFieldSchema).check(
+    Schema.isMaxLength(20),
+  ),
 })
 
 /** Runtime schema for one complete display-safe user-answer snapshot. */
@@ -102,10 +102,7 @@ export interface ProjectUserAnswersInput {
 }
 
 const invalidProjection = (
-  reason:
-    | "invalid_state"
-    | "invalid_answer_value"
-    | "invalid_snapshot",
+  reason: "invalid_state" | "invalid_answer_value" | "invalid_snapshot",
 ): InvalidChatUserAnswerProjection =>
   new InvalidChatUserAnswerProjection({ reason })
 
@@ -130,8 +127,7 @@ export const projectUserAnswers = (
     const inspected = yield* inspectChatAnswers({
       definition: input.definition,
       state: input.state,
-      include: ({ userPresentation }) =>
-        userPresentation !== undefined,
+      include: ({ userPresentation }) => userPresentation !== undefined,
     } satisfies InspectChatAnswersInput).pipe(
       Effect.mapError(({ reason }) => invalidProjection(reason)),
     )
@@ -139,20 +135,22 @@ export const projectUserAnswers = (
     const sections: Array<StructuredChatUserAnswerSection> = []
     let visibleFieldCount = 0
     let acceptedVisibleFieldCount = 0
+
     for (const section of inspected.sections) {
       if (section.fields.length === 0) {
         continue
       }
 
       const fields: Array<StructuredChatUserAnswerField> = []
+
       for (const field of section.fields) {
         visibleFieldCount += 1
-        if (field.state._tag === "Accepted") {
+
+        if (Predicate.isTagged(field.state, "Accepted")) {
           acceptedVisibleFieldCount += 1
           fields.push({
             key: field.field,
-            label:
-              field.userPresentation?.label ?? defaultLabel(field.field),
+            label: field.userPresentation?.label ?? defaultLabel(field.field),
             state: {
               _tag: "Accepted",
               value: field.state.value,
@@ -163,16 +161,17 @@ export const projectUserAnswers = (
 
         fields.push({
           key: field.field,
-          label:
-            field.userPresentation?.label ?? defaultLabel(field.field),
+          label: field.userPresentation?.label ?? defaultLabel(field.field),
           state: { _tag: "Missing" },
         })
       }
 
       const [firstField, ...remainingFields] = fields
+
       if (firstField === undefined) {
         continue
       }
+
       sections.push({
         key: section.stage,
         label: defaultLabel(section.stage),
@@ -187,18 +186,12 @@ export const projectUserAnswers = (
       acceptedVisibleFieldCount,
     })
 
-    return yield* Schema.decodeUnknownEffect(
-      StructuredChatUserAnswerSnapshotSchema,
-    )(
+    return yield* Schema.decodeEffect(StructuredChatUserAnswerSnapshotSchema)(
       {
         schemaVersion: 1,
         chat: inspected.chat,
         sections,
       },
       { onExcessProperty: "error" },
-    ).pipe(
-      Effect.mapError(() => invalidProjection("invalid_snapshot")),
-    )
-  }).pipe(
-    Effect.withSpan("popcomputer.structured_chat.user_answers.project"),
-  )
+    ).pipe(Effect.mapError(() => invalidProjection("invalid_snapshot")))
+  }).pipe(Effect.withSpan("popcomputer.structured_chat.user_answers.project"))

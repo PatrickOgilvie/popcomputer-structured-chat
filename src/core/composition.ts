@@ -114,6 +114,7 @@ type BranchError<B> =
   B extends Branch<infer _N, infer _A, infer C, infer E, infer _R>
     ? E | ErrorsOf<C>
     : never
+
 type BranchRequirements<B> =
   B extends Branch<infer _N, infer _A, infer C, infer _E, infer R>
     ? R | RequirementsOf<C>
@@ -268,6 +269,7 @@ type BranchMessages<B> =
   B extends Branch<infer _N, infer _A, infer C, infer _E, infer _R>
     ? MessagesOf<C>
     : never
+
 export type MessagesOf<C> =
   C extends ComposedDefinition<
     infer _N,

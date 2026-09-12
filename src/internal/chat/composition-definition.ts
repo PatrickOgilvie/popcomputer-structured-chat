@@ -1,4 +1,5 @@
-import { Effect, Function as Fn, Schema } from "effect"
+import type { Effect } from "effect"
+import { Function as Fn, Schema } from "effect"
 import type { AnyDefinition, Definition } from "../../Chat.js"
 import type {
   ChatExplorationTuple,
@@ -35,7 +36,9 @@ interface Configuration {
 }
 
 const configurations = new WeakMap<object, Configuration>()
+
 const conversations = new WeakMap<object, ReturnType<typeof makeConversation>>()
+
 const empty: Configuration = {
   inputSchema: Schema.Null,
   outputSchema: Schema.Null,
@@ -45,6 +48,7 @@ const empty: Configuration = {
   maximumDepth: 8,
   maximumTransitionsPerTurn: 16,
 }
+
 const limitSchema = Schema.Number.check(
   Schema.isInt(),
   Schema.isBetween({ minimum: 1, maximum: 64 }),
@@ -115,6 +119,7 @@ export function define(
   },
 ): AnyDefinition {
   const definition = compile(input)
+
   if (
     input.input === undefined &&
     input.output === undefined &&
@@ -124,11 +129,14 @@ export function define(
     return definition
   const branches = input.branches ?? []
   const messages = input.messages ?? []
+
   if (new Set(branches.map((branch) => branch.name)).size !== branches.length)
     throw new Error("Chat branch names must be unique")
+
   if (new Set(messages.map((message) => message.name)).size !== messages.length)
     throw new Error("Outbound message names must be unique")
   const reserved = new Set(["continue_chat", "return_to_parent", "cancel_chat"])
+
   if (
     branches.some(
       (branch) =>
@@ -138,6 +146,7 @@ export function define(
     )
   )
     throw new Error("Chat branch name is reserved for conversation routing")
+
   const configuration: Configuration = {
     inputSchema: input.input ?? Schema.Null,
     outputSchema: input.output?.schema ?? Schema.Null,
@@ -151,6 +160,7 @@ export function define(
       input.limits?.maximumTransitionsPerTurn ?? 16,
     ),
   }
+
   Object.defineProperty(definition, "composition", {
     value: {
       inputSchema: configuration.inputSchema,
@@ -162,6 +172,7 @@ export function define(
   })
   configurations.set(definition, configuration)
   readConversation(definition)
+
   return definition
 }
 
@@ -182,6 +193,7 @@ export const branch = <
   ) => Effect.Effect<InputOf<Child>, Error, Requirements>
 }): Branch<Name, Arguments, Child, Error, Requirements> => {
   read(input.chat)
+
   return defineBranch(input, configurations.get(input.chat) ?? empty)
 }
 
@@ -194,8 +206,10 @@ export const readConversation = (
   definition: AnyDefinition,
 ): ReturnType<typeof makeConversation> => {
   const existing = conversations.get(definition)
+
   if (existing !== undefined) return existing
   const nodes = new Map<string, ConversationNode>()
+
   const build = (
     chat: AnyDefinition,
     key: string,
@@ -209,11 +223,13 @@ export const readConversation = (
     const configuration = configurations.get(chat) ?? empty
     const children = new Map<Branches[number], string>()
     const nextAncestors = new Set([...ancestors, chat])
+
     for (const branch of configuration.branches) {
       const childKey = `${key}/${branch.name}`
       build(branch.chat, childKey, nextAncestors)
       children.set(branch, childKey)
     }
+
     const node: ConversationNode = {
       key,
       definition: chat,
@@ -229,17 +245,23 @@ export const readConversation = (
       messages: configuration.messages,
       children,
     }
+
     nodes.set(key, node)
+
     return node
   }
+
   const root = build(definition, "root", new Set())
   const configuration = configurations.get(definition) ?? empty
+
   const runtime = makeConversation({
     root,
     nodes,
     maximumDepth: configuration.maximumDepth,
     maximumTransitionsPerTurn: configuration.maximumTransitionsPerTurn,
   })
+
   conversations.set(definition, runtime)
+
   return runtime
 }

@@ -353,6 +353,20 @@ new session at that boundary. History summarisation and compaction remain an
 explicit application policy rather than silently changing conversation
 meaning.
 
+### Voice with GPT-Live client delegation
+
+The optional `@popcomputer/structured-chat/live` module runs ordinary Effect
+actions over the existing stages and tools, with durable delegation ownership,
+observed-speech provenance, cooperative command admission, and separate speech
+and browser presentation. The `./live/openai` entry point supplies WebRTC
+bootstrap and a scoped Effect Socket adapter.
+
+Read the [Live integration guide](docs/live.md) and
+[compiled action example](examples/live-lookup.ts). Applications supply readiness
+policy, authenticated transport, a token counter, durable storage, and an
+idempotent browser publisher. Observed speech does not satisfy confirmed
+answers, and interrupted sessions require explicit reconciliation.
+
 ### Durable sessions on Cloudflare D1
 
 The package ships a production-ready `Session.Store` adapter for

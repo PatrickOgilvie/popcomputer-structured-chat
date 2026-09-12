@@ -29,13 +29,13 @@ describe("inMemoryChatSessionStore", () => {
 
         const attempts = yield* Effect.all(
           ["first", "second"].map((writer) =>
-            store.replace(replacement("1", writer)).pipe(
-              Effect.as(writer),
-              Effect.result,
-            ),
+            store
+              .replace(replacement("1", writer))
+              .pipe(Effect.as(writer), Effect.result),
           ),
           { concurrency: 2 },
         )
+
         const loaded = yield* store.load(scope)
 
         return { attempts, loaded }
@@ -48,9 +48,10 @@ describe("inMemoryChatSessionStore", () => {
     expect(conflicts).toHaveLength(1)
     expect(conflicts[0]?.failure).toBeInstanceOf(Session.Conflict)
 
-    const snapshot = Schema.decodeUnknownSync(
-      Session.SnapshotSchema,
-    )(result.loaded)
+    const snapshot = Schema.decodeUnknownSync(Session.SnapshotSchema)(
+      result.loaded,
+    )
+
     expect(snapshot.revision).toBe("2")
     expect(snapshot.state).toEqual({ writer: winners[0]?.success })
   })

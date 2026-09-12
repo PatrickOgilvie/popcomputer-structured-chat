@@ -1,4 +1,10 @@
-import { Answer, Chat, Question, Stage, Tool } from "@popcomputer/structured-chat"
+import {
+  Answer,
+  Chat,
+  Question,
+  Stage,
+  Tool,
+} from "@popcomputer/structured-chat"
 import { Effect, Schema } from "effect"
 
 const SearchCatalog = Tool.define({
@@ -23,36 +29,27 @@ const RequestDetails = Stage.collect({
     escape: "Not sure yet",
   },
   fields: {
-    goal: Answer.confirmed(
-      Schema.Trimmed.check(Schema.isNonEmpty()),
-      {
-        description: "The outcome the user wants to achieve.",
-        ask: Question.adaptiveChoice(
-          "What would you like help accomplishing?",
-          {
-            minimumOptions: 2,
-            maximumOptions: 3,
-            fallbackOptions: [
-              "Understand a topic",
-              "Compare available options",
-              "Plan the next steps",
-            ],
-          },
-        ),
-      },
-    ),
-    audience: Answer.confirmed(
-      Schema.Trimmed.check(Schema.isNonEmpty()),
-      {
-        description: "Who the requested result is for.",
-        ask: Question.adaptive(
-          "Ask who will use the result and what they already know.",
-          {
-            fallback: "Who is this for, and what do they already know?",
-          },
-        ),
-      },
-    ),
+    goal: Answer.confirmed(Schema.Trimmed.check(Schema.isNonEmpty()), {
+      description: "The outcome the user wants to achieve.",
+      ask: Question.adaptiveChoice("What would you like help accomplishing?", {
+        minimumOptions: 2,
+        maximumOptions: 3,
+        fallbackOptions: [
+          "Understand a topic",
+          "Compare available options",
+          "Plan the next steps",
+        ],
+      }),
+    }),
+    audience: Answer.confirmed(Schema.Trimmed.check(Schema.isNonEmpty()), {
+      description: "Who the requested result is for.",
+      ask: Question.adaptive(
+        "Ask who will use the result and what they already know.",
+        {
+          fallback: "Who is this for, and what do they already know?",
+        },
+      ),
+    }),
   },
 })
 
@@ -66,19 +63,16 @@ export const GuidedResourceFinder = Chat.define({
 const RequestUnderstanding = Stage.collect({
   name: "request_understanding",
   fields: {
-    intent: Answer.semantic(
-      Schema.Trimmed.check(Schema.isNonEmpty()),
-      {
-        description:
-          "The user's searchable goal, subject, constraints, or desired outcome.",
-        ask: Question.adaptive(
-          "Ask one useful follow-up only when the request is not searchable yet.",
-          {
-            fallback: "What subject or outcome should I search for?",
-          },
-        ),
-      },
-    ),
+    intent: Answer.semantic(Schema.Trimmed.check(Schema.isNonEmpty()), {
+      description:
+        "The user's searchable goal, subject, constraints, or desired outcome.",
+      ask: Question.adaptive(
+        "Ask one useful follow-up only when the request is not searchable yet.",
+        {
+          fallback: "What subject or outcome should I search for?",
+        },
+      ),
+    }),
   },
 })
 

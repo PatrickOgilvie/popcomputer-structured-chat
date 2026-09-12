@@ -1,12 +1,6 @@
 import { Tool, View } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
-import {
-  Context,
-  Effect,
-  Layer,
-  Result,
-  Schema,
-} from "effect"
+import { Context, Effect, Layer, Result, Schema } from "effect"
 import { captureDebugEvents } from "../src/core/debug-trace.js"
 
 interface AgencyMatch {
@@ -142,6 +136,7 @@ describe("Tool.define", () => {
         }),
       ),
     )
+
     const excessArguments = await Effect.runPromise(
       Effect.result(
         SearchAgencies.parseCall({
@@ -156,10 +151,8 @@ describe("Tool.define", () => {
 
     expect(Result.isFailure(wrongName)).toBe(true)
     expect(Result.isFailure(excessArguments)).toBe(true)
-    if (
-      Result.isFailure(wrongName) &&
-      Result.isFailure(excessArguments)
-    ) {
+
+    if (Result.isFailure(wrongName) && Result.isFailure(excessArguments)) {
       expect(wrongName.failure).toBeInstanceOf(Tool.InvalidCall)
       expect(excessArguments.failure).toBeInstanceOf(Tool.InvalidCall)
     }
@@ -201,11 +194,10 @@ describe("Tool.define", () => {
       Layer.succeed(RequestContext, { tenantId: "trusted-tenant" }),
       Layer.succeed(AgencyCatalog, {
         search: () =>
-          Effect.fail(
-            new SearchUnavailable({ reason: "unavailable" }),
-          ),
+          Effect.fail(new SearchUnavailable({ reason: "unavailable" })),
       }),
     )
+
     const result = await Effect.runPromise(
       Effect.result(
         SearchAgencies.execute({ query: "public sector" }).pipe(
@@ -215,6 +207,7 @@ describe("Tool.define", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(SearchUnavailable)
     }
@@ -234,11 +227,13 @@ describe("Tool.define", () => {
         () => ({ id: 123 }) as never,
       ),
     )
+
     const result = await Effect.runPromise(
       Effect.result(InvalidProjection.execute({ query: "test" })),
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Tool.InvalidProjection)
     }
@@ -246,6 +241,7 @@ describe("Tool.define", () => {
 
   test("records successful server execution before a later projection fails", async () => {
     let executions = 0
+
     const InvalidProjection = Tool.define({
       name: "executed_before_projection_failure",
       description: "Prove execution tracing follows the server boundary.",
@@ -253,6 +249,7 @@ describe("Tool.define", () => {
       execute: () =>
         Effect.sync(() => {
           executions += 1
+
           return { id: "agency:1" }
         }),
     }).pipe(
@@ -299,6 +296,7 @@ describe("Tool.define", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Tool.InvalidProjection)
       expect(result.failure).toMatchObject({
@@ -326,6 +324,7 @@ describe("Tool.define", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toMatchObject({
         tool: "throwing_view",
@@ -342,9 +341,7 @@ describe("Tool.define", () => {
       description: "Omit a view when there is nothing to display.",
       input: Schema.Struct({}),
       execute: () => Effect.succeed({ visible: false }),
-    }).pipe(
-      Tool.present(AgencyCards, () => undefined),
-    )
+    }).pipe(Tool.present(AgencyCards, () => undefined))
 
     const result = await Effect.runPromise(OptionalView.execute({}))
 
@@ -364,11 +361,13 @@ describe("Tool.define", () => {
         ({ summary }) => ({ summary }),
       ),
     )
+
     const result = await Effect.runPromise(
       Effect.result(OversizedModelResult.execute({})),
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Tool.InvalidProjection)
       expect(result.failure).toMatchObject({

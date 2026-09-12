@@ -1,5 +1,9 @@
-import { Context, Effect, Schema } from "effect"
-import { UntrustedMessageSchema, type UntrustedMessage } from "./model.js"
+import type { Effect } from "effect"
+import { Predicate, Context, Schema } from "effect"
+import {
+  ConversationMessageSchema,
+  type ConversationMessage,
+} from "./conversation-message.js"
 
 /** Stable application-owned identifier for one chat session. */
 export const ChatSessionIdSchema = Schema.Trimmed.check(
@@ -9,12 +13,11 @@ export const ChatSessionIdSchema = Schema.Trimmed.check(
 )
 
 /** Optional application-owned partition for otherwise public session IDs. */
-export const ChatSessionNamespaceSchema =
-  Schema.Trimmed.check(
-    Schema.isNonEmpty(),
-    Schema.isMaxLength(200),
-    Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
-  )
+export const ChatSessionNamespaceSchema = Schema.Trimmed.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+)
 
 /** Opaque optimistic revision emitted by a session store adapter. */
 export const ChatSessionRevisionSchema = Schema.Trimmed.check(
@@ -27,8 +30,15 @@ export const ChatSessionRevisionSchema = Schema.Trimmed.check(
 export const ChatSessionSnapshotSchema = Schema.Struct({
   revision: ChatSessionRevisionSchema,
   state: Schema.Unknown,
-  messages: Schema.Array(UntrustedMessageSchema).check(
+  messages: Schema.Array(ConversationMessageSchema).check(
     Schema.isMaxLength(200),
+    Schema.makeFilter((messages) => {
+      const identities = messages.flatMap((message) =>
+        Predicate.isTagged(message, "Observed") ? [message.id] : [],
+      )
+
+      return new Set(identities).size === identities.length
+    }),
   ),
 })
 
@@ -110,7 +120,7 @@ export interface ChatSessionScope {
 export interface ReplaceChatSessionInput extends ChatSessionScope {
   readonly expectedRevision: string | null
   readonly state: unknown
-  readonly messages: ReadonlyArray<UntrustedMessage>
+  readonly messages: ReadonlyArray<ConversationMessage>
 }
 
 /** Narrow persistence seam for server-owned structured chat sessions. */
@@ -118,21 +128,19 @@ export interface ChatSessionStoreService {
   /** Load one raw snapshot, or null when the session has never started. */
   readonly load: (
     scope: ChatSessionScope,
-  ) => Effect.Effect<unknown | null, ChatSessionStoreUnavailable | ChatSessionExpired>
+  ) => Effect.Effect<
+    unknown | null,
+    ChatSessionStoreUnavailable | ChatSessionExpired
+  >
 
   /** Atomically replace one complete session at its expected revision. */
   readonly replace: (
     input: ReplaceChatSessionInput,
-  ) => Effect.Effect<
-    unknown,
-    ChatSessionStoreUnavailable | ChatSessionConflict
-  >
+  ) => Effect.Effect<unknown, ChatSessionStoreUnavailable | ChatSessionConflict>
 }
 
 /** Effect service for the configured server-owned chat session store. */
 export class ChatSessionStore extends Context.Service<
   ChatSessionStore,
   ChatSessionStoreService
->()(
-  "@popcomputer/structured-chat/ChatSessionStore",
-) {}
+>()("@popcomputer/structured-chat/ChatSessionStore") {}

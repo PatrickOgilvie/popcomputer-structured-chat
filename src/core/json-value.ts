@@ -9,20 +9,16 @@ export interface JsonObject {
 }
 
 /** Recursively typed value accepted at serialized JSON boundaries. */
-export type JsonValue =
-  | JsonPrimitive
-  | JsonObject
-  | ReadonlyArray<JsonValue>
+export type JsonValue = JsonPrimitive | JsonObject | ReadonlyArray<JsonValue>
 
 /** Runtime parser for recursively JSON-serializable values. */
-export const JsonValueSchema: Schema.Codec<JsonValue> = Schema.suspend(
-  () =>
-    Schema.Union([
-      Schema.String,
-      Schema.Finite,
-      Schema.Boolean,
-      Schema.Null,
-      Schema.Array(JsonValueSchema),
-      Schema.Record(Schema.String, JsonValueSchema),
-    ]),
+export const JsonValueSchema: Schema.Codec<JsonValue> = Schema.suspend(() =>
+  Schema.Union([
+    Schema.String,
+    Schema.Finite,
+    Schema.Boolean,
+    Schema.Null,
+    Schema.Array(JsonValueSchema),
+    Schema.Record(Schema.String, JsonValueSchema),
+  ]),
 )

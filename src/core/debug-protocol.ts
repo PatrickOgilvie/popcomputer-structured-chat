@@ -1,6 +1,7 @@
-import { cast, Effect, Schema } from "effect"
+import { Predicate, cast, Effect, Schema } from "effect"
 import type {
   ChatDefinition,
+  ChatExplorationTuple,
   ChatReply,
   ChatReplyError,
   ChatStageTuple,
@@ -17,18 +18,16 @@ import {
   type StructuredChatDebugEvent,
   type StructuredChatDebugTrace,
 } from "./debug-trace.js"
+import type { StructuredChatSessionReferenceSchema } from "./protocol.js"
 import {
   presentChatReply,
   StructuredChatPersistedTurnResponseSchema,
-  StructuredChatSessionReferenceSchema,
   type InvalidChatPresentation,
   type PresentChatReplyOptions,
 } from "./protocol.js"
 import { ChatSessionIdSchema } from "./session.js"
 
-type BrowserPresentableTurn = Parameters<
-  typeof presentChatReply
->[0]["turn"]
+type BrowserPresentableTurn = Parameters<typeof presentChatReply>[0]["turn"]
 
 type DebugChatTurn<
   Name extends string,
@@ -149,10 +148,7 @@ const invalidTrace = (): InvalidChatDebugProjection =>
 const parseDebugResponse = (
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- this protocol projection boundary strictly parses the complete browser response
   input: unknown,
-): Effect.Effect<
-  StructuredChatDebugTurnResponse,
-  InvalidChatDebugProjection
-> =>
+): Effect.Effect<StructuredChatDebugTurnResponse, InvalidChatDebugProjection> =>
   Schema.decodeUnknownEffect(StructuredChatDebugTurnResponseSchema)(input, {
     onExcessProperty: "error",
   }).pipe(Effect.mapError(invalidTrace))
@@ -169,7 +165,7 @@ export const presentChatDebugReply = <
   const Version extends number,
   const Stages extends ChatStageTuple,
 >(
-  chat: ChatDefinition<Name, Version, Stages, import("./chat.js").ChatExplorationTuple>,
+  chat: ChatDefinition<Name, Version, Stages, ChatExplorationTuple>,
   input: ChatDebugPresentationInput<Name, Version, Stages>,
   options: PresentChatDebugReplyOptions<Name, Version, Stages> = {},
 ): Effect.Effect<
@@ -177,21 +173,18 @@ export const presentChatDebugReply = <
   InvalidChatPresentation | InvalidChatDebugProjection
 > => {
   const outcome: CapturedChatDebugOutcome<Name, Version, Stages> =
-    "_tag" in input
-      ? input
-      : { _tag: "Succeeded", reply: input, events: [] }
+    "_tag" in input ? input : { _tag: "Succeeded", reply: input, events: [] }
+
   const trace = {
     schemaVersion: 1 as const,
     events: outcome.events,
   }
-  if (outcome._tag === "Failed") {
+
+  if (Predicate.isTagged(outcome, "Failed")) {
     return parseDebugResponse({
       schemaVersion: 2,
       outcome: "failure",
-      session:
-        outcome.sessionId === null
-          ? null
-          : { id: outcome.sessionId },
+      session: outcome.sessionId === null ? null : { id: outcome.sessionId },
       trace,
     })
   }
@@ -203,15 +196,15 @@ export const presentChatDebugReply = <
       typeof outcome.reply,
       DebugChatReply<Name, Version, Stages>
     >(outcome.reply)
-    const response = yield* presentChatReply(
-      reply,
-      options.presentation,
-    )
+
+    const response = yield* presentChatReply(reply, options.presentation)
+
     const debug = yield* inspectChatState(
       chat,
       reply.turn.state,
       options.inspection,
     )
+
     return yield* parseDebugResponse({
       ...response,
       outcome: "success",

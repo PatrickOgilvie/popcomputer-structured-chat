@@ -1,10 +1,5 @@
 import { Model, Stage, Tool, View } from "@popcomputer/structured-chat"
-import {
-  Context,
-  Effect,
-  Layer,
-  Schema,
-} from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 
 interface ResourceMatch {
   readonly id: string
@@ -55,6 +50,7 @@ export const FindResources = Tool.define({
   execute: ({ query }) =>
     Effect.gen(function* () {
       const catalog = yield* ResourceCatalog
+
       return yield* catalog.search(query)
     }),
 }).pipe(

@@ -1,5 +1,5 @@
 import { Clock, Effect, Schema } from "effect"
-import { UntrustedMessageSchema } from "../core/model.js"
+import { ConversationMessageSchema } from "../core/conversation-message.js"
 import {
   ChatSessionConflict,
   ChatSessionExpired,
@@ -45,17 +45,15 @@ export interface D1ChatSessionDatabase {
  */
 export interface D1ChatSessionStatement {
   /** Bind one statement's positional `?N` values in ascending order. */
-  readonly bind: (
-    ...values: ReadonlyArray<unknown>
-  ) => D1ChatSessionStatement
+  readonly bind: (...values: ReadonlyArray<unknown>) => D1ChatSessionStatement
   /** Execute a read and resolve the first row, or `null` when empty. */
   readonly first: (
     // oxlint-disable-next-line anti-slop/no-unknown-returns -- raw driver port
-    ) => Promise<unknown | null>
+  ) => Promise<unknown | null>
   /** Execute a write and resolve the driver's raw run result. */
   readonly run: (
     // oxlint-disable-next-line anti-slop/no-unknown-returns -- raw driver port
-    ) => Promise<unknown>
+  ) => Promise<unknown>
 }
 
 /** Time-based expiry policy applied to selected session namespaces. */
@@ -97,9 +95,9 @@ const RetentionMillisSchema = Schema.Number.check(
  * prefixes consume exactly 100 parameters.
  */
 const ChatSessionRetentionOptionsSchema = Schema.Struct({
-  expiringNamespacePrefixes: Schema.Array(
-    ChatSessionNamespaceSchema,
-  ).check(Schema.isMaxLength(49)),
+  expiringNamespacePrefixes: Schema.Array(ChatSessionNamespaceSchema).check(
+    Schema.isMaxLength(49),
+  ),
   retentionMillis: RetentionMillisSchema,
 })
 
@@ -138,7 +136,7 @@ const EncodedStateCodec = Schema.fromJsonString(Schema.Unknown)
 
 /** Codec between bounded untrusted history and its text form. */
 const EncodedMessagesCodec = Schema.fromJsonString(
-  Schema.Array(UntrustedMessageSchema),
+  Schema.Array(ConversationMessageSchema),
 )
 
 const loadUnavailable = () =>
@@ -147,16 +145,14 @@ const loadUnavailable = () =>
 const writeUnavailable = () =>
   new ChatSessionStoreUnavailable({ reason: "write_failed" })
 
-const conflict = () =>
-  new ChatSessionConflict({ reason: "concurrent_update" })
+const conflict = () => new ChatSessionConflict({ reason: "concurrent_update" })
 
 /** Safe revision literal accepted for optimistic replacement. */
 const ExpectedRevisionPattern = /^[1-9][0-9]*$/u
 
-const decodePersistedRow = Schema.decodeUnknownEffect(
-  PersistedRowSchema,
-  { onExcessProperty: "error" },
-)
+const decodePersistedRow = Schema.decodeUnknownEffect(PersistedRowSchema, {
+  onExcessProperty: "error",
+})
 
 const decodeEncodedState = (encoded: string) =>
   Schema.decodeEffect(EncodedStateCodec)(encoded).pipe(
@@ -180,7 +176,11 @@ const runWriteStatement = (
   values: ReadonlyArray<unknown>,
 ): Effect.Effect<number, ChatSessionStoreUnavailable> =>
   Effect.tryPromise({
-    try: () => database.prepare(query).bind(...values).run(),
+    try: () =>
+      database
+        .prepare(query)
+        .bind(...values)
+        .run(),
     catch: writeUnavailable,
   }).pipe(
     Effect.flatMap((result) =>
@@ -197,7 +197,10 @@ const readFirstRow = (
 ): Effect.Effect<unknown | null, ChatSessionStoreUnavailable> =>
   Effect.tryPromise({
     try: () =>
-      database.prepare(SelectSnapshotSql).bind(...values).first(),
+      database
+        .prepare(SelectSnapshotSql)
+        .bind(...values)
+        .first(),
     catch: loadUnavailable,
   })
 
@@ -235,7 +238,10 @@ const loadSnapshot = (
   database: D1ChatSessionDatabase,
   scope: ChatSessionScope,
   retention: ChatSessionRetentionOptions | undefined,
-): Effect.Effect<unknown | null, ChatSessionStoreUnavailable | ChatSessionExpired> =>
+): Effect.Effect<
+  unknown | null,
+  ChatSessionStoreUnavailable | ChatSessionExpired
+> =>
   Effect.gen(function* () {
     const identityValues = [
       scope.namespace,
@@ -243,16 +249,21 @@ const loadSnapshot = (
       scope.chat,
       scope.version,
     ] as const
+
     const rawRow = yield* readFirstRow(database, identityValues)
+
     if (rawRow === null) {
       return null
     }
+
     const row = yield* decodePersistedRow(rawRow).pipe(
       Effect.mapError(loadUnavailable),
     )
+
     if (row.lifecycle === "expired") {
-      return yield* Effect.fail(new ChatSessionExpired({ reason: "expired" }))
+      return yield* new ChatSessionExpired({ reason: "expired" })
     }
+
     if (
       retention !== undefined &&
       matchesRetentionPrefix(
@@ -262,26 +273,34 @@ const loadSnapshot = (
     ) {
       const now = yield* Clock.currentTimeMillis
       const cutoff = now - retention.retentionMillis
+
       if (row.updated_at <= cutoff) {
-        const expired = yield* runWriteStatement(
-          database,
-          GuardedExpirySql,
-          [...identityValues, row.revision, row.updated_at, now],
-        )
+        const expired = yield* runWriteStatement(database, GuardedExpirySql, [
+          ...identityValues,
+          row.revision,
+          row.updated_at,
+          now,
+        ])
+
         if (expired === 1) {
-          return yield* Effect.fail(new ChatSessionExpired({ reason: "expired" }))
+          return yield* new ChatSessionExpired({ reason: "expired" })
         }
+
         // The guarded transition lost a race: classify the winning row.
         const refreshedRow = yield* readFirstRow(database, identityValues)
+
         if (refreshedRow === null) {
           return null
         }
+
         const refreshed = yield* decodePersistedRow(refreshedRow).pipe(
           Effect.mapError(loadUnavailable),
         )
+
         if (refreshed.lifecycle === "expired") {
-          return yield* Effect.fail(new ChatSessionExpired({ reason: "expired" }))
+          return yield* new ChatSessionExpired({ reason: "expired" })
         }
+
         return yield* decodeSnapshotPayload(
           refreshed.revision,
           refreshed.state,
@@ -289,11 +308,8 @@ const loadSnapshot = (
         )
       }
     }
-    return yield* decodeSnapshotPayload(
-      row.revision,
-      row.state,
-      row.messages,
-    )
+
+    return yield* decodeSnapshotPayload(row.revision, row.state, row.messages)
   })
 
 /**
@@ -303,16 +319,14 @@ const loadSnapshot = (
 const parseRetention = (
   retention: ChatSessionRetentionOptions,
 ): ChatSessionRetentionOptions =>
-  Schema.decodeUnknownSync(ChatSessionRetentionOptionsSchema)(retention, {
+  Schema.decodeSync(ChatSessionRetentionOptionsSchema)(retention, {
     onExcessProperty: "error",
   })
 
 const parseOptionalRetention = (
   retention: ChatSessionRetentionOptions | undefined,
 ): ChatSessionRetentionOptions | undefined =>
-  retention === undefined
-    ? undefined
-    : parseRetention(retention)
+  retention === undefined ? undefined : parseRetention(retention)
 
 /**
  * Build a durable structured chat session store on one Cloudflare D1
@@ -334,16 +348,17 @@ export const makeD1ChatSessionStore = (
   const retention = parseOptionalRetention(options?.retention)
 
   return {
-    load: (scope: ChatSessionScope) =>
-      loadSnapshot(database, scope, retention),
+    load: (scope: ChatSessionScope) => loadSnapshot(database, scope, retention),
     replace: (input: ReplaceChatSessionInput) =>
       Effect.gen(function* () {
         const encodedState = yield* Schema.encodeEffect(EncodedStateCodec)(
           input.state,
         ).pipe(Effect.mapError(writeUnavailable))
+
         const encodedMessages = yield* Schema.encodeEffect(
           EncodedMessagesCodec,
         )(input.messages).pipe(Effect.mapError(writeUnavailable))
+
         const updatedAt = yield* Clock.currentTimeMillis
 
         if (input.expectedRevision === null) {
@@ -360,20 +375,26 @@ export const makeD1ChatSessionStore = (
               updatedAt,
             ],
           )
+
           if (inserted !== 1) {
-            return yield* Effect.fail(conflict())
+            return yield* conflict()
           }
+
           return { revision: "1" }
         }
 
         if (!ExpectedRevisionPattern.test(input.expectedRevision)) {
-          return yield* Effect.fail(conflict())
+          return yield* conflict()
         }
+
         const expectedRevision = Number(input.expectedRevision)
+
         if (expectedRevision >= Number.MAX_SAFE_INTEGER) {
-          return yield* Effect.fail(conflict())
+          return yield* conflict()
         }
+
         const nextRevision = expectedRevision + 1
+
         const updated = yield* runWriteStatement(
           database,
           ReplaceAtRevisionSql,
@@ -389,9 +410,11 @@ export const makeD1ChatSessionStore = (
             expectedRevision,
           ],
         )
+
         if (updated !== 1) {
-          return yield* Effect.fail(conflict())
+          return yield* conflict()
         }
+
         return { revision: String(nextRevision) }
       }),
   }
@@ -413,6 +436,7 @@ export const cleanupExpiredD1ChatSessions = (
   retention: ChatSessionRetentionOptions,
 ): Effect.Effect<number, ChatSessionStoreUnavailable> => {
   const parsedRetention = parseRetention(retention)
+
   if (parsedRetention.expiringNamespacePrefixes.length === 0) {
     return Effect.succeed(0)
   }
@@ -427,14 +451,17 @@ export const cleanupExpiredD1ChatSessions = (
     )
     prefixValues.push(prefix.length, prefix)
   })
+
   const cutoffPlaceholder =
     parsedRetention.expiringNamespacePrefixes.length * 2 + 1
+
   const expiredAtPlaceholder = cutoffPlaceholder + 1
   const query = `${ExpireSnapshotSql}?${expiredAtPlaceholder} WHERE lifecycle = 'active' AND updated_at <= ?${cutoffPlaceholder} AND (${predicates.join(" OR ")})`
 
   return Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis
     const cutoff = now - parsedRetention.retentionMillis
+
     return yield* runWriteStatement(database, query, [
       ...prefixValues,
       cutoff,

@@ -41,6 +41,7 @@ export const createStructuredChatUserAnswerStore =
         if (Object.is(update, current)) {
           return
         }
+
         current = update
         notify()
       },
@@ -48,11 +49,13 @@ export const createStructuredChatUserAnswerStore =
         if (current === null) {
           return
         }
+
         current = null
         notify()
       },
       subscribe: (listener) => {
         listeners.add(listener)
+
         return () => {
           listeners.delete(listener)
         }
@@ -65,8 +68,4 @@ export const createStructuredChatUserAnswerStore =
 export const useStructuredChatUserAnswers = (
   store: StructuredChatUserAnswerStore,
 ): StructuredChatUserAnswerUpdate | null =>
-  useSyncExternalStore(
-    store.subscribe,
-    store.getSnapshot,
-    store.getSnapshot,
-  )
+  useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)

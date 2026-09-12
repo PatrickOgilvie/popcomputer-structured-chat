@@ -19,31 +19,36 @@ const migrationPath = join(
   "d1",
   "0001_structured_chat_sessions.sql",
 )
+
 const migrationSql = readFileSync(migrationPath, "utf8")
 
 // SAFETY: the store binds only identity text, JSON document strings, and
 // integer revisions/timestamps produced by its own strict encoders.
-const asSqliteBindings = (
-  values: ReadonlyArray<unknown>,
-): SQLQueryBindings[] => values as SQLQueryBindings[]
+const asSqliteBindings = (values: ReadonlyArray<unknown>): SQLQueryBindings[] =>
+  values as SQLQueryBindings[]
 
 /** Wrap one real SQLite database in the narrow D1 statement port. */
 const makeSqliteD1Database = (db: Database): D1ChatSessionDatabase => ({
   prepare: (query: string): D1ChatSessionStatement => {
     const statement = db.prepare(query)
+
     const bind = (...values: ReadonlyArray<unknown>) => {
       const executeFirst = () =>
         statement.get(...asSqliteBindings(values)) ?? null
+
       const executeRun = () => {
         const info = statement.run(...asSqliteBindings(values))
+
         return { meta: { changes: info.changes } }
       }
+
       return {
         bind,
         first: () => Promise.resolve(executeFirst()),
         run: () => Promise.resolve(executeRun()),
       }
     }
+
     return bind()
   },
 })
@@ -51,6 +56,7 @@ const makeSqliteD1Database = (db: Database): D1ChatSessionDatabase => ({
 const openMigratedDatabase = (): Database => {
   const db = new Database(":memory:")
   db.exec(migrationSql)
+
   return db
 }
 
@@ -71,14 +77,13 @@ const replacement = (
   messages: [],
 })
 
-const decodeSnapshot = Schema.decodeUnknownSync(
-  Session.SnapshotSchema,
-)
+const decodeSnapshot = Schema.decodeUnknownSync(Session.SnapshotSchema)
 
 const expectLoadUnavailable = (
   result: Result.Result<unknown, Session.StoreUnavailable | Session.Expired>,
 ) => {
   expect(Result.isFailure(result)).toBe(true)
+
   if (Result.isFailure(result)) {
     expect(result.failure).toBeInstanceOf(Session.StoreUnavailable)
     expect(result.failure.reason).toBe("load_failed")
@@ -90,10 +95,41 @@ const countRows = (db: Database): number => {
   const row = db
     .prepare("SELECT COUNT(*) AS total FROM structured_chat_sessions")
     .get() as { total: number }
+
   return row.total
 }
 
 describe("makeD1ChatSessionStore", () => {
+  test("round-trips observed speech provenance through SQL JSON storage", async () => {
+    const db = openMigratedDatabase()
+
+    try {
+      const store = makeD1ChatSessionStore(makeSqliteD1Database(db))
+
+      const input: Session.ReplaceInput = {
+        ...replacement(null, "observed"),
+        messages: [
+          Session.Message.observed({
+            role: "user",
+            content: "history",
+            batchId: "batch",
+            id: "speech",
+          }),
+        ],
+      }
+
+      await Effect.runPromise(store.replace(input))
+
+      const snapshot = decodeSnapshot(
+        await Effect.runPromise(store.load(scope)),
+      )
+
+      expect(snapshot.messages).toEqual(input.messages)
+    } finally {
+      db.close()
+    }
+  })
+
   test.each([
     ["an empty prefix", [""]],
     ["a non-namespace character", ["tenant*"]],
@@ -104,34 +140,37 @@ describe("makeD1ChatSessionStore", () => {
   ])("rejects retention with %s", (_name, expiringNamespacePrefixes) => {
     const db = openMigratedDatabase()
     const adapter = makeSqliteD1Database(db)
+
     const retention = {
       expiringNamespacePrefixes,
       retentionMillis: 1_000,
     }
 
-    expect(() =>
-      makeD1ChatSessionStore(adapter, { retention }),
-    ).toThrow()
-    expect(() =>
-      cleanupExpiredD1ChatSessions(adapter, retention),
-    ).toThrow()
+    expect(() => makeD1ChatSessionStore(adapter, { retention })).toThrow()
+    expect(() => cleanupExpiredD1ChatSessions(adapter, retention)).toThrow()
   })
 
   test("copies parsed retention prefixes at construction", async () => {
     const db = openMigratedDatabase()
     const prefixes = ["account:"]
+
     const store = makeD1ChatSessionStore(makeSqliteD1Database(db), {
       retention: {
         expiringNamespacePrefixes: prefixes,
         retentionMillis: 1_000,
       },
     })
+
     prefixes[0] = "other:"
 
     await Effect.runPromise(store.replace(replacement(null, "expired")))
     db.exec("UPDATE structured_chat_sessions SET updated_at = 1000")
 
-    expect(Result.isFailure(await Effect.runPromise(Effect.result(store.load(scope))))).toBe(true)
+    expect(
+      Result.isFailure(
+        await Effect.runPromise(Effect.result(store.load(scope))),
+      ),
+    ).toBe(true)
   })
 
   test("creates once and round-trips the snapshot at revision '1'", async () => {
@@ -141,6 +180,7 @@ describe("makeD1ChatSessionStore", () => {
     const created = await Effect.runPromise(
       store.replace(replacement(null, "initial")),
     )
+
     expect(created).toEqual({ revision: "1" })
 
     const loaded = await Effect.runPromise(store.load(scope))
@@ -158,10 +198,9 @@ describe("makeD1ChatSessionStore", () => {
     const attempts = await Effect.runPromise(
       Effect.all(
         ["first", "second"].map((writer) =>
-          store.replace(replacement(null, writer)).pipe(
-            Effect.as(writer),
-            Effect.result,
-          ),
+          store
+            .replace(replacement(null, writer))
+            .pipe(Effect.as(writer), Effect.result),
         ),
         { concurrency: 2 },
       ),
@@ -184,15 +223,19 @@ describe("makeD1ChatSessionStore", () => {
     const store = makeD1ChatSessionStore(makeSqliteD1Database(db))
 
     await Effect.runPromise(store.replace(replacement(null, "initial")))
+
     const winnerReplacement = await Effect.runPromise(
       store.replace(replacement("1", "winner")),
     )
+
     expect(winnerReplacement).toEqual({ revision: "2" })
 
     const stale = await Effect.runPromise(
       Effect.result(store.replace(replacement("1", "stale"))),
     )
+
     expect(Result.isFailure(stale)).toBe(true)
+
     if (Result.isFailure(stale)) {
       expect(stale.failure).toBeInstanceOf(Session.Conflict)
     }
@@ -207,49 +250,56 @@ describe("makeD1ChatSessionStore", () => {
     const badJsonState = `
 INSERT INTO structured_chat_sessions (namespace, session_id, chat, version, revision, state, messages, updated_at)
 VALUES ('account:1', 'session:1', 'd1_store_test', 1, 1, '{oops', '[]', 1)`
+
     const dbBadJson = openMigratedDatabase()
     dbBadJson.exec(badJsonState)
+
     const badJsonResult = await Effect.runPromise(
       Effect.result(
-        makeD1ChatSessionStore(makeSqliteD1Database(dbBadJson)).load(
-          scope,
-        ),
+        makeD1ChatSessionStore(makeSqliteD1Database(dbBadJson)).load(scope),
       ),
     )
+
     expectLoadUnavailable(badJsonResult)
 
     const dbExcess = openMigratedDatabase()
     const baseDatabase = makeSqliteD1Database(dbExcess)
     const cleanStore = makeD1ChatSessionStore(baseDatabase)
     await Effect.runPromise(cleanStore.replace(replacement(null, "clean")))
+
     const corruptingDatabase: D1ChatSessionDatabase = {
       prepare: (query) => {
         const baseStatement = baseDatabase.prepare(query)
         let bound: D1ChatSessionStatement = baseStatement
+
         const decorated: D1ChatSessionStatement = {
           bind: (...values) => {
             bound = baseStatement.bind(...values)
+
             return decorated
           },
           first: async () => {
             const row = await bound.first()
+
             if (row === null) {
               return null
             }
+
             // Deliberately injecting an unexpected column value to prove
             // strict row parsing rejects excess properties.
             return Object.assign({}, row, { legacy_flag: 1 })
           },
           run: () => bound.run(),
         }
+
         return decorated
       },
     }
+
     const excessResult = await Effect.runPromise(
-      Effect.result(
-        makeD1ChatSessionStore(corruptingDatabase).load(scope),
-      ),
+      Effect.result(makeD1ChatSessionStore(corruptingDatabase).load(scope)),
     )
+
     expectLoadUnavailable(excessResult)
 
     const dbZeroRevision = openMigratedDatabase()
@@ -258,13 +308,15 @@ VALUES ('account:1', 'session:1', 'd1_store_test', 1, 1, '{oops', '[]', 1)`
 INSERT INTO structured_chat_sessions (namespace, session_id, chat, version, revision, state, messages, updated_at)
 VALUES ('account:1', 'session:1', 'd1_store_test', 1, 0, '{}', '[]', 1)`)
     dbZeroRevision.exec("PRAGMA ignore_check_constraints = OFF")
+
     const zeroRevisionResult = await Effect.runPromise(
       Effect.result(
-        makeD1ChatSessionStore(
-          makeSqliteD1Database(dbZeroRevision),
-        ).load(scope),
+        makeD1ChatSessionStore(makeSqliteD1Database(dbZeroRevision)).load(
+          scope,
+        ),
       ),
     )
+
     expectLoadUnavailable(zeroRevisionResult)
   })
 
@@ -274,9 +326,7 @@ VALUES ('account:1', 'session:1', 'd1_store_test', 1, 0, '{}', '[]', 1)`)
     const store = makeD1ChatSessionStore(adapter)
 
     await Effect.runPromise(store.replace(replacement(null, "aged")))
-    db.exec(
-      "UPDATE structured_chat_sessions SET updated_at = 1000",
-    )
+    db.exec("UPDATE structured_chat_sessions SET updated_at = 1000")
 
     const removed = await Effect.runPromise(
       cleanupExpiredD1ChatSessions(adapter, {
@@ -294,29 +344,60 @@ VALUES ('account:1', 'session:1', 'd1_store_test', 1, 0, '{}', '[]', 1)`)
   test("expires a session permanently and erases its snapshot", async () => {
     const db = openMigratedDatabase()
     const adapter = makeSqliteD1Database(db)
+
     const store = makeD1ChatSessionStore(adapter, {
-      retention: { expiringNamespacePrefixes: ["account:"], retentionMillis: 1_000 },
+      retention: {
+        expiringNamespacePrefixes: ["account:"],
+        retentionMillis: 1_000,
+      },
     })
+
     await Effect.runPromise(store.replace(replacement(null, "private")))
     db.exec("UPDATE structured_chat_sessions SET updated_at = 1000")
     const expired = await Effect.runPromise(Effect.result(store.load(scope)))
     expect(Result.isFailure(expired)).toBe(true)
+
     if (Result.isFailure(expired)) {
       expect(expired.failure._tag).toBe("ChatSessionExpired")
     }
+
     expect(countRows(db)).toBe(1)
-    expect(db.prepare("SELECT lifecycle, revision, state, messages, updated_at FROM structured_chat_sessions").get()).toEqual({
-      lifecycle: "expired", revision: null, state: null, messages: null, updated_at: null,
+    expect(
+      db
+        .prepare(
+          "SELECT lifecycle, revision, state, messages, updated_at FROM structured_chat_sessions",
+        )
+        .get(),
+    ).toEqual({
+      lifecycle: "expired",
+      revision: null,
+      state: null,
+      messages: null,
+      updated_at: null,
     })
+
     for (const expectedRevision of [null, "1"]) {
-      const retry = await Effect.runPromise(Effect.result(store.replace(replacement(expectedRevision, "resurrected"))))
+      const retry = await Effect.runPromise(
+        Effect.result(
+          store.replace(replacement(expectedRevision, "resurrected")),
+        ),
+      )
+
       expect(Result.isFailure(retry)).toBe(true)
-      if (Result.isFailure(retry)) expect(retry.failure).toBeInstanceOf(Session.Conflict)
+
+      if (Result.isFailure(retry))
+        expect(retry.failure).toBeInstanceOf(Session.Conflict)
     }
+
     // Disabling retention cannot make a terminal identity available again.
-    const reload = await Effect.runPromise(Effect.result(makeD1ChatSessionStore(adapter).load(scope)))
+    const reload = await Effect.runPromise(
+      Effect.result(makeD1ChatSessionStore(adapter).load(scope)),
+    )
+
     expect(Result.isFailure(reload)).toBe(true)
-    if (Result.isFailure(reload)) expect(reload.failure._tag).toBe("ChatSessionExpired")
+
+    if (Result.isFailure(reload))
+      expect(reload.failure._tag).toBe("ChatSessionExpired")
   })
 
   test("a same-millisecond refresh wins against an observed expiry revision", async () => {
@@ -326,81 +407,168 @@ VALUES ('account:1', 'session:1', 'd1_store_test', 1, 0, '{}', '[]', 1)`)
     await Effect.runPromise(store.replace(replacement(null, "old")))
     db.exec("UPDATE structured_chat_sessions SET updated_at = 1000")
     let refreshed = false
+
     const racingAdapter: D1ChatSessionDatabase = {
       prepare: (query) => {
         const statement = adapter.prepare(query)
-        const bind = (...values: ReadonlyArray<unknown>): D1ChatSessionStatement => {
+
+        const bind = (
+          ...values: ReadonlyArray<unknown>
+        ): D1ChatSessionStatement => {
           const bound = statement.bind(...values)
+
           return {
             bind,
             first: async () => {
               const observed = await bound.first()
+
               if (!refreshed) {
                 refreshed = true
                 // Commit a competing revision without advancing the millisecond.
-                db.exec(`UPDATE structured_chat_sessions SET revision = 2, state = '{"writer":"winner"}'`)
+                db.exec(
+                  `UPDATE structured_chat_sessions SET revision = 2, state = '{"writer":"winner"}'`,
+                )
               }
+
               return observed
             },
             run: () => bound.run(),
           }
         }
+
         return bind()
       },
     }
+
     const racingStore = makeD1ChatSessionStore(racingAdapter, {
-      retention: { expiringNamespacePrefixes: ["account:"], retentionMillis: 1_000 },
+      retention: {
+        expiringNamespacePrefixes: ["account:"],
+        retentionMillis: 1_000,
+      },
     })
+
     const loaded = await Effect.runPromise(racingStore.load(scope))
-    expect(decodeSnapshot(loaded)).toMatchObject({ revision: "2", state: { writer: "winner" } })
+    expect(decodeSnapshot(loaded)).toMatchObject({
+      revision: "2",
+      state: { writer: "winner" },
+    })
     expect(countRows(db)).toBe(1)
   })
 
   test("expired chat IDs stop before model and tool execution; a new ID gets a new command identity", async () => {
     const db = openMigratedDatabase()
+
     const store = makeD1ChatSessionStore(makeSqliteD1Database(db), {
-      retention: { expiringNamespacePrefixes: ["account:"], retentionMillis: 1_000 },
+      retention: {
+        expiringNamespacePrefixes: ["account:"],
+        retentionMillis: 1_000,
+      },
     })
+
     const commandIds: string[] = []
     let modelCalls = 0
     let queries = 0
+
     const Edit = Tool.command({
-      name: "edit", description: "Edit the draft.", input: Schema.Struct({}),
-      execute: (_, { commandId }) => Effect.sync(() => { commandIds.push(commandId); return { edited: true } }),
+      name: "edit",
+      description: "Edit the draft.",
+      input: Schema.Struct({}),
+      execute: (_, { commandId }) =>
+        Effect.sync(() => {
+          commandIds.push(commandId)
+
+          return { edited: true }
+        }),
     })
+
     const Inspect = Tool.define({
-      name: "inspect", description: "Inspect the draft.", input: Schema.Struct({}),
-      execute: () => Effect.sync(() => { queries += 1; return { inspected: true } }),
+      name: "inspect",
+      description: "Inspect the draft.",
+      input: Schema.Struct({}),
+      execute: () =>
+        Effect.sync(() => {
+          queries += 1
+
+          return { inspected: true }
+        }),
     })
+
     const definition = Chat.define({
-      name: scope.chat, version: scope.version,
-      stages: [Stage.interact({ name: "author", instructions: ["Edit the draft."], tools: [Edit, Inspect] })],
+      name: scope.chat,
+      version: scope.version,
+      stages: [
+        Stage.interact({
+          name: "author",
+          instructions: ["Edit the draft."],
+          tools: [Edit, Inspect],
+        }),
+      ],
       explorations: [Inspect],
     })
-    const live = Layer.mergeAll(Layer.succeed(Session.Store, store), Layer.succeed(Model.Service, {
-      requestTool: () => Effect.sync(() => { modelCalls += 1; return { name: "edit", arguments: {} } }),
-    }), TestClock.layer())
-    await Effect.runPromise(Effect.gen(function* () {
-      yield* TestClock.setTime(1_000)
-      const first = yield* Chat.turn(definition, { namespace: scope.namespace, sessionId: scope.sessionId, message: "Edit it" })
-      yield* TestClock.adjust(1_000)
-      for (const expectedRevision of [undefined, first.revision]) {
-        const expired = yield* Effect.result(Chat.turn(definition, {
-          namespace: scope.namespace, sessionId: scope.sessionId, expectedRevision, message: "Edit again",
-        }))
-        expect(Result.isFailure(expired)).toBe(true)
-        if (Result.isFailure(expired)) expect(expired.failure).toBeInstanceOf(Session.Expired)
-      }
-      const explored = yield* Effect.result(Chat.explore(definition, {
-        namespace: scope.namespace, sessionId: scope.sessionId, call: { name: "inspect", arguments: {} },
-      }))
-      expect(Result.isFailure(explored)).toBe(true)
-      if (Result.isFailure(explored)) expect(explored.failure).toBeInstanceOf(Session.Expired)
-      expect(modelCalls).toBe(1)
-      expect(commandIds).toHaveLength(1)
-      expect(queries).toBe(0)
-      yield* Chat.turn(definition, { namespace: scope.namespace, sessionId: "new-session", message: "Edit it" })
-    }).pipe(Effect.provide(live)))
+
+    const live = Layer.mergeAll(
+      Layer.succeed(Session.Store, store),
+      Layer.succeed(Model.Service, {
+        requestTool: () =>
+          Effect.sync(() => {
+            modelCalls += 1
+
+            return { name: "edit", arguments: {} }
+          }),
+      }),
+      TestClock.layer(),
+    )
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(1_000)
+
+        const first = yield* Chat.turn(definition, {
+          namespace: scope.namespace,
+          sessionId: scope.sessionId,
+          message: "Edit it",
+        })
+
+        yield* TestClock.adjust(1_000)
+
+        for (const expectedRevision of [undefined, first.revision]) {
+          const expired = yield* Effect.result(
+            Chat.turn(definition, {
+              namespace: scope.namespace,
+              sessionId: scope.sessionId,
+              expectedRevision,
+              message: "Edit again",
+            }),
+          )
+
+          expect(Result.isFailure(expired)).toBe(true)
+
+          if (Result.isFailure(expired))
+            expect(expired.failure).toBeInstanceOf(Session.Expired)
+        }
+
+        const explored = yield* Effect.result(
+          Chat.explore(definition, {
+            namespace: scope.namespace,
+            sessionId: scope.sessionId,
+            call: { name: "inspect", arguments: {} },
+          }),
+        )
+
+        expect(Result.isFailure(explored)).toBe(true)
+
+        if (Result.isFailure(explored))
+          expect(explored.failure).toBeInstanceOf(Session.Expired)
+        expect(modelCalls).toBe(1)
+        expect(commandIds).toHaveLength(1)
+        expect(queries).toBe(0)
+        yield* Chat.turn(definition, {
+          namespace: scope.namespace,
+          sessionId: "new-session",
+          message: "Edit it",
+        })
+      }).pipe(Effect.provide(live)),
+    )
     expect(commandIds).toHaveLength(2)
     expect(commandIds[0]).not.toBe(commandIds[1])
   })
@@ -408,42 +576,85 @@ VALUES ('account:1', 'session:1', 'd1_store_test', 1, 0, '{}', '[]', 1)`)
   test("cleanup during an admitted command makes its final replacement conflict", async () => {
     const db = openMigratedDatabase()
     const adapter = makeSqliteD1Database(db)
-    const retention = { expiringNamespacePrefixes: ["account:"], retentionMillis: 1_000 }
+
+    const retention = {
+      expiringNamespacePrefixes: ["account:"],
+      retentionMillis: 1_000,
+    }
+
     const store = makeD1ChatSessionStore(adapter, { retention })
     let executed = 0
+
     const Edit = Tool.command({
-      name: "edit", description: "Edit the draft.", input: Schema.Struct({}),
-      execute: () => Effect.gen(function* () {
-        executed += 1
-        if (executed === 2) {
-          // Time passes after admission while the application operation runs.
-          yield* TestClock.adjust(1_000)
-          expect(yield* cleanupExpiredD1ChatSessions(adapter, retention)).toBe(1)
-        }
-        return { edited: true }
-      }),
+      name: "edit",
+      description: "Edit the draft.",
+      input: Schema.Struct({}),
+      execute: () =>
+        Effect.gen(function* () {
+          executed += 1
+
+          if (executed === 2) {
+            // Time passes after admission while the application operation runs.
+            yield* TestClock.adjust(1_000)
+            expect(
+              yield* cleanupExpiredD1ChatSessions(adapter, retention),
+            ).toBe(1)
+          }
+
+          return { edited: true }
+        }),
     })
+
     const definition = Chat.define({
-      name: scope.chat, version: scope.version,
-      stages: [Stage.interact({ name: "author", instructions: ["Edit the draft."], tools: [Edit] })],
+      name: scope.chat,
+      version: scope.version,
+      stages: [
+        Stage.interact({
+          name: "author",
+          instructions: ["Edit the draft."],
+          tools: [Edit],
+        }),
+      ],
     })
+
     const live = Layer.mergeAll(
       Layer.succeed(Session.Store, store),
-      Layer.succeed(Model.Service, { requestTool: () => Effect.succeed({ name: "edit", arguments: {} }) }),
+      Layer.succeed(Model.Service, {
+        requestTool: () => Effect.succeed({ name: "edit", arguments: {} }),
+      }),
       TestClock.layer(),
     )
-    await Effect.runPromise(Effect.gen(function* () {
-      yield* TestClock.setTime(1_000)
-      const first = yield* Chat.turn(definition, { namespace: scope.namespace, sessionId: scope.sessionId, message: "Edit it" })
-      const second = yield* Effect.result(Chat.turn(definition, {
-        namespace: scope.namespace, sessionId: scope.sessionId, expectedRevision: first.revision, message: "Edit again",
-      }))
-      expect(Result.isFailure(second)).toBe(true)
-      if (Result.isFailure(second)) expect(second.failure).toBeInstanceOf(Session.Conflict)
-      const loaded = yield* Effect.result(store.load(scope))
-      expect(Result.isFailure(loaded)).toBe(true)
-      if (Result.isFailure(loaded)) expect(loaded.failure).toBeInstanceOf(Session.Expired)
-    }).pipe(Effect.provide(live)))
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(1_000)
+
+        const first = yield* Chat.turn(definition, {
+          namespace: scope.namespace,
+          sessionId: scope.sessionId,
+          message: "Edit it",
+        })
+
+        const second = yield* Effect.result(
+          Chat.turn(definition, {
+            namespace: scope.namespace,
+            sessionId: scope.sessionId,
+            expectedRevision: first.revision,
+            message: "Edit again",
+          }),
+        )
+
+        expect(Result.isFailure(second)).toBe(true)
+
+        if (Result.isFailure(second))
+          expect(second.failure).toBeInstanceOf(Session.Conflict)
+        const loaded = yield* Effect.result(store.load(scope))
+        expect(Result.isFailure(loaded)).toBe(true)
+
+        if (Result.isFailure(loaded))
+          expect(loaded.failure).toBeInstanceOf(Session.Expired)
+      }).pipe(Effect.provide(live)),
+    )
     expect(executed).toBe(2)
     expect(countRows(db)).toBe(1)
   })
@@ -458,11 +669,13 @@ VALUES ('account:1', 'session:1', 'd1_store_test', 1, 0, '{}', '[]', 1)`)
       namespace: "tenant-a:1",
       sessionId: "expired-a",
     }
+
     const expiredB = {
       ...scope,
       namespace: "tenant-b:1",
       sessionId: "expired-b",
     }
+
     const freshA = { ...scope, sessionId: "fresh-a" }
     await Effect.runPromise(
       store.replace({
@@ -500,15 +713,22 @@ VALUES ('account:1', 'session:1', 'd1_store_test', 1, 0, '{}', '[]', 1)`)
     )
 
     expect(removed).toBe(1)
-    expect(await Effect.runPromise(cleanupExpiredD1ChatSessions(adapter, {
-      expiringNamespacePrefixes: ["tenant-a"], retentionMillis: 1_000,
-    }))).toBe(0)
+    expect(
+      await Effect.runPromise(
+        cleanupExpiredD1ChatSessions(adapter, {
+          expiringNamespacePrefixes: ["tenant-a"],
+          retentionMillis: 1_000,
+        }),
+      ),
+    ).toBe(0)
+
     // SAFETY: the migration guarantees these selected columns on every row.
     const remaining = db
       .prepare(
         "SELECT session_id FROM structured_chat_sessions WHERE lifecycle = 'active' ORDER BY session_id",
       )
       .all() as Array<{ session_id: string }>
+
     expect(remaining.map((row) => row.session_id)).toEqual([
       "expired-b",
       "fresh-a",
@@ -528,7 +748,9 @@ VALUES ('account:1', 'session:1', 'd1_store_test', 1, 0, '{}', '[]', 1)`)
       const attempt = await Effect.runPromise(
         Effect.result(store.replace(replacement(expectedRevision, "giant"))),
       )
+
       expect(Result.isFailure(attempt)).toBe(true)
+
       if (Result.isFailure(attempt)) {
         expect(attempt.failure).toBeInstanceOf(Session.Conflict)
       }
@@ -545,11 +767,9 @@ describe("./d1 package entry point", () => {
   test("declares and resolves the dedicated export", () => {
     // SAFETY: this repository owns the package.json shape being asserted.
     const packageJson = JSON.parse(
-      readFileSync(
-        join(import.meta.dir, "..", "package.json"),
-        "utf8",
-      ),
+      readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"),
     ) as { exports: Record<string, { import: string }> }
+
     const d1Export = packageJson.exports["./d1"]
 
     expect(d1Export?.import).toBe("./dist/integrations/d1.js")
@@ -558,6 +778,7 @@ describe("./d1 package entry point", () => {
       "@popcomputer/structured-chat/d1",
       import.meta.dir,
     )
+
     expect(resolved.replace(/\\/gu, "/")).toMatch(
       /dist\/integrations\/d1\.js$/u,
     )

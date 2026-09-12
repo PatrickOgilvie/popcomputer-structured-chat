@@ -5,9 +5,7 @@ describe("CloudflareAI.classifyError", () => {
   test.each([2017, "2017"])(
     "classifies a numeric or string 2017 code as blocked (%p)",
     (code) => {
-      expect(CloudflareAI.classifyError({ code })).toBe(
-        "response_blocked",
-      )
+      expect(CloudflareAI.classifyError({ code })).toBe("response_blocked")
     },
   )
 
@@ -16,39 +14,31 @@ describe("CloudflareAI.classifyError", () => {
       cause: { cause: { cause: { code: 2017 } } },
     }
 
-    expect(CloudflareAI.classifyError(cause)).toBe(
-      "response_blocked",
-    )
+    expect(CloudflareAI.classifyError(cause)).toBe("response_blocked")
   })
 
   test("requires the security-configurations phrase beside a message-form 2017", () => {
     const blocked = new Error(
       "Request failed with code 2017: response blocked due to security configurations",
     )
+
     const unannotated = new Error("Request failed with code 2017")
 
-    expect(CloudflareAI.classifyError(blocked)).toBe(
-      "response_blocked",
-    )
-    expect(CloudflareAI.classifyError(unannotated)).toBe(
-      "request_failed",
-    )
+    expect(CloudflareAI.classifyError(blocked)).toBe("response_blocked")
+    expect(CloudflareAI.classifyError(unannotated)).toBe("request_failed")
   })
 
   test("walks at most four linked causes", () => {
     const atDepthFour = {
       cause: { cause: { cause: { code: 2017 } } },
     }
+
     const beyondDepthFour = {
       cause: { cause: { cause: { cause: { code: 2017 } } } },
     }
 
-    expect(CloudflareAI.classifyError(atDepthFour)).toBe(
-      "response_blocked",
-    )
-    expect(CloudflareAI.classifyError(beyondDepthFour)).toBe(
-      "request_failed",
-    )
+    expect(CloudflareAI.classifyError(atDepthFour)).toBe("response_blocked")
+    expect(CloudflareAI.classifyError(beyondDepthFour)).toBe("request_failed")
   })
 
   test("terminates on cyclic cause chains", () => {
@@ -63,12 +53,8 @@ describe("CloudflareAI.classifyError", () => {
       get: () => firstCycleNode,
     })
 
-    expect(CloudflareAI.classifyError(cyclic)).toBe(
-      "request_failed",
-    )
-    expect(CloudflareAI.classifyError(firstCycleNode)).toBe(
-      "request_failed",
-    )
+    expect(CloudflareAI.classifyError(cyclic)).toBe("request_failed")
+    expect(CloudflareAI.classifyError(firstCycleNode)).toBe("request_failed")
   })
 
   test("classifies unrelated failures as request failures", () => {
@@ -83,9 +69,7 @@ describe("CloudflareAI.classifyError", () => {
     ]
 
     for (const cause of causes) {
-      expect(CloudflareAI.classifyError(cause)).toBe(
-        "request_failed",
-      )
+      expect(CloudflareAI.classifyError(cause)).toBe("request_failed")
     }
   })
 })
@@ -112,26 +96,16 @@ describe("CloudflareAI.errorCode", () => {
       cause: new Error("code: 3003"),
     }
 
-    expect(CloudflareAI.errorCode(fallsThroughToChain)).toBe(
-      "3003",
-    )
+    expect(CloudflareAI.errorCode(fallsThroughToChain)).toBe("3003")
   })
 
   test("extracts documented codes from error messages", () => {
+    expect(CloudflareAI.errorCode(new Error('{"code": 3006}'))).toBe("3006")
+    expect(CloudflareAI.errorCode(new Error("code=8007"))).toBe("8007")
     expect(
-      CloudflareAI.errorCode(new Error('{"code": 3006}')),
-    ).toBe("3006")
-    expect(CloudflareAI.errorCode(new Error("code=8007"))).toBe(
-      "8007",
-    )
-    expect(
-      CloudflareAI.errorCode(
-        new Error("CODE : 5016 while processing"),
-      ),
+      CloudflareAI.errorCode(new Error("CODE : 5016 while processing")),
     ).toBe("5016")
-    expect(
-      CloudflareAI.errorCode(new Error("code: 1234")),
-    ).toBeUndefined()
+    expect(CloudflareAI.errorCode(new Error("code: 1234"))).toBeUndefined()
   })
 
   test("walks the cause chain for codes", () => {

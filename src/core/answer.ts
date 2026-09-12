@@ -1,4 +1,5 @@
-import { cast, Effect, Pipeable, Schema } from "effect"
+import type { Effect } from "effect"
+import { Data, Predicate, cast, Pipeable, Schema } from "effect"
 import type { JsonValue } from "./json-value.js"
 import type {
   ChoiceQuestion,
@@ -22,12 +23,12 @@ const AnswerDescriptionSchema = Schema.Trimmed.check(
   Schema.isMaxLength(1_000),
 )
 
-type AnswerPresentation =
-  | { readonly _tag: "Hidden" }
-  | {
-      readonly _tag: "VisibleToUser"
-      readonly label?: string
-    }
+type AnswerPresentation = Data.TaggedEnum<{
+  Hidden: {}
+  VisibleToUser: { readonly label?: string }
+}>
+
+const AnswerPresentation = Data.taggedEnum<AnswerPresentation>()
 
 const answerPresentation = Symbol(
   "@popcomputer/structured-chat/AnswerPresentation",
@@ -35,10 +36,7 @@ const answerPresentation = Symbol(
 
 const VisibleToUserOptionsSchema = Schema.Struct({
   label: Schema.optionalKey(
-    Schema.Trimmed.check(
-      Schema.isNonEmpty(),
-      Schema.isMaxLength(100),
-    ),
+    Schema.Trimmed.check(Schema.isNonEmpty(), Schema.isMaxLength(100)),
   ),
 })
 
@@ -55,9 +53,7 @@ export interface AnswerDefinitionContract extends Pipeable.Pipeable {
   readonly description: string
   readonly question: QuestionDefinitionContract
   readonly [answerPresentation]: AnswerPresentation
-  readonly validate?: (
-    value: never,
-  ) => Effect.Effect<void, unknown, unknown>
+  readonly validate?: (value: never) => Effect.Effect<void, unknown, unknown>
   readonly reject?: {
     readonly ask: FixedQuestion | ChoiceQuestion<unknown>
   }
@@ -80,9 +76,7 @@ export interface AnswerDefinition<
     value: ValueSchema["Type"],
   ) => Effect.Effect<void, Error, Requirements>
   readonly reject?: {
-    readonly ask:
-      | FixedQuestion
-      | ChoiceQuestion<ValueSchema["Type"]>
+    readonly ask: FixedQuestion | ChoiceQuestion<ValueSchema["Type"]>
   }
   readonly escape?: {
     readonly value: ValueSchema["Type"]
@@ -103,29 +97,27 @@ interface DefineAnswerBase<Value> {
 }
 
 /** Configuration for an answer accepted solely by its structural schema. */
-export interface DefineUnvalidatedAnswerInput<Value>
-  extends DefineAnswerBase<Value> {
+export interface DefineUnvalidatedAnswerInput<
+  Value,
+> extends DefineAnswerBase<Value> {
   readonly validate?: undefined
   readonly reject?: undefined
 }
 
 /** Configuration for Effect-native domain acceptance and deterministic retry. */
-export interface DefineValidatedAnswerInput<Value, Error, Requirements>
-  extends DefineAnswerBase<Value> {
-  readonly validate: (
-    value: Value,
-  ) => Effect.Effect<void, Error, Requirements>
+export interface DefineValidatedAnswerInput<
+  Value,
+  Error,
+  Requirements,
+> extends DefineAnswerBase<Value> {
+  readonly validate: (value: Value) => Effect.Effect<void, Error, Requirements>
   readonly reject: {
     readonly ask: FixedQuestion | ChoiceQuestion<Value>
   }
 }
 
 /** Configuration shared by all answer grounding modes. */
-export type DefineAnswerInput<
-  Value,
-  Error = never,
-  Requirements = never,
-> =
+export type DefineAnswerInput<Value, Error = never, Requirements = never> =
   | DefineUnvalidatedAnswerInput<Value>
   | DefineValidatedAnswerInput<Value, Error, Requirements>
 
@@ -144,9 +136,7 @@ interface AnswerDefinitionSeed<
     value: ValueSchema["Type"],
   ) => Effect.Effect<void, Error, Requirements>
   readonly reject?: {
-    readonly ask:
-      | FixedQuestion
-      | ChoiceQuestion<ValueSchema["Type"]>
+    readonly ask: FixedQuestion | ChoiceQuestion<ValueSchema["Type"]>
   }
   readonly escape?: {
     readonly value: ValueSchema["Type"]
@@ -159,12 +149,7 @@ const makeAnswer = <
   Error,
   Requirements,
 >(
-  seed: AnswerDefinitionSeed<
-    Mode,
-    ValueSchema,
-    Error,
-    Requirements
-  >,
+  seed: AnswerDefinitionSeed<Mode, ValueSchema, Error, Requirements>,
   presentation: AnswerPresentation,
 ): AnswerDefinition<Mode, ValueSchema, Error, Requirements> => {
   const answer = {
@@ -173,6 +158,7 @@ const makeAnswer = <
       return Pipeable.pipeArguments(this, arguments)
     },
   }
+
   Object.defineProperty(answer, answerPresentation, {
     value: presentation,
     enumerable: false,
@@ -193,13 +179,12 @@ export const readAnswerUserPresentation = (
   answer: AnswerDefinitionContract,
 ): { readonly label?: string } | undefined => {
   const presentation = answer[answerPresentation]
-  if (presentation._tag === "Hidden") {
+
+  if (!Predicate.isTagged(presentation, "VisibleToUser")) {
     return undefined
   }
 
-  return presentation.label === undefined
-    ? {}
-    : { label: presentation.label }
+  return presentation.label === undefined ? {} : { label: presentation.label }
 }
 
 const defineAnswer = <
@@ -210,24 +195,22 @@ const defineAnswer = <
 >(
   mode: Mode,
   schema: ValueSchema,
-  input: DefineAnswerInput<
-    ValueSchema["Type"],
-    Error,
-    Requirements
-  >,
+  input: DefineAnswerInput<ValueSchema["Type"], Error, Requirements>,
 ): AnswerDefinition<Mode, ValueSchema, Error, Requirements> => {
-  if (input.ask._tag === "ChoiceQuestion") {
+  if (Predicate.isTagged(input.ask, "ChoiceQuestion")) {
     for (const option of input.ask.options) {
       Schema.decodeSync(schema)(option.value)
     }
   }
-  if (input.ask._tag === "AdaptiveChoiceQuestion") {
+
+  if (Predicate.isTagged(input.ask, "AdaptiveChoiceQuestion")) {
     // A selected fallback label is later submitted as this answer's wire
     // value, so every label must decode against the answer schema.
     for (const label of input.ask.fallbackOptions) {
       Schema.decodeSync(schema)(label)
     }
   }
+
   if (input.reject?.ask._tag === "ChoiceQuestion") {
     for (const option of input.reject.ask.options) {
       Schema.decodeSync(schema)(option.value)
@@ -238,38 +221,43 @@ const defineAnswer = <
     _tag: "AnswerDefinition" as const,
     mode,
     schema,
-    description: Schema.decodeSync(AnswerDescriptionSchema)(
-      input.description,
-    ),
+    description: AnswerDescriptionSchema.make(input.description),
     question: input.ask,
   }
+
   if (input.escape === undefined) {
     return input.validate === undefined
-      ? makeAnswer(base, { _tag: "Hidden" })
-      : makeAnswer({
-          ...base,
-          validate: input.validate,
-          reject: input.reject,
-        }, { _tag: "Hidden" })
+      ? makeAnswer(base, AnswerPresentation.Hidden())
+      : makeAnswer(
+          {
+            ...base,
+            validate: input.validate,
+            reject: input.reject,
+          },
+          AnswerPresentation.Hidden(),
+        )
   }
 
   const escape = {
     value: Schema.decodeSync(Schema.toType(schema))(input.escape.value),
   }
+
   return input.validate === undefined
-    ? makeAnswer({ ...base, escape }, { _tag: "Hidden" })
-    : makeAnswer({
-        ...base,
-        escape,
-        validate: input.validate,
-        reject: input.reject,
-      }, { _tag: "Hidden" })
+    ? makeAnswer({ ...base, escape }, AnswerPresentation.Hidden())
+    : makeAnswer(
+        {
+          ...base,
+          escape,
+          validate: input.validate,
+          reject: input.reject,
+        },
+        AnswerPresentation.Hidden(),
+      )
 }
 
 /** Mark one JSON-encodable answer for inclusion in user-facing snapshots. */
-export const visibleToUser = (
-  options: VisibleToUserOptions = {},
-) =>
+export const visibleToUser =
+  (options: VisibleToUserOptions = {}) =>
   <
     Mode extends AnswerMode,
     ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
@@ -284,20 +272,18 @@ export const visibleToUser = (
       options,
       { onExcessProperty: "error" },
     )
+
     const presentation: AnswerPresentation =
       parsedOptions.label === undefined
-        ? { _tag: "VisibleToUser" }
-        : {
-            _tag: "VisibleToUser",
+        ? AnswerPresentation.VisibleToUser({})
+        : AnswerPresentation.VisibleToUser({
             label: parsedOptions.label,
-          }
+          })
 
     return makeAnswer(answer, presentation)
   }
 
-function semantic<
-  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
->(
+function semantic<ValueSchema extends Schema.ConstraintCodec<unknown, unknown>>(
   schema: ValueSchema,
   input: DefineUnvalidatedAnswerInput<ValueSchema["Type"]>,
 ): AnswerDefinition<"semantic", ValueSchema, never, never>
@@ -307,11 +293,7 @@ function semantic<
   Requirements,
 >(
   schema: ValueSchema,
-  input: DefineValidatedAnswerInput<
-    ValueSchema["Type"],
-    Error,
-    Requirements
-  >,
+  input: DefineValidatedAnswerInput<ValueSchema["Type"], Error, Requirements>,
 ): AnswerDefinition<"semantic", ValueSchema, Error, Requirements>
 function semantic<
   ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
@@ -319,18 +301,12 @@ function semantic<
   Requirements,
 >(
   schema: ValueSchema,
-  input: DefineAnswerInput<
-    ValueSchema["Type"],
-    Error,
-    Requirements
-  >,
+  input: DefineAnswerInput<ValueSchema["Type"], Error, Requirements>,
 ) {
   return defineAnswer("semantic", schema, input)
 }
 
-function explicit<
-  ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
->(
+function explicit<ValueSchema extends Schema.ConstraintCodec<unknown, unknown>>(
   schema: ValueSchema,
   input: DefineUnvalidatedAnswerInput<ValueSchema["Type"]>,
 ): AnswerDefinition<"explicit", ValueSchema, never, never>
@@ -340,11 +316,7 @@ function explicit<
   Requirements,
 >(
   schema: ValueSchema,
-  input: DefineValidatedAnswerInput<
-    ValueSchema["Type"],
-    Error,
-    Requirements
-  >,
+  input: DefineValidatedAnswerInput<ValueSchema["Type"], Error, Requirements>,
 ): AnswerDefinition<"explicit", ValueSchema, Error, Requirements>
 function explicit<
   ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
@@ -352,11 +324,7 @@ function explicit<
   Requirements,
 >(
   schema: ValueSchema,
-  input: DefineAnswerInput<
-    ValueSchema["Type"],
-    Error,
-    Requirements
-  >,
+  input: DefineAnswerInput<ValueSchema["Type"], Error, Requirements>,
 ) {
   return defineAnswer("explicit", schema, input)
 }
@@ -373,11 +341,7 @@ function confirmed<
   Requirements,
 >(
   schema: ValueSchema,
-  input: DefineValidatedAnswerInput<
-    ValueSchema["Type"],
-    Error,
-    Requirements
-  >,
+  input: DefineValidatedAnswerInput<ValueSchema["Type"], Error, Requirements>,
 ): AnswerDefinition<"confirmed", ValueSchema, Error, Requirements>
 function confirmed<
   ValueSchema extends Schema.ConstraintCodec<unknown, unknown>,
@@ -385,11 +349,7 @@ function confirmed<
   Requirements,
 >(
   schema: ValueSchema,
-  input: DefineAnswerInput<
-    ValueSchema["Type"],
-    Error,
-    Requirements
-  >,
+  input: DefineAnswerInput<ValueSchema["Type"], Error, Requirements>,
 ) {
   return defineAnswer("confirmed", schema, input)
 }

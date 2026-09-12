@@ -30,15 +30,17 @@ export interface ModelGuardCallContext extends ModelGuardContext {
 }
 
 /** Minimum runtime identity retained for every model-boundary guard. */
-export interface ModelGuardDefinitionContract
-  extends StructuredDefinition<"model_guard"> {
+export interface ModelGuardDefinitionContract extends StructuredDefinition<"model_guard"> {
   readonly _tag: "ModelGuard"
   readonly name: string
 }
 
 /** Composable policy checks around one structured model request. */
-export interface ModelGuard<Name extends string, Error, Requirements>
-  extends ModelGuardDefinitionContract {
+export interface ModelGuard<
+  Name extends string,
+  Error,
+  Requirements,
+> extends ModelGuardDefinitionContract {
   readonly name: Name
   readonly check: (
     context: ModelGuardContext,
@@ -66,25 +68,20 @@ export interface DefineModelGuardInput<
 /** Readonly tuple of optional guards applied to one model step. */
 export type ModelGuardTuple = ReadonlyArray<ModelGuardDefinitionContract>
 
-type ModelGuardErrorOf<Guard> = Guard extends ModelGuard<
-    infer _Name,
-    infer Error,
-    infer _Requirements
-  >
+type ModelGuardErrorOf<Guard> =
+  Guard extends ModelGuard<infer _Name, infer Error, infer _Requirements>
     ? Error
     : never
 
-type ModelGuardRequirementsOf<Guard> = Guard extends ModelGuard<
-    infer _Name,
-    infer _Error,
-    infer Requirements
-  >
+type ModelGuardRequirementsOf<Guard> =
+  Guard extends ModelGuard<infer _Name, infer _Error, infer Requirements>
     ? Requirements
     : never
 
 /** Failure union produced by a tuple of model guards. */
-export type ModelGuardError<Guards extends ModelGuardTuple> =
-  ModelGuardErrorOf<Guards[number]>
+export type ModelGuardError<Guards extends ModelGuardTuple> = ModelGuardErrorOf<
+  Guards[number]
+>
 
 /** Effect service union required by a tuple of model guards. */
 export type ModelGuardRequirements<Guards extends ModelGuardTuple> =
@@ -98,13 +95,14 @@ export const defineModelGuard = <
 >(
   definition: DefineModelGuardInput<Name, Error, Requirements>,
 ): ModelGuard<Name, Error, Requirements> => {
-  Schema.decodeSync(ModelGuardNameSchema)(definition.name)
+  ModelGuardNameSchema.make(definition.name)
 
   const base = {
     _tag: "ModelGuard",
     name: definition.name,
     check: definition.check,
   } as const
+
   return structuredDefinition("model_guard")(
     definition.checkCall === undefined
       ? base
@@ -146,23 +144,19 @@ const runGuardPhase = <Guards extends ModelGuardTuple>(
     guards,
     (guard) =>
       (run(runtimeModelGuard(guard)) ?? Effect.void).pipe(
-        Effect.withSpan(
-          "popcomputer.structured_chat.model_guard.check",
-          {
-            attributes: { guard: guard.name, phase },
-          },
-        ),
+        Effect.withSpan("popcomputer.structured_chat.model_guard.check", {
+          attributes: { guard: guard.name, phase },
+        }),
       ),
     { concurrency: 1, discard: true },
   )
 
   // SAFETY: guards run sequentially without recovering failures, so the
   // erased Effect has exactly the conditional error and requirement unions.
-  return Fn.cast<typeof execution, Effect.Effect<
-    void,
-    ModelGuardError<Guards>,
-    ModelGuardRequirements<Guards>
-  >>(execution)
+  return Fn.cast<
+    typeof execution,
+    Effect.Effect<void, ModelGuardError<Guards>, ModelGuardRequirements<Guards>>
+  >(execution)
 }
 
 /** @internal */
@@ -174,11 +168,7 @@ export const runModelGuards = <Guards extends ModelGuardTuple>(
   ModelGuardError<Guards>,
   ModelGuardRequirements<Guards>
 > => {
-  return runGuardPhase(
-    guards,
-    "before_model",
-    (guard) => guard.check(context),
-  )
+  return runGuardPhase(guards, "before_model", (guard) => guard.check(context))
 }
 
 /** @internal Run optional semantic checks on one parsed tool proposal. */
@@ -190,9 +180,7 @@ export const runModelCallGuards = <Guards extends ModelGuardTuple>(
   ModelGuardError<Guards>,
   ModelGuardRequirements<Guards>
 > => {
-  return runGuardPhase(
-    guards,
-    "before_tool",
-    (guard) => guard.checkCall?.(context),
+  return runGuardPhase(guards, "before_tool", (guard) =>
+    guard.checkCall?.(context),
   )
 }

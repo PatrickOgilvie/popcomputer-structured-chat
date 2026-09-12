@@ -72,11 +72,7 @@ const dateAcceptedState: DebugChatState = {
   stages: {
     launch_details: {
       accepted: {
-        launchDate: accepted(
-          launchDate,
-          1,
-          "Launch on 17 August 2026",
-        ),
+        launchDate: accepted(launchDate, 1, "Launch on 17 August 2026"),
       },
       asked: {
         launchDate: {
@@ -148,9 +144,11 @@ describe("Debug.inspect", () => {
 
     const collect = snapshot.stages[0]
     expect(collect?._tag).toBe("CollectStage")
+
     if (collect?._tag !== "CollectStage") {
       throw new Error("Expected a collect-stage debug projection")
     }
+
     expect(collect).toMatchObject({
       satisfiedFields: 0,
       totalFields: 2,
@@ -163,10 +161,7 @@ describe("Debug.inspect", () => {
     expect(collect.fields[1]?.question).toEqual({
       _tag: "ChoiceQuestion",
       text: "How much detail would you like?",
-      options: [
-        { label: "Brief response" },
-        { label: "Detailed response" },
-      ],
+      options: [{ label: "Brief response" }, { label: "Detailed response" }],
     })
     expect(JSON.stringify(collect.fields[1]?.question)).not.toContain(
       "brief_value",
@@ -195,13 +190,17 @@ describe("Debug.inspect", () => {
         },
       },
     }
+
     const askedSnapshot = await Effect.runPromise(
       Debug.inspect(DebugChat, askedState),
     )
+
     const askedStage = askedSnapshot.stages[0]
+
     if (askedStage?._tag !== "CollectStage") {
       throw new Error("Expected a collect-stage debug projection")
     }
+
     expect(askedStage.fields[0]?.state).toEqual({
       _tag: "Asked",
       issuedQuestion: {
@@ -213,10 +212,13 @@ describe("Debug.inspect", () => {
     const acceptedSnapshot = await Effect.runPromise(
       Debug.inspect(DebugChat, dateAcceptedState),
     )
+
     const acceptedStage = acceptedSnapshot.stages[0]
+
     if (acceptedStage?._tag !== "CollectStage") {
       throw new Error("Expected a collect-stage debug projection")
     }
+
     expect(acceptedStage.satisfiedFields).toBe(1)
     expect(acceptedStage.fields[0]?.state).toEqual({
       _tag: "Accepted",
@@ -238,10 +240,13 @@ describe("Debug.inspect", () => {
         evidence: "omit",
       }),
     )
+
     const collect = snapshot.stages[0]
+
     if (collect?._tag !== "CollectStage") {
       throw new Error("Expected a collect-stage debug projection")
     }
+
     expect(collect.fields[0]?.state).toEqual({
       _tag: "Accepted",
       value: "2026-08-17T12:00:00.000Z",
@@ -257,6 +262,7 @@ describe("Debug.inspect", () => {
     const current = await Effect.runPromise(
       Debug.inspect(DebugChat, launchDetailsCompleteState),
     )
+
     expect(current.currentStage).toEqual({
       index: 1,
       name: "approval",
@@ -271,6 +277,7 @@ describe("Debug.inspect", () => {
     const complete = await Effect.runPromise(
       Debug.inspect(DebugChat, completeState),
     )
+
     expect(complete.status).toBe("complete")
     expect(complete.currentStage).toEqual({
       index: 2,
@@ -294,6 +301,7 @@ describe("Debug.inspect", () => {
         }),
       },
     })
+
     const RepairSecond = Stage.collect({
       name: "repair_second",
       fields: {
@@ -303,18 +311,22 @@ describe("Debug.inspect", () => {
         }),
       },
     })
+
     const Repeat = Stage.tools({
       name: "repeat",
       instructions: ["Repeat safely."],
       tools: [FinishDebug],
     })
+
     const RepairChat = Chat.define({
       name: "repair_debug_chat",
       version: 1,
       stages: [RepairFirst, RepairSecond, Repeat],
       repair: Repair.standard(),
     })
+
     type RepairChatState = Chat.State<typeof RepairChat>
+
     const repairState: RepairChatState = {
       ...ChatTest.initialState(RepairChat),
       stages: {
@@ -332,6 +344,7 @@ describe("Debug.inspect", () => {
     const snapshot = await Effect.runPromise(
       Debug.inspect(RepairChat, repairState),
     )
+
     expect(snapshot.stages).toMatchObject([
       {
         _tag: "CollectStage",
@@ -359,11 +372,13 @@ describe("Debug.inspect", () => {
       input: Schema.Struct({}),
       execute: () => Effect.succeed({ submitted: true }),
     })
+
     const Submission = Stage.command({
       name: "submission",
       instructions: ["Submit once."],
       command: Submit,
     })
+
     const CommandChat = Chat.define({
       name: "command_debug_chat",
       version: 1,
@@ -373,6 +388,7 @@ describe("Debug.inspect", () => {
     const snapshot = await Effect.runPromise(
       Debug.inspect(CommandChat, ChatTest.initialState(CommandChat)),
     )
+
     expect(snapshot.currentStage.kind).toBe("command")
     expect(snapshot.stages).toEqual([
       {
@@ -396,12 +412,15 @@ describe("Debug.inspect", () => {
         }),
       },
     })
+
     const BigIntChat = Chat.define({
       name: "bigint_debug_chat",
       version: 1,
       stages: [BigIntDetails, Finish],
     })
+
     type BigIntChatState = Chat.State<typeof BigIntChat>
+
     const bigintState: BigIntChatState = {
       ...ChatTest.initialState(BigIntChat),
       stage: 1,
@@ -412,14 +431,15 @@ describe("Debug.inspect", () => {
         },
       },
     }
+
     const invalidValue = await Effect.runPromise(
       Effect.result(Debug.inspect(BigIntChat, bigintState)),
     )
+
     expect(Result.isFailure(invalidValue)).toBe(true)
+
     if (Result.isFailure(invalidValue)) {
-      expect(invalidValue.failure).toBeInstanceOf(
-        Debug.InvalidProjection,
-      )
+      expect(invalidValue.failure).toBeInstanceOf(Debug.InvalidProjection)
       expect(invalidValue.failure.reason).toBe("invalid_answer_value")
     }
 
@@ -429,6 +449,7 @@ describe("Debug.inspect", () => {
       { readonly evidence: "include"; readonly extra: boolean },
       Debug.InspectOptions
     >({ evidence: "include", extra: true })
+
     const invalidOptionResult = await Effect.runPromise(
       Effect.result(
         Debug.inspect(
@@ -438,7 +459,9 @@ describe("Debug.inspect", () => {
         ),
       ),
     )
+
     expect(Result.isFailure(invalidOptionResult)).toBe(true)
+
     if (Result.isFailure(invalidOptionResult)) {
       expect(invalidOptionResult.failure.reason).toBe("invalid_options")
     }

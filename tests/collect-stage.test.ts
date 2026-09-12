@@ -1,13 +1,6 @@
-import { Answer, Model, Question, Stage } from "../src/index.js"
+import { Answer, Model, Question, Session, Stage } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
-import {
-  Context,
-  Effect,
-  Layer,
-  Ref,
-  Result,
-  Schema,
-} from "effect"
+import { Context, Effect, Layer, Ref, Result, Schema } from "effect"
 
 const accepted = <Value>(
   value: Value,
@@ -88,10 +81,9 @@ const MultiAdaptiveBrief = Stage.collect({
   },
 })
 
-class BudgetTooLow extends Schema.TaggedError<BudgetTooLow>()(
-  "BudgetTooLow",
-  { minimum: Schema.Number },
-) {}
+class BudgetTooLow extends Schema.TaggedError<BudgetTooLow>()("BudgetTooLow", {
+  minimum: Schema.Number,
+}) {}
 
 class BudgetPolicy extends Context.Service<
   BudgetPolicy,
@@ -181,6 +173,7 @@ describe("Stage.collect", () => {
 
   test("runs validators in definition order and stops after the first rejection", async () => {
     const order: Array<string> = []
+
     const Ordered = Stage.collect({
       name: "ordered",
       fields: {
@@ -189,9 +182,7 @@ describe("Stage.collect", () => {
           ask: Question.fixed("First?"),
           validate: () =>
             Effect.sync(() => order.push("first")).pipe(
-              Effect.andThen(
-                Effect.fail(new BudgetTooLow({ minimum: 1 })),
-              ),
+              Effect.andThen(Effect.fail(new BudgetTooLow({ minimum: 1 }))),
             ),
           reject: { ask: Question.fixed("Please revise first.") },
         }),
@@ -206,6 +197,7 @@ describe("Stage.collect", () => {
         }),
       },
     })
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
@@ -225,15 +217,17 @@ describe("Stage.collect", () => {
       Effect.result(
         Ordered.run({
           state: Ordered.initialState,
-          messages: [Model.Message.user("one then two")],
+          messages: [Session.Message.submitted("one then two")],
         }).pipe(Effect.provide(model)),
       ),
     )
 
     expect(Result.isFailure(result)).toBe(true)
     expect(order).toEqual(["first"])
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Stage.AnswerValidationRejected)
+
       if (result.failure instanceof Stage.AnswerValidationRejected) {
         expect(result.failure.field).toBe("first")
       }
@@ -257,20 +251,23 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const policy = Layer.succeed(BudgetPolicy, { minimum: 5_000 })
 
     const result = await Effect.runPromise(
       Effect.result(
         BudgetBrief.run({
           state: BudgetBrief.initialState,
-          messages: [Model.Message.user("We can spend £2,000.")],
+          messages: [Session.Message.submitted("We can spend £2,000.")],
         }).pipe(Effect.provide(Layer.merge(model, policy))),
       ),
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Stage.AnswerValidationRejected)
+
       if (result.failure instanceof Stage.AnswerValidationRejected) {
         expect(result.failure.stage).toBe("budget_brief")
         expect(result.failure.field).toBe("budget")
@@ -302,19 +299,18 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const policy = Layer.succeed(BudgetPolicy, { minimum: 5_000 })
 
     const turn = await Effect.runPromise(
       BudgetBrief.run({
         state: BudgetBrief.initialState,
-        messages: [Model.Message.user("We can spend £6,000.")],
+        messages: [Session.Message.submitted("We can spend £6,000.")],
       }).pipe(Effect.provide(Layer.merge(model, policy))),
     )
 
     expect(turn.complete).toBe(true)
-    expect(turn.state.accepted.budget).toEqual(
-      accepted(6_000, 0, "£6,000"),
-    )
+    expect(turn.state.accepted.budget).toEqual(accepted(6_000, 0, "£6,000"))
   })
 
   test("re-asks the confirmation when evidence predates question issuance", async () => {
@@ -331,6 +327,7 @@ describe("Stage.collect", () => {
         localOnly: { messageIndex: 1, text: "Only show local firms?" },
       },
     }
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
@@ -351,15 +348,16 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       Brief.run({
         state,
         messages: [
-          Model.Message.user(
+          Session.Message.submitted(
             "We need a public service website in Leeds. No, search anywhere.",
           ),
-          Model.Message.assistant("Only show local firms?"),
-          Model.Message.user("What are my options?"),
+          Session.Message.authored("Only show local firms?"),
+          Session.Message.submitted("What are my options?"),
         ],
       }).pipe(Effect.provide(model)),
     )
@@ -389,10 +387,11 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       MultiAdaptiveBrief.run({
         state: MultiAdaptiveBrief.initialState,
-        messages: [Model.Message.user("I need some help.")],
+        messages: [Session.Message.submitted("I need some help.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -411,9 +410,7 @@ describe("Stage.collect", () => {
           name: "submit_answers",
           arguments: {
             answers: { project: "A public service website", location: null },
-            evidence: [
-              { field: "project", quote: "public service website" },
-            ],
+            evidence: [{ field: "project", quote: "public service website" }],
             nextQuestion: {
               field: "project",
               text: "What outcome would make this project worthwhile?",
@@ -422,10 +419,13 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       MultiAdaptiveBrief.run({
         state: MultiAdaptiveBrief.initialState,
-        messages: [Model.Message.user("We need a public service website.")],
+        messages: [
+          Session.Message.submitted("We need a public service website."),
+        ],
       }).pipe(Effect.provide(model)),
     )
 
@@ -456,10 +456,11 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       MultiAdaptiveBrief.run({
         state: MultiAdaptiveBrief.initialState,
-        messages: [Model.Message.user("I need some help.")],
+        messages: [Session.Message.submitted("I need some help.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -547,6 +548,7 @@ describe("Stage.collect", () => {
         }),
       ),
     )
+
     const unknownField = await Effect.runPromise(
       Effect.result(
         Brief.parseState({
@@ -557,6 +559,7 @@ describe("Stage.collect", () => {
         }),
       ),
     )
+
     const missingEvidence = await Effect.runPromise(
       Effect.result(
         Brief.parseState({
@@ -580,12 +583,8 @@ describe("Stage.collect", () => {
       1,
       "What are you hoping to create?",
     )
-    const twice = Brief.markAsked(
-      once,
-      "project",
-      3,
-      "A different question",
-    )
+
+    const twice = Brief.markAsked(once, "project", 3, "A different question")
 
     expect(once.asked).toEqual({
       project: {
@@ -598,10 +597,12 @@ describe("Stage.collect", () => {
 
   test("rejects an issued question that is not grounded in assistant history", async () => {
     let modelCalls = 0
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.sync(() => {
           modelCalls += 1
+
           return {
             name: "submit_answers",
             arguments: {
@@ -612,6 +613,7 @@ describe("Stage.collect", () => {
           }
         }),
     })
+
     const result = await Effect.runPromise(
       Effect.result(
         AdaptiveBrief.run({
@@ -624,15 +626,17 @@ describe("Stage.collect", () => {
               },
             },
           },
-          messages: [Model.Message.user("We need an agency partner.")],
+          messages: [Session.Message.submitted("We need an agency partner.")],
         }).pipe(Effect.provide(model)),
       ),
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Stage.InvalidResponse)
     }
+
     expect(modelCalls).toBe(0)
   })
 
@@ -666,6 +670,7 @@ describe("Stage.collect", () => {
         ),
       },
     })
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.succeed({
@@ -676,18 +681,16 @@ describe("Stage.collect", () => {
             nextQuestion: {
               field: "priority",
               text: "Where would outside expertise help most?",
-              options: [
-                "Strategy",
-                "A very long option label beyond bounds",
-              ],
+              options: ["Strategy", "A very long option label beyond bounds"],
             },
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       BoundedBrief.run({
         state: BoundedBrief.initialState,
-        messages: [Model.Message.user("We need an agency partner.")],
+        messages: [Session.Message.submitted("We need an agency partner.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -749,11 +752,12 @@ describe("Stage.collect", () => {
         })
       },
     })
+
     const turn = await Effect.runPromise(
       Brief.run({
         state: Brief.initialState,
         messages: [
-          Model.Message.user(
+          Session.Message.submitted(
             "We are in Leeds and need a public service website.",
           ),
         ],
@@ -804,6 +808,7 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       Brief.run({
         state: {
@@ -823,11 +828,11 @@ describe("Stage.collect", () => {
           },
         },
         messages: [
-          Model.Message.user(
+          Session.Message.submitted(
             "We are in Leeds and need a public service website.",
           ),
-          Model.Message.assistant("Only show local firms?"),
-          Model.Message.user("No, search anywhere."),
+          Session.Message.authored("Only show local firms?"),
+          Session.Message.submitted("No, search anywhere."),
         ],
       }).pipe(Effect.provide(model)),
     )
@@ -860,10 +865,13 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       Brief.run({
         state: Brief.initialState,
-        messages: [Model.Message.user("We need a public service website.")],
+        messages: [
+          Session.Message.submitted("We need a public service website."),
+        ],
       }).pipe(Effect.provide(model)),
     )
 
@@ -892,10 +900,11 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       Brief.run({
         state: Brief.initialState,
-        messages: [Model.Message.user("We would like some help.")],
+        messages: [Session.Message.submitted("We would like some help.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -929,7 +938,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       Brief.run({
         state: Brief.initialState,
-        messages: [Model.Message.user("We need some help")],
+        messages: [Session.Message.submitted("We need some help")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -960,10 +969,11 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       AdaptiveBrief.run({
         state: AdaptiveBrief.initialState,
-        messages: [Model.Message.user("We need an agency partner.")],
+        messages: [Session.Message.submitted("We need an agency partner.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -981,9 +991,11 @@ describe("Stage.collect", () => {
 
   test("applies stage question guidance and exposes one uncertainty escape", async () => {
     let instructions = ""
+
     const model = Layer.succeed(Model.Service, {
       requestTool: (request) => {
         instructions = request.instructions.join(" ")
+
         return Effect.succeed({
           name: "submit_answers",
           arguments: {
@@ -1002,10 +1014,11 @@ describe("Stage.collect", () => {
         })
       },
     })
+
     const turn = await Effect.runPromise(
       ExploratoryBrief.run({
         state: ExploratoryBrief.initialState,
-        messages: [Model.Message.user("We may need an agency.")],
+        messages: [Session.Message.submitted("We may need an agency.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -1023,61 +1036,88 @@ describe("Stage.collect", () => {
     expect(instructions).toContain(
       "Ask one conversational question and explain why the answer improves the result.",
     )
-    expect(instructions).toContain(
-      "provide 3-5 contextual options",
-    )
+    expect(instructions).toContain("provide 3-5 contextual options")
     expect(instructions).toContain('"Not sure yet"')
   })
 
-  test("resolves an escaped field with the declared application value", async () => {
-    const ResolvableBrief = Stage.collect({
-      name: "resolvable_brief",
-      questions: { escape: "Not sure yet" },
-      fields: {
-        priority: Answer.semantic(Schema.String, {
-          description: "The concrete outcome where outside help is needed",
-          ask: Question.adaptive("Clarify the priority", {
-            fallback: "Where would outside help matter most?",
+  test.each([
+    ["semantic", "submitted", true],
+    ["confirmed", "submitted", true],
+    ["semantic", "observed", true],
+    ["explicit", "observed", true],
+    ["confirmed", "observed", false],
+  ] as const)(
+    "resolves %s escape from %s text only with sufficient authority",
+    async (mode, source, complete) => {
+      const options = {
+        description: "The concrete outcome where outside help is needed",
+        ask: Question.adaptive("Clarify the priority", {
+          fallback: "Where would outside help matter most?",
+        }),
+        escape: { value: "Open to suggestions" },
+      }
+
+      const ResolvableBrief = Stage.collect({
+        name: "resolvable_brief",
+        questions: { escape: "Not sure yet" },
+        fields: {
+          priority:
+            mode === "semantic"
+              ? Answer.semantic(Schema.String, options)
+              : mode === "confirmed"
+                ? Answer.confirmed(Schema.String, options)
+                : Answer.explicit(Schema.String, options),
+        },
+      })
+
+      const model = Layer.succeed(Model.Service, {
+        requestTool: () =>
+          Effect.succeed({
+            name: "submit_answers",
+            arguments: {
+              answers: { priority: null },
+              evidence: [],
+              nextQuestion: null,
+            },
           }),
-          escape: { value: "Open to suggestions" },
-        }),
-      },
-    })
-    const model = Layer.succeed(Model.Service, {
-      requestTool: () =>
-        Effect.succeed({
-          name: "submit_answers",
-          arguments: {
-            answers: { priority: null },
-            evidence: [],
-            nextQuestion: null,
-          },
-        }),
-    })
-    const turn = await Effect.runPromise(
-      ResolvableBrief.run({
-        state: {
-          accepted: {},
-          asked: {
-            priority: {
-              messageIndex: 1,
-              text: "Where would outside help matter most?",
+      })
+
+      const turn = await Effect.runPromise(
+        ResolvableBrief.run({
+          state: {
+            accepted: {},
+            asked: {
+              priority: {
+                messageIndex: 1,
+                text: "Where would outside help matter most?",
+              },
             },
           },
-        },
-        messages: [
-          Model.Message.user("We may need an agency."),
-          Model.Message.assistant("Where would outside help matter most?"),
-          Model.Message.user("Not sure yet"),
-        ],
-      }).pipe(Effect.provide(model)),
-    )
+          messages: [
+            Session.Message.submitted("We may need an agency."),
+            Session.Message.authored("Where would outside help matter most?"),
+            source === "submitted"
+              ? Session.Message.submitted("Not sure yet")
+              : Session.Message.observed({
+                  role: "user",
+                  content: "Not sure yet",
+                  batchId: "batch",
+                  id: "speech",
+                }),
+          ],
+        }).pipe(Effect.provide(model)),
+      )
 
-    expect(turn.complete).toBe(true)
-    expect(turn.state.accepted).toEqual({
-      priority: accepted("Open to suggestions", 2, "Not sure yet"),
-    })
-  })
+      expect(turn.complete).toBe(complete)
+      expect(turn.state.accepted).toEqual(
+        complete
+          ? {
+              priority: accepted("Open to suggestions", 2, "Not sure yet"),
+            }
+          : {},
+      )
+    },
+  )
 
   test("rejects escape resolution without a stage escape label", () => {
     expect(() =>
@@ -1101,9 +1141,7 @@ describe("Stage.collect", () => {
           name: "submit_answers",
           arguments: {
             answers: { priority: "Not sure yet" },
-            evidence: [
-              { field: "priority", quote: "Not sure yet" },
-            ],
+            evidence: [{ field: "priority", quote: "Not sure yet" }],
             nextQuestion: {
               field: "priority",
               text: "No problem — is the bigger challenge finding the right direction, or making the current direction work harder?",
@@ -1116,6 +1154,7 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       ExploratoryBrief.run({
         state: {
@@ -1128,9 +1167,9 @@ describe("Stage.collect", () => {
           },
         },
         messages: [
-          Model.Message.user("We may need an agency."),
-          Model.Message.assistant("What would you most like to improve?"),
-          Model.Message.user("Not sure yet"),
+          Session.Message.submitted("We may need an agency."),
+          Session.Message.authored("What would you most like to improve?"),
+          Session.Message.submitted("Not sure yet"),
         ],
       }).pipe(Effect.provide(model)),
     )
@@ -1164,10 +1203,11 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       AdaptiveBrief.run({
         state: AdaptiveBrief.initialState,
-        messages: [Model.Message.user("We need an agency partner.")],
+        messages: [Session.Message.submitted("We need an agency partner.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -1195,10 +1235,11 @@ describe("Stage.collect", () => {
           },
         }),
     })
+
     const turn = await Effect.runPromise(
       AdaptiveBrief.run({
         state: AdaptiveBrief.initialState,
-        messages: [Model.Message.user("We need an agency partner.")],
+        messages: [Session.Message.submitted("We need an agency partner.")],
       }).pipe(Effect.provide(model)),
     )
 
@@ -1216,6 +1257,7 @@ describe("Stage.collect", () => {
 
   test("falls back to the trusted question after model repair is exhausted", async () => {
     const requests = await Effect.runPromise(Ref.make(0))
+
     const model = Layer.succeed(Model.Service, {
       requestTool: () =>
         Ref.update(requests, (count) => count + 1).pipe(
@@ -1229,7 +1271,7 @@ describe("Stage.collect", () => {
     const turn = await Effect.runPromise(
       AdaptiveBrief.run({
         state: AdaptiveBrief.initialState,
-        messages: [Model.Message.user("We need an agency partner.")],
+        messages: [Session.Message.submitted("We need an agency partner.")],
       }).pipe(Effect.provide(model)),
     )
 

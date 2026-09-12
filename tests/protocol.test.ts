@@ -33,6 +33,7 @@ describe("Chat.presentReply", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Chat.InvalidPresentation)
     }
@@ -41,13 +42,12 @@ describe("Chat.presentReply", () => {
   test("classifies invalid notice text in the Effect channel", async () => {
     const result = await Effect.runPromise(
       Effect.result(
-        Effect.suspend(() =>
-          Chat.notice({ text: "Trailing whitespace " }),
-        ),
+        Effect.suspend(() => Chat.notice({ text: "Trailing whitespace " })),
       ),
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Chat.InvalidPresentation)
     }
@@ -195,6 +195,7 @@ describe("Chat.presentReply", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Chat.InvalidPresentation)
     }
@@ -207,6 +208,7 @@ describe("Chat.presentReply", () => {
         session: undefined,
       }),
     )
+
     const retryable = await Effect.runPromise(
       Chat.notice({
         text: "That request could not be processed safely.",
@@ -231,6 +233,7 @@ describe("Chat turn response protocol v2", () => {
     role: "assistant",
     content: [{ type: "text", text: "Continue" }],
   } as const
+
   const persisted = {
     schemaVersion: 2,
     session: { id: "chat:01", revision: "3" },
@@ -242,26 +245,49 @@ describe("Chat turn response protocol v2", () => {
     const decodePersisted = Schema.decodeUnknownResult(
       Chat.PersistedTurnResponseSchema,
     )
+
     const decodeNonProgressing = Schema.decodeUnknownResult(
       Chat.NonProgressingResponseSchema,
     )
 
-    expect(Result.isSuccess(decodePersisted(persisted, {
-      onExcessProperty: "error",
-    }))).toBe(true)
-    expect(Result.isFailure(decodePersisted({
-      schemaVersion: 2,
-      session: persisted.session,
-      message,
-    }, { onExcessProperty: "error" }))).toBe(true)
-    expect(Result.isSuccess(decodeNonProgressing({
-      schemaVersion: 2,
-      session: persisted.session,
-      message,
-    }, { onExcessProperty: "error" }))).toBe(true)
-    expect(Result.isFailure(decodeNonProgressing(persisted, {
-      onExcessProperty: "error",
-    }))).toBe(true)
+    expect(
+      Result.isSuccess(
+        decodePersisted(persisted, {
+          onExcessProperty: "error",
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decodePersisted(
+          {
+            schemaVersion: 2,
+            session: persisted.session,
+            message,
+          },
+          { onExcessProperty: "error" },
+        ),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isSuccess(
+        decodeNonProgressing(
+          {
+            schemaVersion: 2,
+            session: persisted.session,
+            message,
+          },
+          { onExcessProperty: "error" },
+        ),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeNonProgressing(persisted, {
+          onExcessProperty: "error",
+        }),
+      ),
+    ).toBe(true)
   })
 
   test.each([
@@ -344,18 +370,16 @@ describe("Chat turn response protocol v2", () => {
       },
     ],
   ])("rejects %s", (_name, input) => {
-    const decoded = Schema.decodeUnknownResult(
-      Chat.TurnResponseSchema,
-    )(input, { onExcessProperty: "error" })
+    const decoded = Schema.decodeUnknownResult(Chat.TurnResponseSchema)(input, {
+      onExcessProperty: "error",
+    })
 
     expect(Result.isFailure(decoded)).toBe(true)
   })
 })
 
 describe("Chat.turnRequestSchema", () => {
-  const decode = Schema.decodeUnknownResult(
-    Chat.TurnRequestSchema,
-  )
+  const decode = Schema.decodeUnknownResult(Chat.TurnRequestSchema)
 
   test("accepts the documented browser payload", () => {
     const decoded = decode({
@@ -364,6 +388,7 @@ describe("Chat.turnRequestSchema", () => {
     })
 
     expect(Result.isSuccess(decoded)).toBe(true)
+
     if (Result.isSuccess(decoded)) {
       expect(decoded.success).toEqual({
         session: { id: "chat:01", revision: "1" },
@@ -406,28 +431,28 @@ describe("Chat.turnRequestSchema", () => {
       maximumMessageLength: 10,
     })
 
-    expect(Result.isSuccess(Schema.decodeUnknownResult(schema)({ message: "short" }))).toBe(true)
-    expect(Result.isFailure(Schema.decodeUnknownResult(schema)({ message: "" }))).toBe(true)
     expect(
-      Result.isFailure(Schema.decodeUnknownResult(schema)({ message: "          " })),
+      Result.isSuccess(Schema.decodeResult(schema)({ message: "short" })),
+    ).toBe(true)
+    expect(Result.isFailure(Schema.decodeResult(schema)({ message: "" }))).toBe(
+      true,
+    )
+    expect(
+      Result.isFailure(Schema.decodeResult(schema)({ message: "          " })),
     ).toBe(true)
     expect(
       Result.isFailure(
-        Schema.decodeUnknownResult(schema)({ message: "longer than ten" }),
+        Schema.decodeResult(schema)({ message: "longer than ten" }),
       ),
     ).toBe(true)
   })
 
-  test.each([
-    [0],
-    [-5],
-    [1.5],
-    [Number.NaN],
-  ])("factory rejects the invalid bound %p", (maximumMessageLength) => {
-    expect(() =>
-      Chat.turnRequestSchema({ maximumMessageLength }),
-    ).toThrow()
-  })
+  test.each([[0], [-5], [1.5], [Number.NaN]])(
+    "factory rejects the invalid bound %p",
+    (maximumMessageLength) => {
+      expect(() => Chat.turnRequestSchema({ maximumMessageLength })).toThrow()
+    },
+  )
 })
 
 describe("Chat.findTurnParts", () => {
@@ -436,6 +461,7 @@ describe("Chat.findTurnParts", () => {
     version: 1,
     schema: Schema.Struct({ value: Schema.String }),
   })
+
   const ForeignCard = View.define({
     name: "foreign_card",
     version: 1,
@@ -444,34 +470,38 @@ describe("Chat.findTurnParts", () => {
 
   test("returns only strictly decoded parts for the requested view", async () => {
     const response = await Effect.runPromise(
-      Chat.presentReply({
-        sessionId: "chat:01",
-        revision: "1",
-        userAnswers: emptyUserAnswers,
-        turn: {
-          _tag: "ToolResult",
-          stage: "matching",
-          result: { views: [] },
+      Chat.presentReply(
+        {
+          sessionId: "chat:01",
+          revision: "1",
+          userAnswers: emptyUserAnswers,
+          turn: {
+            _tag: "ToolResult",
+            stage: "matching",
+            result: { views: [] },
+          },
         },
-      }, {
-        result: () => [
-          ForeignCard.make({ value: "other view" }),
-          Card.make({ value: "safe" }),
-          // Same view name but an incompatible schemaVersion.
-          {
-            type: "data" as const,
-            name: "card",
-            data: { schemaVersion: 999, value: "stale" },
-          },
-          // Same view name and version but corrupt data.
-          {
-            type: "data" as const,
-            name: "card",
-            data: { schemaVersion: 1, value: 42 },
-          },
-        ],
-      }),
+        {
+          result: () => [
+            ForeignCard.make({ value: "other view" }),
+            Card.make({ value: "safe" }),
+            // Same view name but an incompatible schemaVersion.
+            {
+              type: "data" as const,
+              name: "card",
+              data: { schemaVersion: 999, value: "stale" },
+            },
+            // Same view name and version but corrupt data.
+            {
+              type: "data" as const,
+              name: "card",
+              data: { schemaVersion: 1, value: 42 },
+            },
+          ],
+        },
+      ),
     )
+
     const parts = Chat.findTurnParts(response, Card)
 
     expect(parts).toEqual([{ schemaVersion: 1, value: "safe" }])
@@ -537,17 +567,23 @@ describe("exploration protocol", () => {
   })
 
   test("accepts only a stable session id and one encoded tool call", () => {
-    const decode = Schema.decodeUnknownResult(
-      Chat.ExplorationRequestSchema,
+    const decode = Schema.decodeUnknownResult(Chat.ExplorationRequestSchema)
+
+    const valid = decode(
+      {
+        session: { id: "chat:01" },
+        call: { name: "related_query", arguments: { query: "nearby" } },
+      },
+      { onExcessProperty: "error" },
     )
-    const valid = decode({
-      session: { id: "chat:01" },
-      call: { name: "related_query", arguments: { query: "nearby" } },
-    }, { onExcessProperty: "error" })
-    const revision = decode({
-      session: { id: "chat:01", revision: "2" },
-      call: { name: "related_query", arguments: {} },
-    }, { onExcessProperty: "error" })
+
+    const revision = decode(
+      {
+        session: { id: "chat:01", revision: "2" },
+        call: { name: "related_query", arguments: {} },
+      },
+      { onExcessProperty: "error" },
+    )
 
     expect(Result.isSuccess(valid)).toBe(true)
     expect(Result.isFailure(revision)).toBe(true)
@@ -593,6 +629,7 @@ describe("exploration protocol", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Chat.InvalidPresentation)
     }

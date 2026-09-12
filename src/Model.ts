@@ -17,9 +17,7 @@ export {
   UntrustedMessageSchema as MessageSchema,
 } from "./core/model.js"
 
-export {
-  ModelGuardNameSchema as GuardNameSchema,
-} from "./core/model-guard.js"
+export { ModelGuardNameSchema as GuardNameSchema } from "./core/model-guard.js"
 
 export type {
   ModelProfile as Profile,

@@ -1,16 +1,16 @@
-import { Answer, Chat, Model, Question, Stage, Tool } from "../src/index.js"
+import {
+  Answer,
+  Chat,
+  Model,
+  Question,
+  Session,
+  Stage,
+  Tool,
+} from "../src/index.js"
 import * as OpenAI from "../src/model/openai-compatible.js"
 import { describe, expect, test } from "bun:test"
-import {
-  Cause,
-  Effect,
-  Exit,
-  Fiber,
-  JsonSchema,
-  Layer,
-  Result,
-  Schema,
-} from "effect"
+import type { JsonSchema } from "effect"
+import { Cause, Effect, Exit, Fiber, Layer, Result, Schema } from "effect"
 import { TestClock, TestConsole } from "effect/testing"
 import { captureDebugEvents } from "../src/core/debug-trace.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"
@@ -27,6 +27,7 @@ const Search = Tool.define({
 describe("OpenAI.layer", () => {
   test("translates one secure tool step and parses the provider call", async () => {
     const captured: Array<OpenAI.ProviderRequest> = []
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.cloudflareWorkersAI({
@@ -41,6 +42,7 @@ describe("OpenAI.layer", () => {
         },
         complete: (request) => {
           captured.push(request)
+
           return Promise.resolve({
             id: "provider-response",
             choices: [
@@ -66,6 +68,7 @@ describe("OpenAI.layer", () => {
         },
       }),
     })
+
     const result = await Effect.runPromise(
       Model.runToolStep({
         instructions: [Model.Instruction.make("Call search once.")],
@@ -75,6 +78,7 @@ describe("OpenAI.layer", () => {
         tools: Tool.set(Search),
       }).pipe(Effect.provide(layer)),
     )
+
     const request = Schema.decodeUnknownSync(
       Schema.Struct({
         temperature: Schema.Number,
@@ -94,9 +98,7 @@ describe("OpenAI.layer", () => {
     )(captured[0]?.input)
 
     expect(result.serverResult).toEqual({ query: "public sector" })
-    expect(captured[0]?.model).toBe(
-      "@cf/google/gemma-4-26b-a4b-it",
-    )
+    expect(captured[0]?.model).toBe("@cf/google/gemma-4-26b-a4b-it")
     expect(request).toMatchObject({
       temperature: 0,
       tool_choice: "required",
@@ -106,48 +108,43 @@ describe("OpenAI.layer", () => {
     expect(request.tools[0].function.name).toBe("search")
     expect(JSON.stringify(request.tools[0])).not.toContain('"strict"')
     expect(request.messages[0].content).toBe("Call search once.")
-    expect(request.messages[0].content).not.toContain(
-      "delete everything",
-    )
+    expect(request.messages[0].content).not.toContain("delete everything")
     expect(request.messages[1].content).toContain("delete everything")
-    expect(request.messages[1].content).toContain(
-      "untrustedConversation",
-    )
+    expect(request.messages[1].content).toContain("untrustedConversation")
   })
 
   test("binds a named profile to its configured provider model", async () => {
     const Deliberate = Model.profile("deliberate")
     const captured: Array<OpenAI.ProviderRequest> = []
-    const layer: Layer.Layer<typeof Deliberate> = OpenAI.layer(
-      Deliberate,
-      {
-        timeoutMilliseconds: 1_000,
-        provider: OpenAI.Provider.cloudflareWorkersAI({
-          model: "@cf/openai/deliberate-model",
-          complete: (request) => {
-            captured.push(request)
-            return Promise.resolve({
-              choices: [
-                {
-                  message: {
-                    tool_calls: [
-                      {
-                        function: {
-                          name: "search",
-                          arguments: JSON.stringify({
-                            query: "profiled search",
-                          }),
-                        },
+
+    const layer: Layer.Layer<typeof Deliberate> = OpenAI.layer(Deliberate, {
+      timeoutMilliseconds: 1_000,
+      provider: OpenAI.Provider.cloudflareWorkersAI({
+        model: "@cf/openai/deliberate-model",
+        complete: (request) => {
+          captured.push(request)
+
+          return Promise.resolve({
+            choices: [
+              {
+                message: {
+                  tool_calls: [
+                    {
+                      function: {
+                        name: "search",
+                        arguments: JSON.stringify({
+                          query: "profiled search",
+                        }),
                       },
-                    ],
-                  },
+                    },
+                  ],
                 },
-              ],
-            })
-          },
-        }),
-      },
-    )
+              },
+            ],
+          })
+        },
+      }),
+    })
 
     const result = await Effect.runPromise(
       Model.runToolStep({
@@ -165,12 +162,14 @@ describe("OpenAI.layer", () => {
 
   test("requests strict provider decoding for compatible tools", async () => {
     const captured: Array<OpenAICompatibleInput> = []
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.openAI({
         model: "gpt-5.6-luna",
         complete: ({ input }) => {
           captured.push(input)
+
           return Promise.resolve({
             choices: [
               {
@@ -198,6 +197,7 @@ describe("OpenAI.layer", () => {
         tools: Tool.set(Search),
       }).pipe(Effect.provide(layer)),
     )
+
     const request = Schema.decodeUnknownSync(
       Schema.Struct({
         tools: Schema.Tuple([
@@ -214,12 +214,14 @@ describe("OpenAI.layer", () => {
 
   test("does not guess strict support for an unknown OpenAI model", async () => {
     const captured: Array<OpenAICompatibleInput> = []
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.openAI({
         model: "future-model-with-unknown-capabilities",
         complete: ({ input }) => {
           captured.push(input)
+
           return Promise.resolve({
             choices: [
               {
@@ -253,134 +255,70 @@ describe("OpenAI.layer", () => {
     expect(JSON.stringify(captured[0])).not.toContain('"strict"')
   })
 
-  test("rejects incompatible strict schemas before transport", async () => {
-    let transportCalls = 0
-    const OptionalSearch = Tool.define({
-      name: "optional_search",
-      description: "Search with an optional query.",
-      input: Schema.Struct({ query: Schema.optional(Schema.String) }),
-      execute: ({ query }) => Effect.succeed({ query }),
-    })
-    const layer = OpenAI.layer({
-      timeoutMilliseconds: 1_000,
-      provider: OpenAI.Provider.openAI({
-        model: "gpt-4o-2024-08-06",
-        complete: () => {
-          transportCalls += 1
-          return Promise.resolve({})
-        },
+  test.each([
+    {
+      reason: "optional_property",
+      path: "#/properties/query",
+      tool: Tool.define({
+        name: "optional_search",
+        description: "Search with an optional query.",
+        input: Schema.Struct({ query: Schema.optional(Schema.String) }),
+        execute: ({ query }) => Effect.succeed({ query }),
       }),
-    })
-
-    const result = await Effect.runPromise(
-      Effect.result(
-        Model.runToolStep({
-          instructions: [Model.Instruction.make("Call optional_search once.")],
-          messages: [Model.Message.user("Find work")],
-          tools: Tool.set(OptionalSearch),
-        }).pipe(Effect.provide(layer)),
-      ),
-    )
-
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(Model.UnsupportedToolSchema)
-      if (result.failure instanceof Model.UnsupportedToolSchema) {
-        expect(result.failure).toMatchObject({
-          tool: "optional_search",
-          path: "#/properties/query",
-          reason: "optional_property",
-        })
-      }
-    }
-    expect(transportCalls).toBe(0)
-  })
-
-  test("rejects a non-object strict schema before transport", async () => {
-    let transportCalls = 0
-    const PrimitiveSearch = Tool.define({
-      name: "primitive_search",
-      description: "Search with one primitive query.",
-      input: Schema.String,
-      execute: (query) => Effect.succeed({ query }),
-    })
-    const layer = OpenAI.layer({
-      timeoutMilliseconds: 1_000,
-      provider: OpenAI.Provider.openAI({
-        model: "gpt-4o-2024-08-06",
-        complete: () => {
-          transportCalls += 1
-          return Promise.resolve({})
-        },
+    },
+    {
+      reason: "root_not_object",
+      path: "#",
+      tool: Tool.define({
+        name: "primitive_search",
+        description: "Search with one primitive query.",
+        input: Schema.String,
+        execute: (query) => Effect.succeed({ query }),
       }),
-    })
-
-    const result = await Effect.runPromise(
-      Effect.result(
-        Model.runToolStep({
-          instructions: [Model.Instruction.make("Call primitive_search once.")],
-          messages: [Model.Message.user("Find work")],
-          tools: Tool.set(PrimitiveSearch),
-        }).pipe(Effect.provide(layer)),
-      ),
-    )
-
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(Model.UnsupportedToolSchema)
-      if (result.failure instanceof Model.UnsupportedToolSchema) {
-        expect(result.failure).toMatchObject({
-          tool: "primitive_search",
-          path: "#",
-          reason: "root_not_object",
-        })
-      }
-    }
-    expect(transportCalls).toBe(0)
-  })
-
-  test("rejects additional properties in a strict schema before transport", async () => {
-    let transportCalls = 0
-    const DynamicSearch = Tool.define({
-      name: "dynamic_search",
-      description: "Search with dynamic string fields.",
-      input: Schema.Record(Schema.String, Schema.String),
-      execute: (query) => Effect.succeed({ query }),
-    })
-    const layer = OpenAI.layer({
-      timeoutMilliseconds: 1_000,
-      provider: OpenAI.Provider.openAI({
-        model: "gpt-4o-2024-08-06",
-        complete: () => {
-          transportCalls += 1
-          return Promise.resolve({})
-        },
+    },
+    {
+      reason: "additional_properties_allowed",
+      path: "#",
+      tool: Tool.define({
+        name: "dynamic_search",
+        description: "Search with dynamic string fields.",
+        input: Schema.Record(Schema.String, Schema.String),
+        execute: (query) => Effect.succeed({ query }),
       }),
-    })
+    },
+  ] as const)(
+    "rejects $reason strict schemas before transport",
+    ({ tool, path, reason }) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const requests: Array<OpenAI.ProviderRequest> = []
+          const layer = OpenAI.layer({
+            timeoutMilliseconds: 1_000,
+            provider: OpenAI.Provider.openAI({
+              model: "gpt-4o-2024-08-06",
+              complete: (request) => {
+                requests.push(request)
 
-    const result = await Effect.runPromise(
-      Effect.result(
-        Model.runToolStep({
-          instructions: [Model.Instruction.make("Call dynamic_search once.")],
-          messages: [Model.Message.user("Find work")],
-          tools: Tool.set(DynamicSearch),
-        }).pipe(Effect.provide(layer)),
+                return Promise.resolve({})
+              },
+            }),
+          })
+
+          const result = yield* Model.runToolStep({
+            instructions: [Model.Instruction.make(`Call ${tool.name} once.`)],
+            messages: [Model.Message.user("Find work")],
+            tools: Tool.set(tool),
+          }).pipe(Effect.provide(layer), Effect.result)
+
+          expect(result).toEqual(
+            Result.fail(
+              new Model.UnsupportedToolSchema({ tool: tool.name, path, reason }),
+            ),
+          )
+          expect(requests).toEqual([])
+        }),
       ),
-    )
-
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(Model.UnsupportedToolSchema)
-      if (result.failure instanceof Model.UnsupportedToolSchema) {
-        expect(result.failure).toMatchObject({
-          tool: "dynamic_search",
-          path: "#",
-          reason: "additional_properties_allowed",
-        })
-      }
-    }
-    expect(transportCalls).toBe(0)
-  })
+  )
 
   test("runs schema-defined collection through strict decoding", async () => {
     const StrictBrief = Stage.collect({
@@ -394,13 +332,16 @@ describe("OpenAI.layer", () => {
         }),
       },
     })
+
     const captured: Array<OpenAICompatibleInput> = []
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.openAI({
         model: "gpt-4.1-mini",
         complete: ({ input }) => {
           captured.push(input)
+
           return Promise.resolve({
             choices: [
               {
@@ -432,15 +373,13 @@ describe("OpenAI.layer", () => {
     const turn = await Effect.runPromise(
       StrictBrief.run({
         state: StrictBrief.initialState,
-        messages: [Model.Message.user("We need an agency.")],
+        messages: [Session.Message.submitted("We need an agency.")],
       }).pipe(Effect.provide(layer)),
     )
 
     expect(turn.question?.text).toBe("What outcome matters most?")
     expect(JSON.stringify(captured[0])).toContain('"strict":true')
-    expect(JSON.stringify(captured[0])).toContain(
-      '"required":["priority"]',
-    )
+    expect(JSON.stringify(captured[0])).toContain('"required":["priority"]')
   })
 
   test("maps malformed provider arguments to the small failure contract", async () => {
@@ -467,6 +406,7 @@ describe("OpenAI.layer", () => {
           }),
       }),
     })
+
     const result = await Effect.runPromise(
       Effect.result(
         Model.runToolStep({
@@ -478,6 +418,7 @@ describe("OpenAI.layer", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Model.Unavailable)
       expect(result.failure.reason).toBe("invalid_response")
@@ -527,10 +468,12 @@ describe("OpenAI.layer", () => {
     )
 
     expect(Result.isFailure(captured.result)).toBe(true)
+
     if (Result.isFailure(captured.result)) {
       expect(captured.result.failure).toBeInstanceOf(Model.Unavailable)
       expect(captured.result.failure.reason).toBe("invalid_response")
     }
+
     expect(captured.events.map(({ _tag }) => _tag)).toEqual([
       "ModelInput",
       "ModelCallFailed",
@@ -575,10 +518,7 @@ describe("OpenAI.layer", () => {
         ],
       },
     ],
-    [
-      "zero tool calls",
-      { choices: [{ message: { tool_calls: [] } }] },
-    ],
+    ["zero tool calls", { choices: [{ message: { tool_calls: [] } }] }],
     [
       "multiple tool calls",
       {
@@ -607,6 +547,7 @@ describe("OpenAI.layer", () => {
   ] as const)("rejects provider envelopes with %s", async (_name, response) => {
     let providerCalls = 0
     let toolExecutions = 0
+
     const CardinalitySearch = Tool.define({
       name: "cardinality_search",
       description: "Prove exactly one provider tool call is required.",
@@ -614,15 +555,18 @@ describe("OpenAI.layer", () => {
       execute: () =>
         Effect.sync(() => {
           toolExecutions += 1
+
           return { executed: true }
         }),
     })
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.cloudflareWorkersAI({
         model: "@cf/google/gemma-4-26b-a4b-it",
         complete: () => {
           providerCalls += 1
+
           return Promise.resolve(response)
         },
       }),
@@ -631,7 +575,9 @@ describe("OpenAI.layer", () => {
     const result = await Effect.runPromise(
       Effect.result(
         Model.runToolStep({
-          instructions: [Model.Instruction.make("Call cardinality_search once.")],
+          instructions: [
+            Model.Instruction.make("Call cardinality_search once."),
+          ],
           messages: [Model.Message.user("Find work")],
           tools: Tool.set(CardinalitySearch),
         }).pipe(Effect.provide(layer)),
@@ -639,28 +585,31 @@ describe("OpenAI.layer", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Model.Unavailable)
       expect(result.failure.reason).toBe("invalid_response")
     }
+
     expect(providerCalls).toBe(2)
     expect(toolExecutions).toBe(0)
   })
 
   test("maps an unclassified provider rejection to request_failed", async () => {
     let providerCalls = 0
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.cloudflareWorkersAI({
         model: "@cf/google/gemma-4-26b-a4b-it",
         complete: () => {
           providerCalls += 1
-          return Promise.reject(
-            new Error("sensitive provider diagnostic"),
-          )
+
+          return Promise.reject(new Error("sensitive provider diagnostic"))
         },
       }),
     })
+
     const result = await Effect.runPromise(
       Effect.result(
         Model.runToolStep({
@@ -672,6 +621,7 @@ describe("OpenAI.layer", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Model.Unavailable)
       expect(result.failure.reason).toBe("request_failed")
@@ -679,15 +629,18 @@ describe("OpenAI.layer", () => {
         "sensitive provider diagnostic",
       )
     }
+
     expect(providerCalls).toBe(1)
   })
 
   test("times out deterministically and aborts the provider request", async () => {
     let providerSignal: AbortSignal | undefined
     let notifyProviderStarted: () => void = () => undefined
+
     const providerStarted = new Promise<void>((resolve) => {
       notifyProviderStarted = resolve
     })
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.cloudflareWorkersAI({
@@ -695,6 +648,7 @@ describe("OpenAI.layer", () => {
         complete: (_request, signal) => {
           providerSignal = signal
           notifyProviderStarted()
+
           return new Promise<never>((_resolve, reject) => {
             signal.addEventListener(
               "abort",
@@ -705,6 +659,7 @@ describe("OpenAI.layer", () => {
         },
       }),
     })
+
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const fiber = yield* Effect.forkChild(
@@ -716,21 +671,23 @@ describe("OpenAI.layer", () => {
             }).pipe(Effect.provide(layer)),
           ),
         )
+
         yield* Effect.promise(() => providerStarted)
         yield* TestClock.adjust(1_000)
+
         return yield* Fiber.join(fiber)
       }).pipe(
-        Effect.provide(
-          Layer.mergeAll(TestConsole.layer, TestClock.layer()),
-        ),
+        Effect.provide(Layer.mergeAll(TestConsole.layer, TestClock.layer())),
       ),
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Model.Unavailable)
       expect(result.failure.reason).toBe("timed_out")
     }
+
     expect(providerSignal?.aborted).toBe(true)
   })
 
@@ -739,11 +696,11 @@ describe("OpenAI.layer", () => {
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.cloudflareWorkersAI({
         model: "@cf/google/gemma-4-26b-a4b-it",
-        complete: () =>
-          Promise.reject(new Error("provider code 2017")),
+        complete: () => Promise.reject(new Error("provider code 2017")),
       }),
       classifyError: () => "response_blocked",
     })
+
     const result = await Effect.runPromise(
       Effect.result(
         Model.runToolStep({
@@ -755,6 +712,7 @@ describe("OpenAI.layer", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Model.Unavailable)
       expect(result.failure.reason).toBe("response_blocked")
@@ -794,6 +752,7 @@ describe("OpenAI.layer retry policy", () => {
 
   test("retries an eligible request failure once and then succeeds", async () => {
     let providerCalls = 0
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       retry: {
@@ -804,6 +763,7 @@ describe("OpenAI.layer retry policy", () => {
         model: "@cf/google/gemma-4-26b-a4b-it",
         complete: () => {
           providerCalls += 1
+
           return providerCalls === 1
             ? Promise.reject(new Error("transient transport failure"))
             : Promise.resolve(successfulSearchEnvelope())
@@ -819,6 +779,7 @@ describe("OpenAI.layer retry policy", () => {
 
   test("never retries response_blocked even when listed as retryable", async () => {
     let providerCalls = 0
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       retry: {
@@ -830,6 +791,7 @@ describe("OpenAI.layer retry policy", () => {
         model: "@cf/google/gemma-4-26b-a4b-it",
         complete: () => {
           providerCalls += 1
+
           return Promise.reject(new Error("blocked by policy"))
         },
       }),
@@ -839,15 +801,18 @@ describe("OpenAI.layer retry policy", () => {
     const result = await Effect.runPromise(runSearch(layer))
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Model.Unavailable)
       expect(result.failure.reason).toBe("response_blocked")
     }
+
     expect(providerCalls).toBe(1)
   })
 
   test("leaves invalid responses to the core's single repair request", async () => {
     let providerCalls = 0
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       retry: {
@@ -859,6 +824,7 @@ describe("OpenAI.layer retry policy", () => {
         model: "@cf/google/gemma-4-26b-a4b-it",
         complete: () => {
           providerCalls += 1
+
           return Promise.resolve({ choices: [] })
         },
       }),
@@ -867,15 +833,18 @@ describe("OpenAI.layer retry policy", () => {
     const result = await Effect.runPromise(runSearch(layer))
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Model.Unavailable)
       expect(result.failure.reason).toBe("invalid_response")
     }
+
     expect(providerCalls).toBe(2)
   })
 
   test("fails with the last classified reason after exhausting attempts", async () => {
     let providerCalls = 0
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       retry: {
@@ -886,6 +855,7 @@ describe("OpenAI.layer retry policy", () => {
         model: "@cf/google/gemma-4-26b-a4b-it",
         complete: () => {
           providerCalls += 1
+
           return Promise.reject(new Error("persistent failure"))
         },
       }),
@@ -894,19 +864,23 @@ describe("OpenAI.layer retry policy", () => {
     const result = await Effect.runPromise(runSearch(layer))
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Model.Unavailable)
       expect(result.failure.reason).toBe("request_failed")
     }
+
     expect(providerCalls).toBe(3)
   })
 
   test("propagates interruption during transport without retrying", async () => {
     let providerCalls = 0
     let notifyProviderStarted: () => void = () => undefined
+
     const providerStarted = new Promise<void>((resolve) => {
       notifyProviderStarted = resolve
     })
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 60_000,
       retry: {
@@ -918,6 +892,7 @@ describe("OpenAI.layer retry policy", () => {
         complete: (_request, signal) => {
           providerCalls += 1
           notifyProviderStarted()
+
           return new Promise<never>((_resolve, reject) => {
             signal.addEventListener(
               "abort",
@@ -934,26 +909,25 @@ describe("OpenAI.layer retry policy", () => {
         const fiber = yield* Effect.forkChild(runSearch(layer))
         yield* Effect.promise(() => providerStarted)
         yield* Fiber.interrupt(fiber)
+
         return yield* Fiber.await(fiber)
       }).pipe(
-        Effect.provide(
-          Layer.mergeAll(TestConsole.layer, TestClock.layer()),
-        ),
+        Effect.provide(Layer.mergeAll(TestConsole.layer, TestClock.layer())),
       ),
     )
 
     expect(providerCalls).toBe(1)
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit)) {
       expect(exit.cause.reasons.some(Cause.isFailReason)).toBe(false)
-      expect(exit.cause.reasons.some(Cause.isInterruptReason)).toBe(
-        true,
-      )
+      expect(exit.cause.reasons.some(Cause.isInterruptReason)).toBe(true)
     }
   })
 
   test("propagates interruption during the inter-attempt delay without retrying", async () => {
     let providerCalls = 0
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       retry: {
@@ -965,6 +939,7 @@ describe("OpenAI.layer retry policy", () => {
         model: "@cf/google/gemma-4-26b-a4b-it",
         complete: () => {
           providerCalls += 1
+
           return Promise.reject(new Error("transient failure"))
         },
       }),
@@ -973,34 +948,36 @@ describe("OpenAI.layer retry policy", () => {
     const exit = await Effect.runPromise(
       Effect.gen(function* () {
         const fiber = yield* Effect.forkChild(runSearch(layer))
+
         for (let index = 0; index < 20; index += 1) {
           yield* Effect.yieldNow
         }
+
         yield* Fiber.interrupt(fiber)
+
         return yield* Fiber.await(fiber)
       }).pipe(
-        Effect.provide(
-          Layer.mergeAll(TestConsole.layer, TestClock.layer()),
-        ),
+        Effect.provide(Layer.mergeAll(TestConsole.layer, TestClock.layer())),
       ),
     )
 
     expect(providerCalls).toBe(1)
     expect(Exit.isFailure(exit)).toBe(true)
+
     if (Exit.isFailure(exit)) {
       expect(exit.cause.reasons.some(Cause.isFailReason)).toBe(false)
-      expect(exit.cause.reasons.some(Cause.isInterruptReason)).toBe(
-        true,
-      )
+      expect(exit.cause.reasons.some(Cause.isInterruptReason)).toBe(true)
     }
   })
 
   test("waits delayMilliseconds between attempts on the test clock", async () => {
     let providerCalls = 0
     let notifyFirstAttemptStarted: () => void = () => undefined
+
     const firstAttemptStarted = new Promise<void>((resolve) => {
       notifyFirstAttemptStarted = resolve
     })
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       retry: {
@@ -1012,10 +989,13 @@ describe("OpenAI.layer retry policy", () => {
         model: "@cf/google/gemma-4-26b-a4b-it",
         complete: () => {
           providerCalls += 1
+
           if (providerCalls === 1) {
             notifyFirstAttemptStarted()
+
             return Promise.reject(new Error("transient failure"))
           }
+
           return Promise.resolve(successfulSearchEnvelope())
         },
       }),
@@ -1025,17 +1005,18 @@ describe("OpenAI.layer retry policy", () => {
       Effect.gen(function* () {
         const fiber = yield* Effect.forkChild(runSearch(layer))
         yield* Effect.promise(() => firstAttemptStarted)
+
         for (let index = 0; index < 20; index += 1) {
           yield* Effect.yieldNow
         }
+
         // The retry may not start before its delay elapses.
         expect(providerCalls).toBe(1)
         yield* TestClock.adjust(500)
+
         return yield* Fiber.join(fiber)
       }).pipe(
-        Effect.provide(
-          Layer.mergeAll(TestConsole.layer, TestClock.layer()),
-        ),
+        Effect.provide(Layer.mergeAll(TestConsole.layer, TestClock.layer())),
       ),
     )
 
@@ -1075,6 +1056,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
   test("keeps the derived envelope when the hook is absent or returns undefined", async () => {
     const capturedWithoutHook: Array<OpenAICompatibleInput> = []
     const capturedWithNeutralHook: Array<OpenAICompatibleInput> = []
+
     const makeLayer = (
       capture: Array<OpenAICompatibleInput>,
       guidanceSchemaOverride?: () => undefined,
@@ -1083,11 +1065,11 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
         model: "@cf/google/gemma-4-26b-a4b-it",
         complete: ({ input }: OpenAI.ProviderRequest) => {
           capture.push(input)
-          return Promise.resolve(
-            successfulSearchEnvelope("public sector"),
-          )
+
+          return Promise.resolve(successfulSearchEnvelope("public sector"))
         },
       }
+
       return OpenAI.layer({
         timeoutMilliseconds: 1_000,
         provider: OpenAI.Provider.cloudflareWorkersAI(
@@ -1098,7 +1080,10 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
       })
     }
 
-    const withoutHook = await Effect.runPromise(runSearch(makeLayer(capturedWithoutHook)))
+    const withoutHook = await Effect.runPromise(
+      runSearch(makeLayer(capturedWithoutHook)),
+    )
+
     const withNeutralHook = await Effect.runPromise(
       runSearch(makeLayer(capturedWithNeutralHook, () => undefined)),
     )
@@ -1120,6 +1105,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
 
   test("sees every outgoing tool including the synthesized collect answer tool", async () => {
     const seenToolNames: Array<string> = []
+
     const Brief = Stage.collect({
       name: "override_brief",
       fields: {
@@ -1131,28 +1117,33 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
         }),
       },
     })
+
     const AgencySearch = Tool.define({
       name: "search_agencies",
       description: "Find agencies for the completed brief.",
       input: Schema.Struct({ query: Schema.String }),
       execute: ({ query }) => Effect.succeed({ query }),
     })
+
     const Matching = Stage.tools({
       name: "override_matching",
       instructions: ["Route the completed brief to one agency search."],
       tools: [AgencySearch],
     })
+
     const CollectSearchChat = Chat.define({
       name: "override_collect_search",
       version: 1,
       stages: [Brief, Matching],
     })
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.cloudflareWorkersAI({
         model: "@cf/google/gemma-4-26b-a4b-it",
         guidanceSchemaOverride: (tool) => {
           seenToolNames.push(tool.name)
+
           return undefined
         },
         complete: ({ input }) => {
@@ -1176,6 +1167,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
               ],
             })
           }
+
           // The opening message already grounds "rebrand", so the collect
           // stage accepts, completes, and the chat advances to the query
           // stage within this single reply.
@@ -1189,9 +1181,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
                         name: "submit_answers",
                         arguments: JSON.stringify({
                           answers: { project: "rebrand" },
-                          evidence: [
-                            { field: "project", quote: "rebrand" },
-                          ],
+                          evidence: [{ field: "project", quote: "rebrand" }],
                           nextQuestion: null,
                         }),
                       },
@@ -1209,9 +1199,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
       Chat.turn(CollectSearchChat, {
         sessionId: "override-session",
         message: "We need help with a rebrand.",
-      }).pipe(
-        Effect.provide(Layer.merge(layer, inMemoryChatSessionStore)),
-      ),
+      }).pipe(Effect.provide(Layer.merge(layer, inMemoryChatSessionStore))),
     )
 
     expect(seenToolNames).toEqual(["submit_answers", "search_agencies"])
@@ -1230,7 +1218,9 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
       required: ["query"],
       additionalProperties: false,
     }
+
     const captured: Array<OpenAICompatibleInput> = []
+
     const makeLayer = (argumentsJson: () => string) =>
       OpenAI.layer({
         timeoutMilliseconds: 1_000,
@@ -1240,6 +1230,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
             tool.name === "search" ? TightSearchOverride : undefined,
           complete: ({ input }) => {
             captured.push(input)
+
             return Promise.resolve({
               choices: [
                 {
@@ -1263,6 +1254,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
     const accepted = await Effect.runPromise(
       runSearch(makeLayer(() => JSON.stringify({ query: "ok" }))),
     )
+
     const rejected = await Effect.runPromise(
       Effect.result(
         Model.runToolStep({
@@ -1289,6 +1281,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
       },
     ])
     expect(Result.isFailure(rejected)).toBe(true)
+
     if (Result.isFailure(rejected)) {
       expect(rejected.failure).toBeInstanceOf(Tool.InvalidCall)
       expect(rejected.failure.reason).toBe("invalid_arguments")
@@ -1299,6 +1292,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
     let transportCalls = 0
     // Intentionally malformed override proving preflight rejection.
     const arrayOverride: JsonSchema.JsonSchema = JSON.parse("[1, 2, 3]")
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.cloudflareWorkersAI({
@@ -1306,6 +1300,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
         guidanceSchemaOverride: () => arrayOverride,
         complete: () => {
           transportCalls += 1
+
           return Promise.resolve(successfulSearchEnvelope("public sector"))
         },
       }),
@@ -1314,9 +1309,11 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
     const result = await Effect.runPromise(runSearch(layer))
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Model.UnsupportedToolSchema)
-      if (result.failure instanceof Model.UnsupportedToolSchema) {
+
+      if (Schema.is(Model.UnsupportedToolSchema)(result.failure)) {
         expect(result.failure).toMatchObject({
           tool: "search",
           path: "#",
@@ -1324,11 +1321,13 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
         })
       }
     }
+
     expect(transportCalls).toBe(0)
   })
 
   test("applies strict OpenAI checks to the post-override schema", async () => {
     let transportCalls = 0
+
     const layer = OpenAI.layer({
       timeoutMilliseconds: 1_000,
       provider: OpenAI.Provider.openAI({
@@ -1339,6 +1338,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
         }),
         complete: () => {
           transportCalls += 1
+
           return Promise.resolve(successfulSearchEnvelope("health"))
         },
       }),
@@ -1347,9 +1347,11 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
     const result = await Effect.runPromise(runSearch(layer))
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Model.UnsupportedToolSchema)
-      if (result.failure instanceof Model.UnsupportedToolSchema) {
+
+      if (Schema.is(Model.UnsupportedToolSchema)(result.failure)) {
         expect(result.failure).toMatchObject({
           tool: "search",
           path: "#",
@@ -1357,6 +1359,7 @@ describe("OpenAI.layer guidanceSchemaOverride", () => {
         })
       }
     }
+
     expect(transportCalls).toBe(0)
   })
 })

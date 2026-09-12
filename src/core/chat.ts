@@ -1,6 +1,10 @@
 import { ToolContext } from "./tool-context.js"
-import { readInteractionStageRuntime, type InteractionStage, type InteractionStageDefinitionContract } from "./interaction-stage.js"
-import { cast, Effect, Schema } from "effect"
+import {
+  readInteractionStageRuntime,
+  type InteractionStage,
+  type InteractionStageDefinitionContract,
+} from "./interaction-stage.js"
+import { Predicate, cast, Effect, Schema } from "effect"
 import type {
   AcceptedAnswer,
   CollectAnswers,
@@ -14,7 +18,6 @@ import { readCollectStageRuntime } from "./collect-stage.js"
 import {
   countUntrustedMessageCharacters,
   UntrustedMessageSchema,
-  type UntrustedMessage,
 } from "./model.js"
 import {
   readToolStageRuntime,
@@ -33,15 +36,28 @@ import type {
 import { defineToolSet } from "./tool-set.js"
 import { readToolExecutionModelContext } from "./tool.js"
 import { deriveCommandId } from "./command.js"
+import {
+  isAppliedTurn,
+  parseControlledTurn,
+  turnMessages,
+  AdvanceResult,
+  ControlledTurnInputSchema,
+  type ControlledTurnInput,
+  type InvalidObservedTurn,
+} from "./observed-turn.js"
+import {
+  uncontrolledTurn,
+  type TurnControlService,
+  type TurnControlFailure,
+} from "./turn-control.js"
+import type { CommandContextSource } from "./tool-registry.js"
+import { authored, type ConversationMessage } from "./conversation-message.js"
 import { defineTool } from "./tool.js"
 import { JsonValueSchema, type JsonValue } from "./json-value.js"
 import { recordDebugEvent } from "./debug-trace.js"
+import { ChatNameSchema, ChatVersionSchema } from "./chat-identity.js"
+import type { InvalidChatUserAnswerProjection } from "./user-answer-projection.js"
 import {
-  ChatNameSchema,
-  ChatVersionSchema,
-} from "./chat-identity.js"
-import {
-  InvalidChatUserAnswerProjection,
   projectUserAnswers,
   type StructuredChatUserAnswerSnapshot,
 } from "./user-answer-projection.js"
@@ -104,28 +120,30 @@ type UnionToIntersection<Union> = (
   ? Intersection
   : never
 
-type CollectStateEntry<Stage> = Stage extends CollectStage<
-  infer Name,
-  infer Fields,
-  infer _Guards,
-  infer _Profile
->
-  ? { readonly [Key in Name]: CollectStageState<Fields> }
-  : never
+type CollectStateEntry<Stage> =
+  Stage extends CollectStage<
+    infer Name,
+    infer Fields,
+    infer _Guards,
+    infer _Profile
+  >
+    ? { readonly [Key in Name]: CollectStageState<Fields> }
+    : never
 
 type ChatCollectStage<Stages extends ChatStageTuple> = Extract<
   Stages[number],
   CollectStageDefinitionContract
 >
 
-type CollectFields<Stage> = Stage extends CollectStage<
-  infer _Name,
-  infer Fields,
-  infer _Guards,
-  infer _Profile
->
-  ? Fields
-  : never
+type CollectFields<Stage> =
+  Stage extends CollectStage<
+    infer _Name,
+    infer Fields,
+    infer _Guards,
+    infer _Profile
+  >
+    ? Fields
+    : never
 
 /** Persisted state entries derived from every collect stage. */
 export type ChatStageStates<Stages extends ChatStageTuple> = [
@@ -150,66 +168,80 @@ export interface ChatState<
   }
 }
 
-type ChatQuestion<Stage> = Stage extends CollectStage<
-  infer _Name,
-  infer Fields,
-  infer _Guards,
-  infer _Profile
->
-  ? CollectStagePrompt<Fields>
-  : never
-
-type ChatToolExecution<Stage> = Stage extends InteractionStage<infer _IName, infer ITools, infer _IGuards, infer _IProfile>
-  ? ToolSetExecution<ITools>
-  : Stage extends ToolStage<
-  infer _Name,
-  infer Tools,
-  infer _Guards,
-  infer _Profile
->
-  ? ToolSetExecution<Tools>
-  : Stage extends CommandStage<
-        infer _Name,
-        infer _Command,
-        infer _Guards,
-        infer _Profile
-      >
-    ? Extract<Effect.Success<ReturnType<Stage["run"]>>, object>
+type ChatQuestion<Stage> =
+  Stage extends CollectStage<
+    infer _Name,
+    infer Fields,
+    infer _Guards,
+    infer _Profile
+  >
+    ? CollectStagePrompt<Fields>
     : never
 
-type StageEffect<Stage> = Stage extends InteractionStage<infer _IName, infer _ITools, infer _IGuards, infer _IProfile>
-  ? ReturnType<Stage["run"]>
-  : Stage extends CollectStage<
-  infer _CollectName,
-  infer _Fields,
-  infer _CollectGuards,
-  infer _CollectProfile
->
-  ? ReturnType<Stage["run"]>
-  : Stage extends ToolStage<
-        infer _ToolName,
-        infer _Tools,
-        infer _ToolGuards,
-        infer _ToolProfile
-      >
+type ChatToolExecution<Stage> =
+  Stage extends InteractionStage<
+    infer _IName,
+    infer ITools,
+    infer _IGuards,
+    infer _IProfile
+  >
+    ? ToolSetExecution<ITools>
+    : Stage extends ToolStage<
+          infer _Name,
+          infer Tools,
+          infer _Guards,
+          infer _Profile
+        >
+      ? ToolSetExecution<Tools>
+      : Stage extends CommandStage<
+            infer _Name,
+            infer _Command,
+            infer _Guards,
+            infer _Profile
+          >
+        ? Extract<Effect.Success<ReturnType<Stage["run"]>>, object>
+        : never
+
+type StageEffect<Stage> =
+  Stage extends InteractionStage<
+    infer _IName,
+    infer _ITools,
+    infer _IGuards,
+    infer _IProfile
+  >
     ? ReturnType<Stage["run"]>
-    : Stage extends CommandStage<
-          infer _CommandName,
-          infer _Command,
-          infer _CommandGuards,
-          infer _CommandProfile
+    : Stage extends CollectStage<
+          infer _CollectName,
+          infer _Fields,
+          infer _CollectGuards,
+          infer _CollectProfile
         >
       ? ReturnType<Stage["run"]>
-    : never
+      : Stage extends ToolStage<
+            infer _ToolName,
+            infer _Tools,
+            infer _ToolGuards,
+            infer _ToolProfile
+          >
+        ? ReturnType<Stage["run"]>
+        : Stage extends CommandStage<
+              infer _CommandName,
+              infer _Command,
+              infer _CommandGuards,
+              infer _CommandProfile
+            >
+          ? ReturnType<Stage["run"]>
+          : never
 
 /** Failure union produced by any stage in one chat. */
 export type ChatError<Stages extends ChatStageTuple> =
-  | InvalidChatTransition
-  | Effect.Error<StageEffect<Stages[number]>>
+  InvalidChatTransition | Effect.Error<StageEffect<Stages[number]>>
 
 /** Effect service union required by any stage in one chat. */
-export type ChatRequirements<Stages extends ChatStageTuple> =
-  Exclude<Effect.Services<StageEffect<Stages[number]>>, ToolContext>
+export type ChatRequirements<Stages extends ChatStageTuple> = Exclude<
+  Effect.Services<StageEffect<Stages[number]>>,
+  ToolContext
+>
 
 /** Question, ongoing tool result, or terminal result emitted by one turn. */
 export type ChatTurn<
@@ -274,28 +306,22 @@ export interface ChatExploreInput {
 }
 
 /** Correlated exploration result derived from the configured query tools. */
-export type ChatExplorationRun<
-  Explorations extends ChatExplorationTuple,
-> = Explorations extends ToolTuple ? ToolSetRun<Explorations> : never
+export type ChatExplorationRun<Explorations extends ChatExplorationTuple> =
+  Explorations extends ToolTuple ? ToolSetRun<Explorations> : never
 
 /** Failure union produced while loading and running one exploration. */
-export type ChatExploreError<
-  Explorations extends ChatExplorationTuple,
-> =
+export type ChatExploreError<Explorations extends ChatExplorationTuple> =
   | ChatSessionStoreUnavailable
   | ChatSessionExpired
   | ChatSessionNotFound
   | InvalidChatSession
-  | (Explorations extends ToolTuple
-      ? ToolSetError<Explorations>
-      : never)
+  | (Explorations extends ToolTuple ? ToolSetError<Explorations> : never)
 
 /** Effect services required by one configured exploration tool. */
-export type ChatExploreRequirements<
-  Explorations extends ChatExplorationTuple,
-> = Explorations extends ToolTuple
-  ? Exclude<ToolSetRequirements<Explorations>, ToolContext>
-  : never
+export type ChatExploreRequirements<Explorations extends ChatExplorationTuple> =
+  Explorations extends ToolTuple
+    ? Exclude<ToolSetRequirements<Explorations>, ToolContext>
+    : never
 
 /** Definition input for one sequential structured chat. */
 export interface DefineChatInput<
@@ -334,24 +360,19 @@ export interface ChatDefinition<
     state: ChatState<Name, Version, Stages>,
     stage: Stage,
     field: Field,
-  ) =>
-    | AcceptedAnswer<CollectAnswers<CollectFields<Stage>>[Field]>
-    | undefined
+  ) => AcceptedAnswer<CollectAnswers<CollectFields<Stage>>[Field]> | undefined
 
   /** Strictly parse persisted server-owned chat state. */
   readonly parseState: (
     input: Schema.Codec.Encoded<
       Schema.Codec<ChatState<Name, Version, Stages>, unknown>
     >,
-  ) => Effect.Effect<
-    ChatState<Name, Version, Stages>,
-    Schema.SchemaError
-  >
+  ) => Effect.Effect<ChatState<Name, Version, Stages>, Schema.SchemaError>
 
   /** Run the active stage and any immediately reachable tool stage. */
   readonly run: (input: {
     readonly state: ChatState<Name, Version, Stages>
-    readonly messages: ReadonlyArray<UntrustedMessage>
+    readonly messages: ReadonlyArray<ConversationMessage>
   }) => Effect.Effect<
     ChatTurn<Name, Version, Stages>,
     ChatError<Stages>,
@@ -361,8 +382,8 @@ export interface ChatDefinition<
   /** @internal Execute inside the owning session's command and persistence scope. */
   readonly runScoped: (
     state: RuntimeChatState,
-    messages: ReadonlyArray<UntrustedMessage>,
-    commandContext: () => Effect.Effect<import("./tool.js").CommandExecutionContext>,
+    messages: ReadonlyArray<ConversationMessage>,
+    commandContext: CommandContextSource<TurnControlFailure>,
   ) => Effect.Effect<unknown, unknown, unknown>
 
   /** Load, run, and atomically replace one server-owned chat session. */
@@ -371,6 +392,16 @@ export interface ChatDefinition<
   ) => Effect.Effect<
     ChatReply<Name, Version, Stages>,
     ChatReplyError<Stages>,
+    ChatSessionStore | ChatRequirements<Stages>
+  >
+
+  /** @internal Execute a parsed-source turn under its caller's execution authority. */
+  readonly advance: (
+    input: ControlledTurnInput,
+    control: TurnControlService,
+  ) => Effect.Effect<
+    AdvanceResult<ChatReply<Name, Version, Stages>>,
+    ChatReplyError<Stages> | InvalidObservedTurn | TurnControlFailure,
     ChatSessionStore | ChatRequirements<Stages>
   >
 
@@ -412,7 +443,6 @@ const ChatExploreBoundaryInputSchema = Schema.Struct({
 })
 
 const maximumPersistedMessages = 200
-const maximumMessagesAddedPerTurn = 2
 
 /**
  * Define one sequential chat with collectors and one final executable stage.
@@ -428,33 +458,37 @@ export const defineChat = <
 >(
   definition: DefineChatInput<Name, Version, Stages, Explorations>,
 ): ChatDefinition<Name, Version, Stages, Explorations> => {
-  Schema.decodeSync(ChatNameSchema)(definition.name)
-  Schema.decodeSync(ChatVersionSchema)(definition.version)
+  ChatNameSchema.make(definition.name)
+  ChatVersionSchema.make(definition.version)
   const names = definition.stages.map(({ name }) => name)
+
   if (new Set(names).size !== names.length) {
     throw new Error("Structured chat stage names must be unique")
   }
+
   const finalStage = definition.stages.at(-1)
+
   if (
     finalStage?._tag !== "ToolStage" &&
     finalStage?._tag !== "CommandStage" &&
     finalStage?._tag !== "InteractionStage"
   ) {
-    throw new Error(
-      "Structured chats require one final tool or command stage",
-    )
+    throw new Error("Structured chats require one final tool or command stage")
   }
+
   if (
     definition.stages
       .slice(0, -1)
-      .some((stage) => stage._tag !== "CollectStage")
+      .some((stage) => !Predicate.isTagged(stage, "CollectStage"))
   ) {
     throw new Error(
       "Only collect stages may precede the final executable stage",
     )
   }
+
   const repair = definition.repair
   const explorationDefinitions = definition.explorations ?? []
+
   const explorationToolSet =
     explorationDefinitions.length === 0
       ? undefined
@@ -465,6 +499,7 @@ export const defineChat = <
             explorationDefinitions,
           ),
         )
+
   if (
     repair !== undefined &&
     (finalStage?._tag !== "ToolStage" ||
@@ -476,29 +511,33 @@ export const defineChat = <
   }
 
   const stateFields: Record<string, Schema.Codec<unknown, unknown>> = {}
-  const initialStages: Record<
-    string,
-    CollectStageRuntime["initialState"]
-  > = {}
+  const initialStages: Record<string, CollectStageRuntime["initialState"]> = {}
+
   const collectStages: Array<{
     readonly index: number
     readonly stage: CollectStageDefinitionContract
     readonly runtime: ReturnType<typeof readCollectStageRuntime>
   }> = []
+
   for (const [index, stage] of definition.stages.entries()) {
-    if (stage._tag !== "CollectStage") {
+    if (!Predicate.isTagged(stage, "CollectStage")) {
       continue
     }
+
     const runtime = readCollectStageRuntime(stage)
     stateFields[stage.name] = runtime.stateSchema
     initialStages[stage.name] = runtime.initialState
     collectStages.push({ index, stage, runtime })
   }
+
   const finalStageIndex = definition.stages.length - 1
+
   if (repair !== undefined && collectStages.length === 0) {
     throw new Error("Conversation repair requires at least one collect stage")
   }
+
   const repairToolName = "apply_conversation_repairs"
+
   if (
     repair !== undefined &&
     finalStage?._tag === "ToolStage" &&
@@ -506,24 +545,30 @@ export const defineChat = <
   ) {
     throw new Error(`Tool name is reserved for repair: ${repairToolName}`)
   }
+
   const repairTool: RepairTool | undefined = (() => {
     if (repair === undefined) {
       return undefined
     }
+
     const schemas = collectStages.map(({ runtime }) => runtime.repairSchema)
     const [firstSchema, ...remainingSchemas] = schemas
+
     if (firstSchema === undefined) {
       throw new Error("Conversation repair requires correction schemas")
     }
+
     const correctionSchema =
       remainingSchemas.length === 0
         ? firstSchema
         : Schema.Union([firstSchema, ...remainingSchemas])
+
     const input = Schema.Struct({
       corrections: Schema.NonEmptyArray(correctionSchema).check(
         Schema.isMaxLength(repair.maximumCorrections),
       ),
     })
+
     return defineTool({
       name: repairToolName,
       description:
@@ -532,14 +577,17 @@ export const defineChat = <
       execute: (proposal) => Effect.succeed(proposal),
     })
   })()
+
   const isValidRuntimeState = (state: RuntimeChatState): boolean => {
     const pendingStages = state.repair?.pendingStages ?? []
+
     if (
       (repair === undefined && state.repair !== undefined) ||
       (repair !== undefined && state.repair === undefined)
     ) {
       return false
     }
+
     if (
       pendingStages.some(
         (index, position) =>
@@ -549,55 +597,62 @@ export const defineChat = <
     ) {
       return false
     }
+
     if (pendingStages.length > 0) {
-      if (
-        state.status !== "active" ||
-        state.stage !== pendingStages[0]
-      ) {
+      if (state.status !== "active" || state.stage !== pendingStages[0]) {
         return false
       }
+
       for (const { index, stage, runtime } of collectStages) {
         const stageState = state.stages[stage.name]
+
         if (stageState === undefined || !runtime.isValid(stageState)) {
           return false
         }
+
         const pending = pendingStages.includes(index)
+
         if (pending === runtime.isComplete(stageState)) {
           return false
         }
       }
+
       return true
     }
+
     if (state.status === "complete") {
       if (state.stage !== finalStageIndex || finalStage === undefined) {
         return false
       }
+
       if (
-        (finalStage._tag === "ToolStage" &&
+        (Predicate.isTagged(finalStage, "ToolStage") &&
           readToolStageRuntime(finalStage).afterExecution !== "complete") ||
-        (finalStage._tag === "InteractionStage" && readInteractionStageRuntime(finalStage).completeOn.length === 0)
+        (Predicate.isTagged(finalStage, "InteractionStage") &&
+          readInteractionStageRuntime(finalStage).completeOn.length === 0)
       ) {
         return false
       }
     }
 
-    for (
-      let index = 0;
-      index < definition.stages.length;
-      index += 1
-    ) {
+    for (let index = 0; index < definition.stages.length; index += 1) {
       const stage = definition.stages[index]
+
       if (stage?._tag !== "CollectStage") {
         continue
       }
+
       const runtime = readCollectStageRuntime(stage)
       const stageState = state.stages[stage.name]
+
       if (stageState === undefined || !runtime.isValid(stageState)) {
         return false
       }
+
       if (index < state.stage && !runtime.isComplete(stageState)) {
         return false
       }
+
       if (
         state.status === "active" &&
         index === state.stage &&
@@ -605,6 +660,7 @@ export const defineChat = <
       ) {
         return false
       }
+
       if (index > state.stage && !runtime.isInitial(stageState)) {
         return false
       }
@@ -612,6 +668,7 @@ export const defineChat = <
 
     return true
   }
+
   const baseStateFields = {
     schemaVersion: Schema.Literal(definition.version),
     chat: Schema.Literal(definition.name),
@@ -625,6 +682,7 @@ export const defineChat = <
     status: Schema.Literals(["active", "complete"]),
     stages: Schema.Struct(stateFields),
   }
+
   const rawStateSchema =
     repair === undefined
       ? Schema.Struct(baseStateFields)
@@ -642,29 +700,31 @@ export const defineChat = <
             ).check(Schema.isMaxLength(20)),
           }),
         })
+
   // SAFETY: the conditional repair field is erased only for applying the
   // shared semantic predicate; stateSchema below restores the public type.
   const runtimeStateSchema = cast<
     typeof rawStateSchema,
     Schema.Codec<unknown, unknown>
   >(rawStateSchema)
+
   const refinedStateSchema = runtimeStateSchema.check(
     Schema.makeFilter<unknown>(
       (state) =>
-        isValidRuntimeState(
-          cast<typeof state, RuntimeChatState>(state),
-        ),
+        isValidRuntimeState(cast<typeof state, RuntimeChatState>(state)),
       {
         description: "semantically valid structured-chat state",
       },
     ),
   )
+
   // SAFETY: stage state fields are taken directly from the concrete collect
   // stages, and the remaining envelope fields are exact literals or bounds.
   const stateSchema = cast<
     typeof refinedStateSchema,
     Schema.Codec<ChatState<Name, Version, Stages>, unknown>
   >(refinedStateSchema)
+
   const baseInitialState = {
     schemaVersion: definition.version,
     chat: definition.name,
@@ -672,23 +732,27 @@ export const defineChat = <
     status: "active",
     stages: initialStages,
   } as const
+
   const initialStateInput =
     repair === undefined
       ? baseInitialState
       : { ...baseInitialState, repair: { pendingStages: [] } }
+
   const initialState = Schema.decodeUnknownSync(Schema.toType(stateSchema))(
     initialStateInput,
   )
 
   const isGroundedInMessages = (
     state: RuntimeChatState,
-    messages: ReadonlyArray<UntrustedMessage>,
+    messages: ReadonlyArray<ConversationMessage>,
   ): boolean =>
     definition.stages.every((stage) => {
-      if (stage._tag !== "CollectStage") {
+      if (!Predicate.isTagged(stage, "CollectStage")) {
         return true
       }
+
       const stageState = state.stages[stage.name]
+
       return (
         stageState !== undefined &&
         readCollectStageRuntime(stage).isGroundedInMessages(
@@ -702,22 +766,20 @@ export const defineChat = <
   const parseSessionSnapshot = (loaded: unknown) =>
     Schema.decodeUnknownEffect(ChatSessionSnapshotSchema)(loaded, {
       onExcessProperty: "error",
-    }).pipe(
-      Effect.mapError(() => invalidSession("invalid_snapshot")),
-    )
+    }).pipe(Effect.mapError(() => invalidSession("invalid_snapshot")))
 
   const parseStoredSession = (snapshot: ChatSessionSnapshot) =>
     Effect.gen(function* () {
       const state = yield* Schema.decodeUnknownEffect(stateSchema)(
         snapshot.state,
         { onExcessProperty: "error" },
-      ).pipe(
-        Effect.mapError(() => invalidSession("invalid_state")),
-      )
+      ).pipe(Effect.mapError(() => invalidSession("invalid_state")))
+
       // SAFETY: stateSchema decoded this definition's exact state envelope.
       const runtimeState = cast<typeof state, RuntimeChatState>(state)
+
       if (!isGroundedInMessages(runtimeState, snapshot.messages)) {
-        return yield* Effect.fail(invalidSession("invalid_state"))
+        return yield* invalidSession("invalid_state")
       }
 
       return {
@@ -730,11 +792,12 @@ export const defineChat = <
 
   const applyConversationRepairs = (
     state: RuntimeChatState,
-    messages: ReadonlyArray<UntrustedMessage>,
+    messages: ReadonlyArray<ConversationMessage>,
     corrections: ReadonlyArray<RepairCorrection>,
   ): Effect.Effect<RuntimeChatState, unknown, unknown> =>
     Effect.gen(function* () {
       const grouped = new Map<string, Array<RepairCorrection>>()
+
       for (const correction of corrections) {
         const current = grouped.get(correction.stage) ?? []
         current.push(correction)
@@ -743,32 +806,36 @@ export const defineChat = <
 
       let stages = { ...state.stages }
       const pendingStages: Array<number> = []
+
       for (const { index, stage, runtime } of collectStages) {
         const stageRepairs = grouped.get(stage.name)
+
         if (stageRepairs === undefined) {
           continue
         }
+
         grouped.delete(stage.name)
         const stageState = stages[stage.name]
+
         if (stageState === undefined) {
-          return yield* Effect.fail(
-            invalidTransition(definition.name, "invalid_state"),
-          )
+          return yield* invalidTransition(definition.name, "invalid_state")
         }
+
         const result = yield* runtime.applyRepairs(
           stageState,
           messages,
           stageRepairs,
         )
+
         stages = { ...stages, [stage.name]: result.state }
+
         if (result.requiresConfirmation) {
           pendingStages.push(index)
         }
       }
+
       if (grouped.size > 0) {
-        return yield* Effect.fail(
-          invalidTransition(definition.name, "invalid_state"),
-        )
+        return yield* invalidTransition(definition.name, "invalid_state")
       }
 
       return {
@@ -783,11 +850,11 @@ export const defineChat = <
     chat: definition.name,
     stages: definition.stages,
     finalStageIndex,
-    planRepair: repairTool !== undefined && finalStage?._tag === "ToolStage"
-      ? readToolStageRuntime(finalStage).withRepair(repairTool)
-      : undefined,
-    invalidTransition: (reason) =>
-      invalidTransition(definition.name, reason),
+    planRepair:
+      repairTool !== undefined && finalStage?._tag === "ToolStage"
+        ? readToolStageRuntime(finalStage).withRepair(repairTool)
+        : undefined,
+    invalidTransition: (reason) => invalidTransition(definition.name, reason),
     isValidState: isValidRuntimeState,
     isGroundedInMessages,
     applyRepairs: applyConversationRepairs,
@@ -800,6 +867,7 @@ export const defineChat = <
     Effect.gen(function* () {
       if (previous.status !== "complete" && next.status === "complete") {
         const completedStage = definition.stages[next.stage]
+
         if (completedStage !== undefined) {
           yield* recordDebugEvent({
             _tag: "ChatCompleted",
@@ -809,22 +877,13 @@ export const defineChat = <
       }
     })
 
-  const run: ChatDefinition<
-    Name,
-    Version,
-    Stages,
-    Explorations
-  >["run"] = (input) => {
+  const run: ChatDefinition<Name, Version, Stages, Explorations>["run"] = (
+    input,
+  ) => {
     // SAFETY: ChatState is generated from the same stage tuple as the sealed
     // runtime state contract; only generic correlations are erased here.
-    const runtimeState = cast<
-      typeof input.state,
-      RuntimeChatState
-    >(input.state)
-    const runtime = process.runChecked(
-      runtimeState,
-      input.messages,
-    )
+    const runtimeState = cast<typeof input.state, RuntimeChatState>(input.state)
+    const runtime = process.runChecked(runtimeState, input.messages)
 
     // SAFETY: runtime dispatch follows the exact Stages tuple and each stage
     // retains its own parsing, errors, dependencies, and output constructor.
@@ -838,78 +897,77 @@ export const defineChat = <
     >(runtime)
   }
 
-  const reply: ChatDefinition<
+  const advance: ChatDefinition<
     Name,
     Version,
     Stages,
     Explorations
-  >["reply"] = (input) =>
+  >["advance"] = (input, control) =>
     Effect.gen(function* () {
-      const parsedInput = yield* Schema.decodeUnknownEffect(
-        ChatReplyBoundaryInputSchema,
-      )(input, { onExcessProperty: "error" }).pipe(
-        Effect.mapError(() => invalidSession("invalid_input")),
-      )
+      const parsedInput = yield* parseControlledTurn(input)
       const store = yield* ChatSessionStore
+
       const scope = {
         namespace: parsedInput.namespace ?? "",
         sessionId: parsedInput.sessionId,
         chat: definition.name,
         version: definition.version,
       }
+
       const loaded = yield* store.load(scope).pipe(
-        Effect.withSpan(
-          "popcomputer.structured_chat.session.load",
-          {
-            attributes: {
-              chat: definition.name,
-              version: definition.version,
-            },
+        Effect.withSpan("popcomputer.structured_chat.session.load", {
+          attributes: {
+            chat: definition.name,
+            version: definition.version,
           },
-        ),
+        }),
       )
+
       const snapshot =
-        loaded === null
-          ? null
-          : yield* parseSessionSnapshot(loaded)
+        loaded === null ? null : yield* parseSessionSnapshot(loaded)
 
       if (
-        (snapshot === null &&
-          parsedInput.expectedRevision !== undefined) ||
+        snapshot !== null &&
+        (yield* isAppliedTurn(parsedInput.turn, snapshot.messages))
+      ) {
+        yield* parseStoredSession(snapshot)
+
+        return AdvanceResult.AlreadyApplied({
+          currentRevision: snapshot.revision,
+        })
+      }
+
+      if (
+        (snapshot === null && parsedInput.expectedRevision !== undefined) ||
         (snapshot !== null &&
           parsedInput.expectedRevision !== snapshot.revision)
       ) {
-        return yield* Effect.fail(
-          new ChatSessionConflict({ reason: "concurrent_update" }),
-        )
+        return yield* new ChatSessionConflict({ reason: "concurrent_update" })
       }
 
       const storedSession =
-        snapshot === null
-          ? null
-          : yield* parseStoredSession(snapshot)
-      const state =
-        storedSession?.state ?? initialState
+        snapshot === null ? null : yield* parseStoredSession(snapshot)
+
+      const state = storedSession?.state ?? initialState
       const previousMessages = storedSession?.messages ?? []
+
       const runtimeState =
         storedSession?.runtimeState ??
         // SAFETY: initialState was decoded by this definition's stateSchema.
         cast<typeof initialState, RuntimeChatState>(initialState)
+
+      const incoming = turnMessages(parsedInput.turn)
+
       if (
-        previousMessages.length + maximumMessagesAddedPerTurn >
+        previousMessages.length + incoming.length + 1 >
         maximumPersistedMessages
       ) {
-        return yield* Effect.fail(invalidSession("history_limit"))
+        return yield* invalidSession("history_limit")
       }
-      const userMessage = yield* Schema.decodeUnknownEffect(
-        UntrustedMessageSchema,
-      )(
-        { role: "user", content: parsedInput.message },
-        { onExcessProperty: "error" },
-      ).pipe(
-        Effect.mapError(() => invalidSession("invalid_input")),
-      )
-      const messages = [...previousMessages, userMessage]
+
+      yield* control.check()
+      const messages = [...previousMessages, ...incoming]
+
       const commandContext = () =>
         deriveCommandId({
           namespace: scope.namespace,
@@ -917,7 +975,11 @@ export const defineChat = <
           version: definition.version,
           sessionId: scope.sessionId,
           expectedRevision: snapshot?.revision ?? null,
-        }).pipe(Effect.map((commandId) => ({ commandId })))
+        }).pipe(
+          Effect.tap((commandId) => control.admitCommand(commandId)),
+          Effect.map((commandId) => ({ commandId })),
+        )
+
       // SAFETY: stateSchema has parsed the definition-owned state and the
       // explicit check above grounded it against these exact messages.
       // Reply supplies one turn identity for any selected command.
@@ -930,55 +992,50 @@ export const defineChat = <
           state.status === "active" &&
           state.stage === finalStageIndex,
       )
+
       const turn = yield* cast<
         typeof trustedTurn,
         Effect.Effect<
           ChatTurn<Name, Version, Stages>,
-          ChatError<Stages>,
+          ChatError<Stages> | TurnControlFailure,
           ChatRequirements<Stages>
         >
       >(trustedTurn)
+
       // SAFETY: turn.state is produced by this definition's sealed runtime.
-      const nextRuntimeState = cast<
-        typeof turn.state,
-        RuntimeChatState
-      >(turn.state)
+      const nextRuntimeState = cast<typeof turn.state, RuntimeChatState>(
+        turn.state,
+      )
+
       yield* recordTurnAnnotations(runtimeState, nextRuntimeState)
-      const toolModelContext =
-        turn._tag === "Question"
-          ? undefined
-          : readToolExecutionModelContext(turn.result)
-      const persistedMessages: ReadonlyArray<UntrustedMessage> =
-        turn._tag === "Question"
-          ? [
-              ...messages,
-              {
-                role: "assistant",
-                content: turn.question.text,
-              },
-            ]
+
+      const toolModelContext = Predicate.isTagged(turn, "Question")
+        ? undefined
+        : readToolExecutionModelContext(turn.result)
+
+      const persistedMessages: ReadonlyArray<ConversationMessage> =
+        Predicate.isTagged(turn, "Question")
+          ? [...messages, authored(turn.question.text)]
           : toolModelContext === undefined
             ? messages
-            : [
-                ...messages,
-                {
-                  role: "assistant",
-                  content: toolModelContext,
-                },
-              ]
+            : [...messages, authored(toolModelContext)]
+
       if (persistedMessages.length > maximumPersistedMessages) {
-        return yield* Effect.fail(invalidSession("history_limit"))
+        return yield* invalidSession("history_limit")
       }
+
       const encodedState = yield* Schema.encodeUnknownEffect(stateSchema)(
         turn.state,
         { onExcessProperty: "error" },
-      ).pipe(
-        Effect.mapError(() => invalidSession("invalid_state")),
-      )
+      ).pipe(Effect.mapError(() => invalidSession("invalid_state")))
+
       const userAnswers = yield* projectUserAnswers({
         definition,
         state: nextRuntimeState,
       })
+
+      yield* control.beforeCommit()
+
       const replaced = yield* store
         .replace({
           ...scope,
@@ -987,99 +1044,133 @@ export const defineChat = <
           messages: persistedMessages,
         })
         .pipe(
-          Effect.withSpan(
-            "popcomputer.structured_chat.session.replace",
-            {
-              attributes: {
-                chat: definition.name,
-                version: definition.version,
-                messageCount: persistedMessages.length,
-                messageCharacterCount:
-                  countUntrustedMessageCharacters(
-                    persistedMessages,
-                  ),
-                stage: turn.state.stage,
-                status: turn.state.status,
-              },
+          Effect.withSpan("popcomputer.structured_chat.session.replace", {
+            attributes: {
+              chat: definition.name,
+              version: definition.version,
+              messageCount: persistedMessages.length,
+              messageCharacterCount:
+                countUntrustedMessageCharacters(persistedMessages),
+              stage: turn.state.stage,
+              status: turn.state.status,
             },
-          ),
+          }),
         )
+
       const replacement = yield* Schema.decodeUnknownEffect(
         ChatSessionReplacementSchema,
       )(replaced, { onExcessProperty: "error" }).pipe(
         Effect.mapError(() => invalidSession("invalid_replacement")),
       )
 
-      return {
-        sessionId: scope.sessionId,
-        revision: replacement.revision,
-        turn,
-        userAnswers,
-      }
+      return AdvanceResult.Applied({
+        reply: {
+          sessionId: scope.sessionId,
+          revision: replacement.revision,
+          turn,
+          userAnswers,
+        },
+      })
     }).pipe(
       Effect.withSpan("popcomputer.structured_chat.session.reply", {
         attributes: { chat: definition.name },
       }),
     )
 
+  const reply: ChatDefinition<Name, Version, Stages, Explorations>["reply"] = (
+    input,
+  ) => {
+    const effect = Schema.decodeEffect(ChatReplyBoundaryInputSchema)(input, {
+      onExcessProperty: "error",
+    }).pipe(
+      Effect.mapError(() => invalidSession("invalid_input")),
+      Effect.flatMap(({ message, ...scope }) =>
+        advance(
+          {
+            ...scope,
+            turn: ControlledTurnInputSchema.fields.turn.cases.Submitted.make({
+              message,
+            }),
+          },
+          uncontrolledTurn,
+        ),
+      ),
+      Effect.map((result) => {
+        if (!Predicate.isTagged(result, "Applied"))
+          throw new Error("Submitted turns cannot replay observations")
+
+        return result.reply
+      }),
+    )
+
+    // SAFETY: the submitted boundary is already decoded, cannot replay, and
+    // uses a control that cannot fail. Stage/store failures remain unchanged.
+    return cast<
+      typeof effect,
+      ReturnType<ChatDefinition<Name, Version, Stages, Explorations>["reply"]>
+    >(effect)
+  }
+
   const exploreRuntime = (input: ChatExploreInput) =>
     Effect.gen(function* () {
-      const parsedInput = yield* Schema.decodeUnknownEffect(
+      const parsedInput = yield* Schema.decodeEffect(
         ChatExploreBoundaryInputSchema,
       )(input, { onExcessProperty: "error" }).pipe(
         Effect.mapError(() => invalidSession("invalid_input")),
       )
+
       if (explorationToolSet === undefined) {
-        return yield* Effect.fail(invalidSession("invalid_input"))
+        return yield* invalidSession("invalid_input")
       }
 
       const store = yield* ChatSessionStore
-      const loaded = yield* store.load({
-        namespace: parsedInput.namespace ?? "",
-        sessionId: parsedInput.sessionId,
-        chat: definition.name,
-        version: definition.version,
-      }).pipe(
-        Effect.withSpan(
-          "popcomputer.structured_chat.exploration.session.load",
-          {
-            attributes: {
-              chat: definition.name,
-              version: definition.version,
+
+      const loaded = yield* store
+        .load({
+          namespace: parsedInput.namespace ?? "",
+          sessionId: parsedInput.sessionId,
+          chat: definition.name,
+          version: definition.version,
+        })
+        .pipe(
+          Effect.withSpan(
+            "popcomputer.structured_chat.exploration.session.load",
+            {
+              attributes: {
+                chat: definition.name,
+                version: definition.version,
+              },
             },
-          },
-        ),
-      )
-      if (loaded === null) {
-        return yield* Effect.fail(
-          new ChatSessionNotFound({ reason: "not_found" }),
+          ),
         )
+
+      if (loaded === null) {
+        return yield* new ChatSessionNotFound({ reason: "not_found" })
       }
+
       const snapshot = yield* parseSessionSnapshot(loaded)
       const stored = yield* parseStoredSession(snapshot)
-      const executed = yield* explorationToolSet.runCall(parsedInput.call).pipe(Effect.provideService(ToolContext, { stages: stored.runtimeState.stages }))
+
+      const executed = yield* explorationToolSet.runCall(parsedInput.call).pipe(
+        Effect.provideService(ToolContext, {
+          stages: stored.runtimeState.stages,
+        }),
+      )
 
       // SAFETY: explorationToolSet was compiled from Explorations after the
       // non-empty branch, and runCall preserves each member's correlation.
-      return cast<
-        typeof executed,
-        ChatExplorationRun<Explorations>
-      >(executed)
+      return cast<typeof executed, ChatExplorationRun<Explorations>>(executed)
     }).pipe(
       Effect.withSpan("popcomputer.structured_chat.exploration.run", {
         attributes: { chat: definition.name },
       }),
     )
+
   // SAFETY: explorationToolSet is compiled from definition.explorations;
   // its erased runtime unions are restored by the same concrete tuple here.
   const explore = cast<
     typeof exploreRuntime,
-    ChatDefinition<
-      Name,
-      Version,
-      Stages,
-      Explorations
-    >["explore"]
+    ChatDefinition<Name, Version, Stages, Explorations>["explore"]
   >(exploreRuntime)
 
   return {
@@ -1088,10 +1179,9 @@ export const defineChat = <
     stages: definition.stages,
     // SAFETY: omitted explorations correspond to the default empty tuple;
     // supplied definitions retain their exact inferred tuple.
-    explorations: cast<
-      typeof explorationDefinitions,
-      Explorations
-    >(explorationDefinitions),
+    explorations: cast<typeof explorationDefinitions, Explorations>(
+      explorationDefinitions,
+    ),
     repair,
     stateSchema,
     initialState,
@@ -1099,20 +1189,24 @@ export const defineChat = <
       if (!definition.stages.includes(stage)) {
         return undefined
       }
+
       // SAFETY: Stage is restricted to this chat's concrete collect stages,
       // Field is restricted to its field keys, and state uses the same tuple.
       const runtimeState = cast<typeof state, RuntimeChatState>(state)
+
       const stageState = Object.prototype.hasOwnProperty.call(
         runtimeState.stages,
         stage.name,
       )
         ? runtimeState.stages[stage.name]
         : undefined
+
       const accepted =
         stageState !== undefined &&
-          Object.prototype.hasOwnProperty.call(stageState.accepted, field)
+        Object.prototype.hasOwnProperty.call(stageState.accepted, field)
           ? stageState.accepted[field]
           : undefined
+
       return cast<
         typeof accepted,
         | AcceptedAnswer<
@@ -1127,9 +1221,14 @@ export const defineChat = <
       }),
     run,
     runScoped: (state, messages, commandContext) =>
-      process.runChecked(state, messages, commandContext,
-        repair !== undefined && state.stage === finalStageIndex),
+      process.runChecked(
+        state,
+        messages,
+        commandContext,
+        repair !== undefined && state.stage === finalStageIndex,
+      ),
     reply,
+    advance,
     explore,
   }
 }

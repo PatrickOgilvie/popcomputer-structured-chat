@@ -1,4 +1,5 @@
-import { Context, Effect, Result, Schema } from "effect"
+import type { Result } from "effect"
+import { Context, Effect, Schema } from "effect"
 import { JsonValueSchema } from "./json-value.js"
 
 const DebugSequenceSchema = Schema.Natural
@@ -44,10 +45,7 @@ export const StructuredChatDebugEventSchema = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("ModelOutputRejected"),
     ...DebugModelCallBaseFields,
-    reason: Schema.Literals([
-      "invalid_provider_response",
-      "invalid_tool_call",
-    ]),
+    reason: Schema.Literals(["invalid_provider_response", "invalid_tool_call"]),
   }),
   Schema.Struct({
     _tag: Schema.Literal("ToolCalled"),
@@ -93,19 +91,19 @@ export type StructuredChatDebugEvent = Schema.Schema.Type<
 >
 
 const maximumDebugTraceEvents = 200
+
 const maximumCapturedDebugEvents = maximumDebugTraceEvents - 1
 
 const StructuredChatDebugEventsSchema = Schema.Array(
   StructuredChatDebugEventSchema,
-).check(
-  Schema.isMaxLength(maximumDebugTraceEvents),
-).check(
-  Schema.makeFilter<ReadonlyArray<StructuredChatDebugEvent>>(
-    (events) =>
-      events.every((event, index) => event.sequence === index),
-    { description: "contiguous structured-chat debug event sequence" },
-  ),
 )
+  .check(Schema.isMaxLength(maximumDebugTraceEvents))
+  .check(
+    Schema.makeFilter<ReadonlyArray<StructuredChatDebugEvent>>(
+      (events) => events.every((event, index) => event.sequence === index),
+      { description: "contiguous structured-chat debug event sequence" },
+    ),
+  )
 
 /** One server turn's bounded, non-persisted debug event stream. */
 export const StructuredChatDebugTraceSchema = Schema.Struct({
@@ -149,14 +147,10 @@ export const DebugEventRecorder = Context.Reference<DebugEventRecorderService>(
 
 /** @internal Allocate an identifier for one literal provider invocation. */
 export const nextDebugModelCall: Effect.Effect<number> =
-  DebugEventRecorder.pipe(
-    Effect.map((recorder) => recorder.nextModelCall()),
-  )
+  DebugEventRecorder.pipe(Effect.map((recorder) => recorder.nextModelCall()))
 
 /** @internal Append one event when the current turn opted into capture. */
-export const recordDebugEvent = (
-  event: DebugEventDraft,
-): Effect.Effect<void> =>
+export const recordDebugEvent = (event: DebugEventDraft): Effect.Effect<void> =>
   DebugEventRecorder.pipe(
     Effect.tap((recorder) => Effect.sync(() => recorder.record(event))),
     Effect.asVoid,
@@ -172,6 +166,7 @@ export const recordLatestDebugModelOutputRejected = (
   DebugEventRecorder.pipe(
     Effect.tap((recorder) => {
       const call = recorder.latestModelCall()
+
       return call === undefined
         ? Effect.void
         : Effect.sync(() =>
@@ -204,11 +199,13 @@ export const captureDebugEvents = <Value, Error, Requirements>(
     let nextModelCall = 0
     let latestModelCall: number | undefined
     let traceTruncated = false
+
     const recorder: DebugEventRecorderService = {
       nextModelCall: () => {
         const call = nextModelCall
         nextModelCall += 1
         latestModelCall = call
+
         return call
       },
       latestModelCall: () => latestModelCall,
@@ -216,6 +213,7 @@ export const captureDebugEvents = <Value, Error, Requirements>(
         if (traceTruncated) {
           return
         }
+
         if (events.length >= maximumCapturedDebugEvents) {
           const truncatedSequence = maximumCapturedDebugEvents - 1
           events[truncatedSequence] = {
@@ -224,8 +222,10 @@ export const captureDebugEvents = <Value, Error, Requirements>(
           }
           nextSequence = maximumCapturedDebugEvents
           traceTruncated = true
+
           return
         }
+
         events.push({ ...event, sequence: nextSequence })
         nextSequence += 1
       },

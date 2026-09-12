@@ -16,16 +16,13 @@ const structuredDefinitionKind = Symbol(
 )
 
 /** @internal Nominal proof that a definition came from this package. */
-export interface StructuredDefinition<
-  Kind extends StructuredDefinitionKind,
-> {
+export interface StructuredDefinition<Kind extends StructuredDefinitionKind> {
   readonly [structuredDefinitionKind]: Kind
 }
 
 /** @internal Attach a non-copying nominal identity in a public builder. */
-export const structuredDefinition = <
-  const Kind extends StructuredDefinitionKind,
->(kind: Kind) =>
+export const structuredDefinition =
+  <const Kind extends StructuredDefinitionKind>(kind: Kind) =>
   <Value extends object>(
     value: Omit<Value, keyof StructuredDefinition<Kind>>,
   ): Value & StructuredDefinition<Kind> => {

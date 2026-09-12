@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { createElement } from "react"
-import {
-  act,
-  create,
-  type ReactTestRenderer,
-} from "react-test-renderer"
+import { act, create, type ReactTestRenderer } from "react-test-renderer"
 import {
   createStructuredChatUserAnswerStore,
   useStructuredChatUserAnswers,
@@ -74,6 +70,7 @@ describe("createStructuredChatUserAnswerStore", () => {
     const store = createStructuredChatUserAnswerStore()
     const otherStore = createStructuredChatUserAnswerStore()
     let notifications = 0
+
     const unsubscribe = store.subscribe(() => {
       notifications += 1
     })
@@ -89,9 +86,7 @@ describe("createStructuredChatUserAnswerStore", () => {
 
     store.receive(replacementUpdate)
     expect(store.getSnapshot()).toBe(replacementUpdate)
-    expect(
-      store.getSnapshot()?.snapshot.sections[0]?.fields,
-    ).toHaveLength(1)
+    expect(store.getSnapshot()?.snapshot.sections[0]?.fields).toHaveLength(1)
     expect(notifications).toBe(2)
 
     unsubscribe()
@@ -142,6 +137,7 @@ describe("useStructuredChatUserAnswers", () => {
     store,
   }: Readonly<{ store: StructuredChatUserAnswerStore }>) => {
     const update = useStructuredChatUserAnswers(store)
+
     return createElement(
       "output",
       null,
@@ -154,6 +150,7 @@ describe("useStructuredChatUserAnswers", () => {
   test("rerenders mounted subscribers and cleans up on unmount", async () => {
     const source = createStructuredChatUserAnswerStore()
     let activeSubscriptions = 0
+
     const store: StructuredChatUserAnswerStore = {
       receive: source.receive,
       clear: source.clear,
@@ -161,18 +158,21 @@ describe("useStructuredChatUserAnswers", () => {
       subscribe: (listener) => {
         activeSubscriptions += 1
         const unsubscribe = source.subscribe(listener)
+
         return () => {
           unsubscribe()
           activeSubscriptions -= 1
         }
       },
     }
+
     const mounted: MountedRenderer = {}
 
     await act(() => {
       mounted.renderer = create(createElement(Answers, { store }))
     })
     const renderer = mounted.renderer
+
     if (renderer === undefined) {
       throw new Error("React answer-store test renderer did not mount")
     }

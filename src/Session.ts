@@ -23,3 +23,6 @@ export type {
   ChatSessionStoreService as StoreService,
   ReplaceChatSessionInput as ReplaceInput,
 } from "./core/session.js"
+
+/** Source-bearing message construction for session adapters and low-level transitions. */
+export * as Message from "./core/conversation-message.js"

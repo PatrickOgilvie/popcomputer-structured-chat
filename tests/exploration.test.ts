@@ -20,16 +20,19 @@ const makeFixture = (options: FixtureOptions = {}) => {
     input: Schema.Struct({}),
     execute: () => Effect.succeed({ ready: true }),
   })
+
   const PrimaryStage = Stage.tools({
     name: "primary",
     instructions: ["Run the primary query."],
     tools: [PrimaryQuery],
   })
+
   const RelatedView = View.define({
     name: "related_records",
     version: 1,
     schema: Schema.Struct({ query: Schema.String }),
   })
+
   const RelatedQuery = Tool.define({
     name: "related_query",
     description: "Find related records without progressing the chat.",
@@ -44,15 +47,15 @@ const makeFixture = (options: FixtureOptions = {}) => {
             : options.executeExploration(query),
         ),
       ),
-  }).pipe(
-    Tool.present(RelatedView, ({ query }) => ({ query })),
-  )
+  }).pipe(Tool.present(RelatedView, ({ query }) => ({ query })))
+
   const Definition = Chat.define({
     name: "exploration_chat",
     version: 1,
     stages: [PrimaryStage],
     explorations: [RelatedQuery],
   })
+
   const store = Layer.succeed(Session.Store, {
     load: () => Effect.succeed(snapshot),
     replace: (input) =>
@@ -64,13 +67,16 @@ const makeFixture = (options: FixtureOptions = {}) => {
           state: input.state,
           messages: input.messages,
         }
+
         return { revision }
       }),
   })
+
   const model = Layer.succeed(Model.Service, {
     requestTool: () =>
       Effect.sync(() => {
         modelCalls += 1
+
         return { name: "primary_query", arguments: {} }
       }),
   })
@@ -142,66 +148,83 @@ describe("Chat.explore", () => {
 
   test("overlaps a main turn and independent explorations with one session replacement", async () => {
     let notifyExplorationsStarted: () => void = () => undefined
+
     const explorationsStarted = new Promise<void>((resolve) => {
       notifyExplorationsStarted = resolve
     })
+
     let releaseExplorations: () => void = () => undefined
+
     const explorationsReleased = new Promise<void>((resolve) => {
       releaseExplorations = resolve
     })
+
     let startedExplorations = 0
+
     const fixture = makeFixture({
       executeExploration: (query) =>
         Effect.promise(async () => {
           startedExplorations += 1
+
           if (startedExplorations === 2) {
             notifyExplorationsStarted()
           }
+
           await explorationsReleased
+
           return { query }
         }),
     })
+
     const opening = await Effect.runPromise(
       Chat.turn(fixture.Definition, {
         sessionId: "exploration:concurrent",
         message: "Start the conversation",
       }).pipe(Effect.provide(fixture.live)),
     )
+
     const writesBefore = fixture.writes
 
     let notifyTurnStarted: () => void = () => undefined
+
     const turnStarted = new Promise<void>((resolve) => {
       notifyTurnStarted = resolve
     })
+
     let releaseTurn: () => void = () => undefined
+
     const turnReleased = new Promise<void>((resolve) => {
       releaseTurn = resolve
     })
+
     let concurrentModelCalls = 0
+
     const concurrentModel = Layer.succeed(Model.Service, {
       requestTool: () =>
         Effect.promise(async () => {
           concurrentModelCalls += 1
           notifyTurnStarted()
           await turnReleased
+
           return { name: "primary_query", arguments: {} }
         }),
     })
+
     const turnPromise = Effect.runPromise(
       Chat.turn(fixture.Definition, {
         sessionId: "exploration:concurrent",
         expectedRevision: opening.revision,
         message: "Refine the conversation",
-      }).pipe(
-        Effect.provide(Layer.merge(fixture.store, concurrentModel)),
-      ),
+      }).pipe(Effect.provide(Layer.merge(fixture.store, concurrentModel))),
     )
+
     const firstExplorationPromise = Effect.runPromise(
       Chat.explore(fixture.Definition, {
         sessionId: "exploration:concurrent",
         call: Tool.makeCall(fixture.RelatedQuery, { query: "first" }),
       }).pipe(Effect.provide(fixture.store)),
     )
+
     const secondExplorationPromise = Effect.runPromise(
       Chat.explore(fixture.Definition, {
         sessionId: "exploration:concurrent",
@@ -212,12 +235,12 @@ describe("Chat.explore", () => {
     await Promise.all([turnStarted, explorationsStarted])
     releaseTurn()
     releaseExplorations()
-    const [turn, firstExploration, secondExploration] =
-      await Promise.all([
-        turnPromise,
-        firstExplorationPromise,
-        secondExplorationPromise,
-      ])
+
+    const [turn, firstExploration, secondExploration] = await Promise.all([
+      turnPromise,
+      firstExplorationPromise,
+      secondExplorationPromise,
+    ])
 
     expect(turn.revision).toBe("2")
     expect(firstExploration).toMatchObject({
@@ -236,6 +259,7 @@ describe("Chat.explore", () => {
 
   test("fails safely when the session does not exist", async () => {
     const fixture = makeFixture()
+
     const result = await Effect.runPromise(
       Effect.result(
         Chat.explore(fixture.Definition, {
@@ -246,10 +270,12 @@ describe("Chat.explore", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Session.NotFound)
       expect(result.failure).toMatchObject({ reason: "not_found" })
     }
+
     expect(fixture.explorationCalls).toBe(0)
   })
 
@@ -261,6 +287,7 @@ describe("Chat.explore", () => {
         message: "Start the conversation",
       }).pipe(Effect.provide(fixture.live)),
     )
+
     const result = await Effect.runPromise(
       Effect.result(
         Chat.explore(fixture.Definition, {
@@ -271,20 +298,23 @@ describe("Chat.explore", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Tool.InvalidCall)
       expect(result.failure).toMatchObject({ reason: "unknown_tool" })
     }
+
     expect(fixture.explorationCalls).toBe(0)
   })
 
   test("revalidates persisted state before executing the query", async () => {
     const fixture = makeFixture()
+
     const invalidStore = Layer.succeed(Session.Store, {
-      load: () =>
-        Effect.succeed({ revision: "1", state: {}, messages: [] }),
+      load: () => Effect.succeed({ revision: "1", state: {}, messages: [] }),
       replace: () => Effect.die("exploration must not replace state"),
     })
+
     const result = await Effect.runPromise(
       Effect.result(
         Chat.explore(fixture.Definition, {
@@ -295,10 +325,12 @@ describe("Chat.explore", () => {
     )
 
     expect(Result.isFailure(result)).toBe(true)
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(Session.Invalid)
       expect(result.failure).toMatchObject({ reason: "invalid_state" })
     }
+
     expect(fixture.explorationCalls).toBe(0)
   })
 })

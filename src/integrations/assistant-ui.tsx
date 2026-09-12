@@ -1,21 +1,16 @@
-import {
-  makeAssistantDataUI,
-} from "@assistant-ui/core/react"
-import { Exit, Result, Schema } from "effect"
+import { makeAssistantDataUI } from "@assistant-ui/core/react"
+import { Predicate, Exit, Result, Schema } from "effect"
 import { createElement, type ComponentType, type FC } from "react"
 import type { StructuredChatDebugSnapshot } from "../core/debug.js"
 import type { StructuredChatDebugTurn } from "../core/debug-protocol.js"
-import type {
-  ViewData,
-  ViewDefinitionContract,
-} from "../core/view.js"
+import type { ViewData, ViewDefinitionContract } from "../core/view.js"
+import type { StructuredChatTurnRequestSchema } from "../core/protocol.js"
 import {
   type StructuredChatSessionReference,
   type StructuredChatAssistantMessage,
   type StructuredChatExplorationRequest,
   type StructuredChatExplorationResponse,
   StructuredChatSessionReferenceSchema,
-  StructuredChatTurnRequestSchema,
 } from "../core/protocol.js"
 import {
   makeChatTurnClient,
@@ -30,6 +25,7 @@ export {
   createStructuredChatUserAnswerStore,
   useStructuredChatUserAnswers,
 } from "./assistant-ui-user-answers.js"
+
 export type {
   StructuredChatUserAnswerStore,
   StructuredChatUserAnswerUpdate,
@@ -42,11 +38,7 @@ export type AssistantViewPartStatus =
   | {
       readonly type: "incomplete"
       readonly reason:
-        | "cancelled"
-        | "length"
-        | "content-filter"
-        | "other"
-        | "error"
+        "cancelled" | "length" | "content-filter" | "other" | "error"
       readonly error?: unknown
     }
   | {
@@ -94,6 +86,7 @@ export const makeAssistantView = <View extends ViewDefinitionContract>(
 ): AssistantDataUI => {
   const Renderer = (props: AssistantDataMessagePartProps) => {
     const data = Schema.decodeUnknownResult(JsonValueSchema)(props.data)
+
     if (Result.isFailure(data)) {
       return config.fallback === undefined
         ? null
@@ -105,6 +98,7 @@ export const makeAssistantView = <View extends ViewDefinitionContract>(
       name: view.name,
       data: data.success,
     })
+
     if (Result.isFailure(decoded)) {
       return config.fallback === undefined
         ? null
@@ -138,9 +132,7 @@ export interface AssistantChatModelAdapterOptions {
    * Receive the complete public-answer snapshot after a strictly decoded
    * persisted response. Supplying this callback does not select debug mode.
    */
-  readonly onAnswerSnapshot?: (
-    update: UserAnswerUpdate,
-  ) => void | Promise<void>
+  readonly onAnswerSnapshot?: (update: UserAnswerUpdate) => void | Promise<void>
   /**
    * Select the explicit debug response contract and receive its safe state
    * projection after every successful turn. Observer failures are ignored so
@@ -153,9 +145,7 @@ export interface AssistantChatModelAdapterOptions {
    * Receive the current state together with the ordered literal model trace.
    * Supplying this callback selects the explicit debug response contract.
    */
-  readonly onDebugTurn?: (
-    turn: StructuredChatDebugTurn,
-  ) => void | Promise<void>
+  readonly onDebugTurn?: (turn: StructuredChatDebugTurn) => void | Promise<void>
 }
 
 const notifyObserver = <Value,>(
@@ -174,8 +164,7 @@ const notifyObserver = <Value,>(
 export interface AssistantChatThreadMessage {
   readonly role: string
   readonly content: ReadonlyArray<
-    | { readonly type: "text"; readonly text: string }
-    | { readonly type: string }
+    { readonly type: "text"; readonly text: string } | { readonly type: string }
   >
   readonly attachments?: ReadonlyArray<unknown>
   readonly metadata: {
@@ -199,8 +188,7 @@ export interface AssistantChatModelAdapter {
       readonly custom:
         | Readonly<Record<never, never>>
         | {
-            readonly [assistantChatSessionMetadataKey]:
-              StructuredChatSessionReference
+            readonly [assistantChatSessionMetadataKey]: StructuredChatSessionReference
           }
     }
   }>
@@ -216,17 +204,18 @@ const readMessageText = (message: AssistantChatThreadMessage): string =>
 
 export const readLatestAssistantChatSession = (
   messages: ReadonlyArray<AssistantChatThreadMessage>,
-): Schema.Schema.Type<
-  typeof StructuredChatTurnRequestSchema
->["session"] => {
+): Schema.Schema.Type<typeof StructuredChatTurnRequestSchema>["session"] => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
+
     if (message?.role !== "assistant") {
       continue
     }
+
     const session = Schema.decodeUnknownExit(
       StructuredChatSessionReferenceSchema,
     )(message.metadata.custom[assistantChatSessionMetadataKey])
+
     if (Exit.isSuccess(session)) {
       return session.value
     }
@@ -239,9 +228,11 @@ const readTurnRequest = (
   messages: ReadonlyArray<AssistantChatThreadMessage>,
 ) => {
   const message = messages.at(-1)
+
   if (message?.role !== "user") {
     throw new Error("A user message is required")
   }
+
   if ((message.attachments?.length ?? 0) > 0) {
     throw new Error("Attachments are not supported")
   }
@@ -266,6 +257,7 @@ export const makeAssistantChatModelAdapter = (
   const onAnswerSnapshot = options.onAnswerSnapshot
   const onDebugSnapshot = options.onDebugSnapshot
   const onDebugTurn = options.onDebugTurn
+
   const debugRequested =
     onDebugSnapshot !== undefined || onDebugTurn !== undefined
 
@@ -275,9 +267,13 @@ export const makeAssistantChatModelAdapter = (
 
   return {
     run: async ({ messages, abortSignal }) => {
-      const result = await client.run(readTurnRequest(messages), { signal: abortSignal })
-      if (result._tag === "Failure") {
-        if (result.failure._tag === "ChatClientCancelled") throw result.failure.cause
+      const result = await client.run(readTurnRequest(messages), {
+        signal: abortSignal,
+      })
+
+      if (Predicate.isTagged(result, "Failure")) {
+        if (Predicate.isTagged(result.failure, "ChatClientCancelled"))
+          throw result.failure.cause
         throw new Error(
           result.failure.reason === "invalid_response"
             ? "Structured chat returned an invalid response"
@@ -286,22 +282,39 @@ export const makeAssistantChatModelAdapter = (
               : "Structured chat is temporarily unavailable",
         )
       }
+
       abortSignal.throwIfAborted()
       const value = result.success
+
       if ("outcome" in value && value.outcome === "failure") {
         if (onDebugTurn !== undefined) {
-          notifyObserver(onDebugTurn, { _tag: "Failed", session: value.session, trace: value.trace })
+          notifyObserver(onDebugTurn, {
+            _tag: "Failed",
+            session: value.session,
+            trace: value.trace,
+          })
         }
+
         throw new Error("Structured chat is temporarily unavailable")
       }
+
       if ("answers" in value && onAnswerSnapshot !== undefined) {
-        notifyObserver(onAnswerSnapshot, { session: value.session, snapshot: value.answers })
+        notifyObserver(onAnswerSnapshot, {
+          session: value.session,
+          snapshot: value.answers,
+        })
       }
+
       if ("outcome" in value) {
-        if (onDebugSnapshot !== undefined) notifyObserver(onDebugSnapshot, value.debug)
+        if (onDebugSnapshot !== undefined)
+          notifyObserver(onDebugSnapshot, value.debug)
+
         if (onDebugTurn !== undefined) {
           notifyObserver(onDebugTurn, {
-            _tag: "Succeeded", session: value.session, snapshot: value.debug, trace: value.trace,
+            _tag: "Succeeded",
+            session: value.session,
+            snapshot: value.debug,
+            trace: value.trace,
           })
         }
       }
@@ -313,8 +326,7 @@ export const makeAssistantChatModelAdapter = (
             value.session === undefined
               ? {}
               : {
-                  [assistantChatSessionMetadataKey]:
-                    value.session,
+                  [assistantChatSessionMetadataKey]: value.session,
                 },
         },
       }
@@ -373,14 +385,23 @@ export const makeAssistantExplorationClient = (
   options: AssistantExplorationClientOptions,
 ): AssistantExplorationClient => {
   const client = makeChatExplorationClient(options)
+
   return {
     run: async (input, runOptions) => {
-      const result = await client.run({
-        session: { id: input.session.id },
-        call: input.call,
-      }, runOptions)
+      const result = await client.run(
+        {
+          session: { id: input.session.id },
+          call: input.call,
+        },
+        runOptions,
+      )
+
       return Result.isFailure(result)
-        ? Result.fail(new AssistantExplorationClientError({ reason: result.failure.reason }))
+        ? Result.fail(
+            new AssistantExplorationClientError({
+              reason: result.failure.reason,
+            }),
+          )
         : Result.succeed(result.success)
     },
   }

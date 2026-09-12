@@ -1,4 +1,5 @@
-import { Effect, Function as Fn, Result, Schema } from "effect"
+import type { Result } from "effect"
+import { Effect, Function as Fn, Schema } from "effect"
 import type { JsonValue } from "./json-value.js"
 
 /** Stable machine-facing name for one structured chat view. */
@@ -61,18 +62,21 @@ export interface ViewDefinitionContract<
 }
 
 /** Parsed data accepted when constructing one view part. */
-export type ViewInput<View extends ViewDefinitionContract> =
-  Schema.Schema.Type<View["inputSchema"]>
+export type ViewInput<View extends ViewDefinitionContract> = Schema.Schema.Type<
+  View["inputSchema"]
+>
 
 /** Versioned display data carried by one view part. */
-export type ViewData<View extends ViewDefinitionContract> =
-  Schema.Schema.Type<View["dataSchema"]>
+export type ViewData<View extends ViewDefinitionContract> = Schema.Schema.Type<
+  View["dataSchema"]
+>
 
 /** Complete structured message part produced by one view. */
-export type ViewPart<View extends ViewDefinitionContract> =
-  Schema.Schema.Type<View["partSchema"]> & {
-    readonly data: ViewData<View>
-  }
+export type ViewPart<View extends ViewDefinitionContract> = Schema.Schema.Type<
+  View["partSchema"]
+> & {
+  readonly data: ViewData<View>
+}
 
 /** One schema-defined, versioned structured chat view. */
 export interface ViewDefinition<
@@ -82,16 +86,14 @@ export interface ViewDefinition<
   DataSchema extends ViewSchema,
   PartSchema extends ViewPartSchema<Name, DataSchema>,
 > extends ViewDefinitionContract<
-    Name,
-    Version,
-    InputSchema,
-    DataSchema,
-    PartSchema
-  > {
+  Name,
+  Version,
+  InputSchema,
+  DataSchema,
+  PartSchema
+> {
   /** Construct and validate one display-safe data part. */
-  make(
-    input: Schema.Schema.Type<InputSchema>,
-  ): Schema.Schema.Type<PartSchema>
+  make(input: Schema.Schema.Type<InputSchema>): Schema.Schema.Type<PartSchema>
 
   /** Parse unknown input into one display-safe data part. */
   parseData(
@@ -99,9 +101,7 @@ export interface ViewDefinition<
   ): Effect.Effect<ViewPart<this>, Schema.SchemaError>
 
   /** Parse an unknown serialized part at a runtime boundary. */
-  decode(
-    input: JsonValue,
-  ): Effect.Effect<ViewPart<this>, Schema.SchemaError>
+  decode(input: JsonValue): Effect.Effect<ViewPart<this>, Schema.SchemaError>
 
   /** Parse an unknown serialized part without requiring an Effect runtime. */
   decodeResult(
@@ -138,11 +138,10 @@ export const defineView = <
   const Version extends number,
   Fields extends Schema.Struct.Fields,
 >(
-  definition: DefineViewInput<Name, Version, Fields> &
-    NoContextFields<Fields>,
+  definition: DefineViewInput<Name, Version, Fields> & NoContextFields<Fields>,
 ) => {
-  Schema.decodeSync(ViewNameSchema)(definition.name)
-  Schema.decodeSync(ViewVersionSchema)(definition.version)
+  ViewNameSchema.make(definition.name)
+  ViewVersionSchema.make(definition.version)
 
   if ("schemaVersion" in definition.schema.fields) {
     throw new Error(
@@ -154,13 +153,17 @@ export const defineView = <
     schemaVersion: Schema.Literal(definition.version),
     ...definition.schema.fields,
   })
+
   const partSchema = Schema.Struct({
     type: Schema.Literal("data"),
     name: Schema.Literal(definition.name),
     data: dataSchema,
   })
+
   type Input = Schema.Schema.Type<typeof definition.schema>
+
   type Part = Schema.Schema.Type<typeof partSchema>
+
   // SAFETY: NoContextFields excludes schemas with runtime requirements; this
   // assertion preserves definition.schema's existing Type and Encoded sides.
   const runtimeInputSchema = Fn.cast<
@@ -172,29 +175,26 @@ export const defineView = <
       never
     >
   >(definition.schema)
+
   // SAFETY: partSchema was built immediately above from the exact view name,
   // version, and application fields, with no runtime schema requirements.
   const runtimePartSchema = Fn.cast<
     typeof partSchema,
-    Schema.Codec<
-      Part,
-      Schema.Codec.Encoded<typeof partSchema>,
-      never,
-      never
-    >
+    Schema.Codec<Part, Schema.Codec.Encoded<typeof partSchema>, never, never>
   >(partSchema)
+
   const decodePart = Schema.decodeUnknownEffect(runtimePartSchema)
   const decodePartResult = Schema.decodeUnknownResult(runtimePartSchema)
+
   const validateInput = Schema.decodeUnknownEffect(
     Schema.toType(runtimeInputSchema),
   )
+
   const validatePart = Schema.decodeUnknownEffect(
     Schema.toType(runtimePartSchema),
   )
 
-  const parseData = (
-    input: Input,
-  ): Effect.Effect<Part, Schema.SchemaError> =>
+  const parseData = (input: Input): Effect.Effect<Part, Schema.SchemaError> =>
     validateInput(input, {
       onExcessProperty: "error",
     }).pipe(

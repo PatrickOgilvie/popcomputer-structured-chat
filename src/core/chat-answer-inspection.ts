@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Predicate, Effect, Schema } from "effect"
 import type { AnswerMode } from "./answer.js"
 import {
   readCollectStageInspection,
@@ -28,19 +28,13 @@ interface TrustedAcceptedAnswer {
 }
 
 interface TrustedCollectStageState {
-  readonly accepted: Readonly<
-    Partial<Record<string, TrustedAcceptedAnswer>>
-  >
-  readonly asked: Readonly<
-    Partial<Record<string, IssuedCollectQuestion>>
-  >
+  readonly accepted: Readonly<Partial<Record<string, TrustedAcceptedAnswer>>>
+  readonly asked: Readonly<Partial<Record<string, IssuedCollectQuestion>>>
 }
 
 /** @internal Structural answer state accepted only after definition parsing. */
 export interface TrustedChatAnswerState {
-  readonly stages: Readonly<
-    Partial<Record<string, TrustedCollectStageState>>
-  >
+  readonly stages: Readonly<Partial<Record<string, TrustedCollectStageState>>>
 }
 
 type ChatAnswerInspectionStage =
@@ -56,9 +50,7 @@ export interface InspectedAnswerField {
   readonly mode: AnswerMode
   readonly description: string
   readonly question: QuestionDefinitionContract
-  readonly userPresentation:
-    | { readonly label?: string }
-    | undefined
+  readonly userPresentation: { readonly label?: string } | undefined
   readonly state:
     | { readonly _tag: "Missing" }
     | {
@@ -101,14 +93,12 @@ export interface InspectChatAnswersInput {
 
 const invalidInspection = (
   reason: "invalid_state" | "invalid_answer_value",
-): InvalidChatAnswerInspection =>
-  new InvalidChatAnswerInspection({ reason })
+): InvalidChatAnswerInspection => new InvalidChatAnswerInspection({ reason })
 
 const hasOwn = <Owner extends object>(
   value: Owner,
   key: PropertyKey,
-): boolean =>
-  Object.prototype.hasOwnProperty.call(value, key)
+): boolean => Object.prototype.hasOwnProperty.call(value, key)
 
 /**
  * @internal Traverse trusted collect state in declaration order and encode
@@ -121,18 +111,22 @@ export const inspectChatAnswers = (
     const sections: Array<InspectedAnswerSection> = []
 
     for (const stage of input.definition.stages) {
-      if (stage._tag !== "CollectStage") {
+      if (!Predicate.isTagged(stage, "CollectStage")) {
         continue
       }
+
       if (!hasOwn(input.state.stages, stage.name)) {
-        return yield* Effect.fail(invalidInspection("invalid_state"))
+        return yield* invalidInspection("invalid_state")
       }
+
       const collectState = input.state.stages[stage.name]
+
       if (collectState === undefined) {
-        return yield* Effect.fail(invalidInspection("invalid_state"))
+        return yield* invalidInspection("invalid_state")
       }
 
       const fields: Array<InspectedAnswerField> = []
+
       for (const field of readCollectStageInspection(stage).fields) {
         // Disclosure filtering deliberately precedes every state lookup and
         // codec invocation so hidden values cannot leak or break projection.
@@ -143,9 +137,11 @@ export const inspectChatAnswers = (
         const accepted = hasOwn(collectState.accepted, field.field)
           ? collectState.accepted[field.field]
           : undefined
+
         const issuedQuestion = hasOwn(collectState.asked, field.field)
           ? collectState.asked[field.field]
           : undefined
+
         const fieldBase = {
           field: field.field,
           mode: field.mode,
@@ -153,6 +149,7 @@ export const inspectChatAnswers = (
           question: field.question,
           userPresentation: field.userPresentation,
         }
+
         if (accepted === undefined) {
           fields.push(
             issuedQuestion === undefined
@@ -168,19 +165,17 @@ export const inspectChatAnswers = (
           continue
         }
 
-        const encoded = yield* field.encodeValue(accepted.value).pipe(
-          Effect.mapError(() =>
-            invalidInspection("invalid_answer_value"),
-          ),
-        )
+        const encoded = yield* field
+          .encodeValue(accepted.value)
+          .pipe(
+            Effect.mapError(() => invalidInspection("invalid_answer_value")),
+          )
+
         const value = yield* Schema.decodeUnknownEffect(JsonValueSchema)(
           encoded,
           { onExcessProperty: "error" },
-        ).pipe(
-          Effect.mapError(() =>
-            invalidInspection("invalid_answer_value"),
-          ),
-        )
+        ).pipe(Effect.mapError(() => invalidInspection("invalid_answer_value")))
+
         fields.push({
           ...fieldBase,
           state: {

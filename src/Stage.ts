@@ -9,9 +9,7 @@ export const tools = Stage.tools
 /** Define one terminal idempotent command stage. */
 export const command = Stage.command
 
-export {
-  ToolStageAfterExecutionSchema as AfterExecutionSchema,
-} from "./core/stage.js"
+export { ToolStageAfterExecutionSchema as AfterExecutionSchema } from "./core/stage.js"
 
 export {
   AnswerValidationRejected,
@@ -52,4 +50,9 @@ export type {
 
 /** Define one repeatable query and command interaction. */
 export const interact = Stage.interact
-export type { InteractionStage as Interaction, DefineInteractionStageInput as DefineInteractionInput, InteractionCommandContext } from "./core/interaction-stage.js"
+
+export type {
+  InteractionStage as Interaction,
+  DefineInteractionStageInput as DefineInteractionInput,
+  InteractionCommandContext,
+} from "./core/interaction-stage.js"

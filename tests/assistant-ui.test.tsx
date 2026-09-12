@@ -37,6 +37,7 @@ describe("makeAssistantView", () => {
       ),
       fallback: () => <p>Invalid cards</p>,
     })
+
     const html = renderToStaticMarkup(
       createElement(
         UI.unstable_data.render,
@@ -58,6 +59,7 @@ describe("makeAssistantView", () => {
       render: ({ data }) => <p>{data.title}</p>,
       fallback: () => <p>Invalid cards</p>,
     })
+
     const html = renderToStaticMarkup(
       createElement(
         UI.unstable_data.render,
@@ -76,6 +78,7 @@ describe("makeAssistantView", () => {
     const UI = makeAssistantView(AgencyCards, {
       render: ({ data }) => <p>{data.title}</p>,
     })
+
     const html = renderToStaticMarkup(
       createElement(UI.unstable_data.render, props({})),
     )
