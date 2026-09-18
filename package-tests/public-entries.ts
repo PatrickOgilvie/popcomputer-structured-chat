@@ -14,6 +14,7 @@ import {
   View,
 } from "@popcomputer/structured-chat"
 import * as Root from "@popcomputer/structured-chat"
+import * as TypeSafe from "@popcomputer/structured-chat/typesafe"
 import * as Debug from "@popcomputer/structured-chat/debug"
 import * as CloudflareAI from "@popcomputer/structured-chat/model/cloudflare-workers-ai"
 import * as OpenAI from "@popcomputer/structured-chat/model/openai-compatible"
@@ -272,3 +273,22 @@ void Chat.post(PackageComposedChat, {
   message: PackageMessage,
   input: "Hello",
 })
+
+const typeSafeJudgment: Effect.Effect<
+  "billing" | "support",
+  TypeSafe.EvaluationError,
+  TypeSafe.Service
+> = Effect.gen(function* () {
+  const service = yield* TypeSafe.Service
+  const result = yield* service.evaluate({
+    state: "Please send my invoice",
+    questions: TypeSafe.batch({
+      team: TypeSafe.choice("Choose the responsible team", {
+        billing: "Invoices and payments",
+        support: "Help using the product",
+      }),
+    }),
+  })
+  return result.answers.team.value
+})
+void typeSafeJudgment

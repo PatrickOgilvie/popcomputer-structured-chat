@@ -8,6 +8,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Optional TypeSafe SDK adapter with typed Noul, Choice, Score, and batch evaluation, explicit Effect configuration, bounded retries, cancellation, and sanitized failures.
+- Provider-neutral collection resolvers and `TypeSafe.collection` for registered enum and boolean answers, preserving evidence, guards, validators, corrections, and session revision checks.
+- Node and workerd adapter checks, real D1 replay/conflict coverage, and a compiled TypeSafe usage example.
+
 ## [0.6.0] - 2026-09-12
 
 Durable Live client delegation connects voice conversations to the existing

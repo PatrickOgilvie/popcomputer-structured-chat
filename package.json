@@ -59,12 +59,17 @@
     "./assistant-ui/react": {
       "types": "./dist/integrations/assistant-ui-react.d.ts",
       "import": "./dist/integrations/assistant-ui-react.js"
+    },
+    "./typesafe": {
+      "types": "./dist/typesafe.d.ts",
+      "import": "./dist/typesafe.js"
     }
   },
   "files": [
     "dist",
     "examples",
     "docs/live.md",
+    "docs/typesafe.md",
     "migrations/d1",
     "CHANGELOG.md",
     "README.md",
@@ -80,7 +85,7 @@
     "test:cloudflare": "vitest run --config vitest.cloudflare.config.ts",
     "test:node": "bun run build && node tests/node-esm-smoke.mjs",
     "test:package:types": "tsc -p tsconfig.package-tests.json",
-    "test:package": "bun run build && bun run test:package:types && node tests/node-esm-smoke.mjs && node tests/client-esm-smoke.mjs && npm pack --dry-run --ignore-scripts --offline --cache node_modules/.cache/npm",
+    "test:package": "bun run build && bun run test:package:types && node tests/node-esm-smoke.mjs && node tests/client-esm-smoke.mjs && node tests/typesafe-esm-smoke.mjs && npm pack --dry-run --ignore-scripts --offline --cache node_modules/.cache/npm",
     "test:types": "tsc -p tsconfig.type-tests.json",
     "verify": "bun run lint && bun run check && bun test && bun run test:cloudflare && bun run test:package",
     "prepack": "bun run build",
@@ -113,7 +118,8 @@
     "@assistant-ui/core": "^0.3.15",
     "@assistant-ui/react": "^0.15.16",
     "react": "^18.0.0 || ^19.0.0",
-    "effect": "^4.0.0-rc.109"
+    "effect": "^4.0.0-rc.109",
+    "@typesafe-ai/sdk": "^0.6.0"
   },
   "peerDependenciesMeta": {
     "@assistant-ui/core": {
@@ -123,6 +129,9 @@
       "optional": true
     },
     "react": {
+      "optional": true
+    },
+    "@typesafe-ai/sdk": {
       "optional": true
     }
   },
@@ -136,6 +145,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/react-test-renderer": "^19.1.0",
+    "@typesafe-ai/sdk": "0.6.0",
     "effect": "4.0.0-rc.109",
     "oxlint": "1.78.0",
     "react": "^19.2.4",

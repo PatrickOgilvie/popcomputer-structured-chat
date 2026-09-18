@@ -1,3 +1,4 @@
+import type { AnswerResolverContract } from "../core/answer-resolver.js"
 import { Effect, Layer, Ref, Schema } from "effect"
 import type {
   AnswerFields,
@@ -135,8 +136,9 @@ const answers = <
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple,
   const Profile extends AnyModelProfile | undefined,
+  const Resolver extends AnswerResolverContract | undefined,
 >(
-  stage: CollectStage<Name, Fields, Guards, Profile>,
+  stage: CollectStage<Name, Fields, Guards, Profile, Resolver>,
   proposed: QuotedAnswers<Fields>,
   options: {
     readonly nextQuestion?: ScenarioNextQuestion<Fields> | null
@@ -211,9 +213,10 @@ const replace = <
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple,
   const Profile extends AnyModelProfile | undefined,
+  const Resolver extends AnswerResolverContract | undefined,
   const Field extends ReplaceableField<Fields>,
 >(
-  stage: CollectStage<Name, Fields, Guards, Profile>,
+  stage: CollectStage<Name, Fields, Guards, Profile, Resolver>,
   field: Field,
   value: CollectAnswers<Fields>[Field],
   options: { readonly quote: string; readonly messageIndex?: number },
@@ -249,9 +252,10 @@ const reconfirm = <
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple,
   const Profile extends AnyModelProfile | undefined,
+  const Resolver extends AnswerResolverContract | undefined,
   const Field extends ConfirmedField<Fields>,
 >(
-  stage: CollectStage<Name, Fields, Guards, Profile>,
+  stage: CollectStage<Name, Fields, Guards, Profile, Resolver>,
   field: Field,
   options: { readonly quote: string; readonly messageIndex?: number },
 ): ScenarioRepair => {

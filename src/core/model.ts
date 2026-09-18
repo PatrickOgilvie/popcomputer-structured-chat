@@ -303,15 +303,32 @@ export const planToolCall = <
   | ModelGuardError<Guards>,
   ModelRequirement<Profile> | ModelGuardRequirements<Guards>
 > => {
+  return runModelGuards(input.guards ?? [], {
+    messages: input.messages,
+    toolNames: input.tools.models.map(({ name }) => name),
+  }).pipe(Effect.andThen(planToolCallAfterGuards<Tools, Guards, Profile>(input)))
+}
+
+/** @internal Generate and guard a call after the owner has run pre-model guards. */
+export const planToolCallAfterGuards = <
+  const Tools extends ModelToolTuple,
+  const Guards extends ModelGuardTuple = readonly [],
+  const Profile extends AnyModelProfile | undefined = undefined,
+>(
+  input: PlanToolCallInput<Tools, Guards, Profile>,
+): Effect.Effect<
+  ToolSetCall<Tools>,
+  | ChatModelUnavailable
+  | UnsupportedModelToolSchema
+  | InvalidToolCall
+  | ModelGuardError<Guards>,
+  ModelRequirement<Profile> | ModelGuardRequirements<Guards>
+> => {
   // SAFETY: ModelProfileInput requires a concrete model whenever Profile is
   // defined; when Profile is undefined, undefined is the only legal value.
   const selected = Fn.cast<typeof input.model, Profile>(input.model)
 
-  return runModelGuards(input.guards ?? [], {
-    messages: input.messages,
-    toolNames: input.tools.models.map(({ name }) => name),
-  }).pipe(
-    Effect.andThen(resolveModel(selected)),
+  return resolveModel(selected).pipe(
     Effect.flatMap((model) => {
       const requestParsedCall = (
         instructions: ReadonlyArray<TrustedInstruction>,

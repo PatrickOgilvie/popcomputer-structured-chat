@@ -10,7 +10,8 @@
       "@popcomputer/structured-chat/assistant-ui": [
         "./src/integrations/assistant-ui.tsx"
       ],
-      "@popcomputer/structured-chat/testing": ["./src/testing.ts"]
+      "@popcomputer/structured-chat/testing": ["./src/testing.ts"],
+      "@popcomputer/structured-chat/typesafe": ["./src/typesafe.ts"]
     }
   },
   "include": ["examples/**/*.ts", "examples/**/*.tsx"]

@@ -6,7 +6,8 @@
     "baseUrl": ".",
     "paths": {
       "@popcomputer/structured-chat": ["./src/index.ts"],
-      "@popcomputer/structured-chat/live": ["./src/integrations/live.ts"]
+      "@popcomputer/structured-chat/live": ["./src/integrations/live.ts"],
+      "@popcomputer/structured-chat/typesafe": ["./src/typesafe.ts"]
     }
   },
   "include": [

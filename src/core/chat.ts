@@ -125,7 +125,8 @@ type CollectStateEntry<Stage> =
     infer Name,
     infer Fields,
     infer _Guards,
-    infer _Profile
+    infer _Profile,
+    infer _Resolver
   >
     ? { readonly [Key in Name]: CollectStageState<Fields> }
     : never
@@ -140,7 +141,8 @@ type CollectFields<Stage> =
     infer _Name,
     infer Fields,
     infer _Guards,
-    infer _Profile
+    infer _Profile,
+    infer _Resolver
   >
     ? Fields
     : never
@@ -173,7 +175,8 @@ type ChatQuestion<Stage> =
     infer _Name,
     infer Fields,
     infer _Guards,
-    infer _Profile
+    infer _Profile,
+    infer _Resolver
   >
     ? CollectStagePrompt<Fields>
     : never
@@ -214,7 +217,8 @@ type StageEffect<Stage> =
           infer _CollectName,
           infer _Fields,
           infer _CollectGuards,
-          infer _CollectProfile
+          infer _CollectProfile,
+          infer _Resolver
         >
       ? ReturnType<Stage["run"]>
       : Stage extends ToolStage<

@@ -96,6 +96,12 @@ for (const file of sourceFiles) {
       ts.isStringLiteral(statement.moduleSpecifier) &&
       isRuntimeImport(statement)
     ) {
+      if (
+        statement.moduleSpecifier.text === "@typesafe-ai/sdk" &&
+        file !== "adapters/typesafe.ts"
+      ) {
+        errors.push(`${file} imports the optional TypeSafe SDK outside its adapter`)
+      }
       const target = resolveRelative(file, statement.moduleSpecifier.text)
 
       if (target !== undefined) {
@@ -208,6 +214,21 @@ const visit = (file) => {
 for (const file of sourceFiles) {
   visit(file)
 }
+
+const rootReachable = new Set()
+const inspectRootDependency = (file) => {
+  if (rootReachable.has(file)) return
+  rootReachable.add(file)
+  if (
+    file === "typesafe.ts" ||
+    file === "adapters/typesafe.ts" ||
+    file === "integrations/typesafe-collection.ts"
+  ) {
+    errors.push(`root imports optional TypeSafe integration: ${file}`)
+  }
+  for (const target of graph.get(file) ?? []) inspectRootDependency(target)
+}
+inspectRootDependency("index.ts")
 
 if (errors.length > 0) {
   for (const error of new Set(errors)) {

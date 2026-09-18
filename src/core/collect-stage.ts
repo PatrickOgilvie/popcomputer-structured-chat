@@ -10,6 +10,7 @@ import {
   ChatModelUnavailable,
   Instruction,
   runToolStep,
+  planToolCallAfterGuards,
   type AnyModelProfile,
   type ModelProfileInput,
   type ModelRequirement,
@@ -21,6 +22,16 @@ import {
   isAuthored,
   type ConversationMessage,
 } from "./conversation-message.js"
+import { runModelGuards, runModelCallGuards } from "./model-guard.js"
+import {
+  prepareAnswerResolution,
+  resolutionCall,
+  runAnswerResolver,
+  InvalidAnswerResolution,
+  type AnswerResolverContract,
+  type ResolverError,
+  type ResolverRequirements,
+} from "./answer-resolver.js"
 import type {
   ModelGuardError,
   ModelGuardRequirements,
@@ -313,11 +324,13 @@ export type DefineCollectStageInput<
   Fields extends AnswerFields,
   Guards extends ModelGuardTuple,
   Profile extends AnyModelProfile | undefined = undefined,
+  Resolver extends AnswerResolverContract | undefined = undefined,
 > = {
   readonly name: Name
   readonly questions?: CollectQuestionPolicy
   readonly fields: Fields
   readonly guards?: Guards
+  readonly resolver?: Resolver
 } & ModelProfileInput<Profile>
 
 /** One schema-derived stage that is complete only when every fact is known. */
@@ -326,6 +339,7 @@ export interface CollectStage<
   Fields extends AnswerFields,
   Guards extends ModelGuardTuple = readonly [],
   Profile extends AnyModelProfile | undefined = undefined,
+  Resolver extends AnswerResolverContract | undefined = undefined,
 > extends CollectStageDefinitionContract {
   readonly _tag: "CollectStage"
   readonly name: Name
@@ -371,10 +385,13 @@ export interface CollectStage<
     | InvalidToolProjection
     | InvalidCollectStageResponse
     | CollectAnswerValidationError<Fields>
-    | ModelGuardError<Guards>,
+    | ModelGuardError<Guards>
+    | ResolverError<Resolver>
+    | (Resolver extends AnswerResolverContract ? InvalidAnswerResolution : never),
     | ModelRequirement<Profile>
     | CollectAnswerValidationRequirements<Fields>
     | ModelGuardRequirements<Guards>
+    | ResolverRequirements<Resolver>
   >
 }
 
@@ -398,10 +415,17 @@ export const defineCollectStage = <
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple = readonly [],
   const Profile extends AnyModelProfile | undefined = undefined,
+  const Resolver extends AnswerResolverContract | undefined = undefined,
 >(
-  definition: DefineCollectStageInput<Name, Fields, Guards, Profile>,
-): CollectStage<Name, Fields, Guards, Profile> => {
+  definition: DefineCollectStageInput<Name, Fields, Guards, Profile, Resolver>,
+): CollectStage<Name, Fields, Guards, Profile, Resolver> => {
   StageNameSchema.make(definition.name)
+  if (
+    definition.resolver !== undefined &&
+    definition.resolver.fields !== definition.fields
+  ) {
+    throw new Error("Answer resolver must be bound to the exact stage fields")
+  }
 
   const questionGuidanceSchema = Schema.Trimmed.check(
     Schema.isNonEmpty(),
@@ -1324,21 +1348,52 @@ export const defineCollectStage = <
     >(execution)
   }
 
-  const run: CollectStage<Name, Fields, Guards, Profile>["run"] = ({
+  const runCollection = ({
     state,
     messages,
-  }) => {
+  }: Parameters<CollectStage<Name, Fields, Guards, Profile, Resolver>["run"]>[0]) => {
     if (!isValidState(state) || !isGroundedInMessages(state, messages)) {
       return Effect.fail(invalidResponse())
     }
 
-    return runToolStep<readonly [typeof submitAnswers], Guards, Profile>({
-      instructions,
-      messages,
-      tools: toolSet,
-      guards,
-      ...modelInput,
-    }).pipe(
+    const input = { instructions, messages, tools: toolSet, guards, ...modelInput }
+    const resolver = definition.resolver
+    const resolvedStep = resolver === undefined
+      ? runToolStep<readonly [typeof submitAnswers], Guards, Profile>(input)
+      : Effect.gen(function* () {
+          const guardContext = {
+            messages,
+            toolNames: toolSet.models.map(tool => tool.name),
+          }
+          yield* runModelGuards(guards, guardContext)
+          const latest = messages.at(-1)
+          const escaped = questions.escape !== undefined &&
+            latest?.role === "user" &&
+            latest.content.toLocaleLowerCase("en") ===
+              questions.escape.toLocaleLowerCase("en")
+          const prepared = prepareAnswerResolution(resolver, {
+            messages,
+            asked: state.asked,
+            escaped,
+          })
+          const generative = planToolCallAfterGuards<
+            readonly [typeof submitAnswers], Guards, Profile
+          >(input).pipe(Effect.flatMap(toolSet.execute))
+          if (prepared.tooLong) return yield* generative
+          const resolution = prepared.context.fields.length === 0
+            ? { _tag: "Resolved" as const, selections: [] }
+            : yield* runAnswerResolver(resolver, prepared.context)
+          if (resolution._tag === "NotApplicable") return yield* generative
+          const envelope = yield* resolutionCall(
+            definition.fields,
+            prepared,
+            resolution.selections,
+          )
+          const call = yield* toolSet.parseCall(envelope)
+          yield* runModelCallGuards(guards, { ...guardContext, call })
+          return yield* toolSet.execute(call)
+        })
+    return resolvedStep.pipe(
       Effect.flatMap(({ serverResult }) =>
         mergeProposal(state, messages, serverResult),
       ),
@@ -1368,6 +1423,13 @@ export const defineCollectStage = <
       Effect.tap((turn) => recordStateAnnotations(state, turn.state)),
     )
   }
+
+  // SAFETY: resolver-only errors and requirements arise solely in the resolver
+  // branch. TypeScript cannot narrow the enclosing generic Resolver parameter.
+  const run = cast<
+    typeof runCollection,
+    CollectStage<Name, Fields, Guards, Profile, Resolver>["run"]
+  >(runCollection)
 
   // SAFETY: The chat runtime calls these erased operations only after the
   // generated state schema has parsed this exact collect-stage state. The

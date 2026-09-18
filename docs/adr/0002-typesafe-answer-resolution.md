@@ -1,0 +1,9 @@
+# Keep TypeSafe evaluation optional and answer acceptance in the core
+
+Expose typed Noul, Choice, Score, and batch evaluation through `@popcomputer/structured-chat/typesafe`, backed by an explicit Effect service and the optional official SDK peer. A root import must remain usable without the SDK. Configuration, request deadlines, retries, and error sanitization belong to the adapter; application code owns thresholds and any resulting actions.
+
+Add a provider-neutral answer resolver to `Stage.collect`. For the first integration, callers register finite string or boolean values against each field schema. The core pairs those values with eligible evidence and the resolver returns candidate IDs or abstentions. The ordinary submission parser, guards, validators, evidence checks, correction rules, and optimistic session commit continue to determine acceptance. A classifier cannot supply an accepted value, fabricate a quote, or turn observed speech into explicit confirmation.
+
+Bound the initial evidence policy to the latest user message, using its complete trimmed text up to 2,000 characters. Unsupported bounds fall back to the ordinary generative path; uncertainty stays pending and operational failures propagate. This preserves the existing model requirement and makes provider errors visible. More expansive evidence search, free-form extraction, cross-turn model context, automatic routing, live performance claims, and production rollout are deferred until application data supports them.
+
+D1 tests verify that failed evaluations do not mutate sessions, concurrent evaluations cannot overwrite a newer revision, and an exact observed-batch replay skips evaluation. This preserves existing session guarantees without promising exactly-once inference or deduplication for ordinary submitted turns.

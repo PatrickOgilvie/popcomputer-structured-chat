@@ -10,6 +10,7 @@ export type StructuredDefinitionKind =
   | "interaction_stage"
   | "repair"
   | "model_guard"
+  | "answer_resolver"
 
 const structuredDefinitionKind = Symbol(
   "@popcomputer/structured-chat/StructuredDefinitionKind",
