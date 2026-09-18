@@ -111,7 +111,6 @@ export const prepareAnswerDetection = (
   input: {
     readonly messages: ReadonlyArray<ConversationMessage>
     readonly asked: Readonly<Partial<Record<string, IssuedCollectQuestion>>>
-    readonly escaped: boolean
   },
 ): PreparedDetection => {
   const latest = input.messages.at(-1)
@@ -119,8 +118,7 @@ export const prepareAnswerDetection = (
     context: { fields: [], evidence: [] },
     tooLong: false,
   }
-  if (latest === undefined || latest.role !== "user" || input.escaped)
-    return empty
+  if (latest === undefined || latest.role !== "user") return empty
   const quote = latest.content.trim()
   if (quote.length > 2_000) return { ...empty, tooLong: true }
   if (quote.length === 0) return empty

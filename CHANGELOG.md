@@ -8,6 +8,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the application-owned uncertainty escape on the generative path: an exact escape message bypasses detection so the model still resolves the escape and phrases the next question.
+
 ## [0.9.0] - 2026-09-18
 
 Collect stages can now let TypeSafe decide which questions the latest message

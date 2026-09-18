@@ -1398,10 +1398,13 @@ export const defineCollectStage = <
             latest?.role === "user" &&
             latest.content.toLocaleLowerCase("en") ===
               questions.escape.toLocaleLowerCase("en")
+          // The application-owned uncertainty escape keeps its existing
+          // behavior: the generative path resolves it and phrases the next
+          // question instead of being gated by detection.
+          if (escaped) return yield* generative
           const prepared = prepareAnswerDetection(detector, {
             messages,
             asked: state.asked,
-            escaped,
           })
           if (prepared.tooLong) return yield* generative
           const resolution = prepared.context.fields.length === 0

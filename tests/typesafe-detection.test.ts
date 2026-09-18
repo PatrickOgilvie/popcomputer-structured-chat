@@ -264,6 +264,75 @@ describe("TypeSafe detection", () => {
     })
   })
 
+  test("keeps the uncertainty escape on the generative path", async () => {
+    const escapeFields = {
+      need: Answer.semantic(Schema.Trimmed.check(Schema.isNonEmpty()), {
+        description: "The agency need",
+        ask: Question.fixed("What do you need help with?"),
+        escape: { value: "not_sure" },
+      }),
+      budget: Answer.explicit(
+        Schema.Literals(["under_25k", "50k_plus", "not_sure"]),
+        {
+          description: "The budget band",
+          ask: Question.fixed("What budget are you working with?"),
+          escape: { value: "not_sure" },
+        },
+      ),
+    }
+    const stage = Stage.collect({
+      name: "brief",
+      fields: escapeFields,
+      questions: { escape: "Not sure yet" },
+      detector: TypeSafe.detection(escapeFields, {
+        acceptance: {
+          need: { minimumProbability: 0.8 },
+          budget: { minimumProbability: 0.9 },
+        },
+      }),
+    })
+    const modelCalls: Array<unknown> = []
+    const result = await Effect.runPromise(
+      stage
+        .run({
+          state: stage.initialState,
+          messages: [Session.Message.submitted("not sure yet")],
+        })
+        .pipe(
+          Effect.provide(
+            TypeSafe.layer(
+              runtimeConfig(async () => {
+                throw new Error("Escape reached detection")
+              }),
+            ),
+          ),
+          Effect.provide(
+            Layer.succeed(
+              Model.Service,
+              Model.Service.of({
+                requestTool: (request) => {
+                  modelCalls.push(request)
+                  return Effect.succeed(
+                    Schema.decodeUnknownSync(Schema.Json)({
+                      name: "submit_answers",
+                      arguments: {
+                        answers: { need: null, budget: null },
+                        evidence: [],
+                        nextQuestion: null,
+                      },
+                    }),
+                  )
+                },
+              }),
+            ),
+          ),
+        ),
+    )
+    expect(modelCalls).toHaveLength(1)
+    expect(result.state.accepted.need?.value).toBe("not_sure")
+    expect(result.question?.field).toBe("budget")
+  })
+
   test("sends the issued question text and true/false criteria", async () => {
     const requests: Array<DetectionRequest> = []
     const stage = Stage.collect({ name: "brief", fields, detector })
