@@ -9,7 +9,7 @@ export const adaptive = Question.adaptive
 /** Define a model-authored choice question with bounded fallback options. */
 export const adaptiveChoice = Question.adaptiveChoice
 
-/** Define a fixed typed choice question. */
+/** Define a fixed question with typed suggestions. Other values may satisfy the answer schema. */
 export const choice = Question.choice
 
 export type {

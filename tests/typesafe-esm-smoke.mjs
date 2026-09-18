@@ -24,7 +24,6 @@ const layer = TypeSafe.layer({
   limits: {
     maximumQuestions: 5,
     maximumStateCharacters: 1_000,
-    maximumCandidatesPerField: 10,
   },
   fetch: async () =>
     Response.json({

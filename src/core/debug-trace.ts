@@ -14,8 +14,25 @@ const DebugModelCallBaseFields = {
   call: DebugSequenceSchema,
 }
 
+/** Safe diagnostics for a model's proposed collection field. */
+export const CollectProposalRejectionReasonSchema = Schema.Literals([
+  "invalid_value", "missing_evidence", "duplicate_evidence", "invalid_evidence",
+  "confirmation_required",
+])
+
+export type CollectProposalRejectionReason = typeof CollectProposalRejectionReasonSchema.Type
+
 /** One ordered model-I/O or semantic annotation in a captured debug turn. */
 export const StructuredChatDebugEventSchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal("AnswerProposalAssessed"),
+    sequence: DebugSequenceSchema,
+    stage: DebugNameSchema,
+    field: DebugNameSchema,
+    attempt: Schema.Literals([1, 2]),
+    decision: Schema.Literals(["absent", "unchanged", "grounded", "rejected", "repair_requested"]),
+    reason: Schema.NullOr(CollectProposalRejectionReasonSchema),
+  }),
   Schema.Struct({
     _tag: Schema.Literal("ModelInput"),
     ...DebugModelCallBaseFields,

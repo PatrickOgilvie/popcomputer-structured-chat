@@ -24,12 +24,10 @@ const fields = {
     },
   ),
 } as const
-const acceptance = {
-  need: { minimumProbability: 0.8 },
-  budget: { minimumProbability: 0.9 },
-  timeline: { minimumProbability: 0.9 },
-} as const
-const detector = TypeSafe.detection(fields, { acceptance })
+const detector = TypeSafe.detection(fields, {
+  policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
+  overrides: { need: { policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.8, undetectedAtOrBelow: 0.1 }) } },
+})
 const noGenerativeModel = Layer.succeed(
   Model.Service,
   Model.Service.of({
@@ -115,12 +113,10 @@ describe("TypeSafe detection", () => {
               answers: {
                 need: "Brand strategy",
                 budget: "50k_plus",
-                timeline: "next_month",
               },
               evidence: [
                 { field: "need", quote: "brand strategy help" },
                 { field: "budget", quote: "fifty grand plus" },
-                { field: "timeline", quote: "no timeline yet" },
               ],
             }),
           ),
@@ -185,18 +181,16 @@ describe("TypeSafe detection", () => {
         })
         .pipe(
           Effect.provide(
-            provider({ need: 0.85, budget: 0.6, timeline: 0.99 }),
+            provider({ need: 0.85, budget: 0.05, timeline: 0.99 }),
           ),
           Effect.provide(
             generative({
               answers: {
                 need: "Brand strategy",
-                budget: "25k_to_50k",
                 timeline: null,
               },
               evidence: [
                 { field: "need", quote: "Brand strategy" },
-                { field: "budget", quote: "Brand strategy" },
               ],
             }),
           ),
@@ -285,10 +279,7 @@ describe("TypeSafe detection", () => {
       fields: escapeFields,
       questions: { escape: "Not sure yet" },
       detector: TypeSafe.detection(escapeFields, {
-        acceptance: {
-          need: { minimumProbability: 0.8 },
-          budget: { minimumProbability: 0.9 },
-        },
+        policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
       }),
     })
     const modelCalls: Array<unknown> = []
@@ -355,7 +346,7 @@ describe("TypeSafe detection", () => {
           Effect.provide(provider({ need: 0.99 }, requests)),
           Effect.provide(
             generative({
-              answers: { need: "Brand strategy", budget: null, timeline: null },
+              answers: { need: "Brand strategy" },
               evidence: [{ field: "need", quote: "Brand strategy" }],
             }),
           ),
@@ -408,15 +399,13 @@ describe("TypeSafe detection invariants", () => {
     ).toThrow("exact stage fields")
   })
 
-  test("rejects detection acceptance that does not cover the fields", () => {
-    expect(() =>
-      TypeSafe.detection(fields, {
-        // @ts-expect-error Timeline acceptance is deliberately missing at runtime.
-        acceptance: {
-          need: { minimumProbability: 0.8 },
-          budget: { minimumProbability: 0.8 },
-        },
-      }),
-    ).toThrow("exactly the detector fields")
+  test("rejects overrides for unregistered fields", () => {
+    expect(() => TypeSafe.detection(fields, {
+      policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
+      overrides: {
+        // @ts-expect-error Only registered fields may have an override.
+        unknown: {},
+      },
+    })).toThrow("registered fields")
   })
 })

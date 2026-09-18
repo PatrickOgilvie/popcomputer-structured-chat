@@ -62,6 +62,17 @@ export {
   defineAnswerDetector as detector,
   InvalidAnswerDetection,
 } from "./core/answer-detector.js"
+
+/** Build labelled application context for collect-stage extraction. */
+export {
+  defineExtractionContext as extractionContext,
+  InvalidExtractionContext,
+} from "./core/extraction-context.js"
+export type {
+  ExtractionContext,
+  ExtractionContextContract,
+  ExtractionContextInput,
+} from "./core/extraction-context.js"
 export type {
   AnswerDetector,
   AnswerDetectorContract,

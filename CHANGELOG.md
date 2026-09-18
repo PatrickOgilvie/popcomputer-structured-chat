@@ -8,6 +8,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-18
+
+### Added
+
+- Add reusable TypeSafe detection policies with explicit detected, undetected, and uncertain outcomes, including typed per-field overrides.
+- Narrow collect-stage extraction schemas to eligible fields and supply labelled context with accepted answers, provenance, current questions/options, and bounded recent history.
+- Add `Stage.extractionContext` for JSON application context with inferred Effect errors and services, including use without a detector.
+- Preserve the original confirmation boundary while retaining the latest issued question wording and options.
+- Recover collection proposals per field with a shared two-request repair budget, preserve evidence for unchanged values, and expose per-field decisions in debug traces.
+- Persist unresolved clarifications so valid answers survive malformed proposals and uncertain corrections cannot silently advance the workflow.
+
+### Breaking changes
+
+- Replace `TypeSafe.detection`'s `acceptance` option with `policy` and optional `overrides`; remove the unused `maximumCandidatesPerField` evaluator setting.
+
 ## [0.9.1] - 2026-09-18
 
 ### Fixed
@@ -307,7 +322,8 @@ const reply = Chat.turn(chat, input)
   questions, tools, commands, session persistence, browser presentation,
   assistant-ui integration, and transcript scenarios.
 
-[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/4bf19c2...v0.10.0
 [0.9.1]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.7.0...v0.9.0
 [0.7.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.6.0...v0.7.0

@@ -43,3 +43,15 @@ _Avoid_: spoken, heard
 **Provider finalization**:
 The voice provider's acknowledgement that a session has ended, including its final usage. This remains true even if application work or delivery subsequently fails.
 _Avoid_: transport disconnected, application completed
+
+**Detection**:
+An assessment of whether user input supplies an answer to a question. Detection may be uncertain and does not establish an accepted value.
+_Avoid_: accepted answer, extracted value
+
+**Extraction**:
+Interpretation of user evidence into a proposed answer value. A proposal can still fail the question's grounding or acceptance rules.
+_Avoid_: confirmation, workflow commitment
+
+**Accepted answer**:
+A retained answer value supported by eligible evidence and satisfying its acceptance rules. New grounded input may correct it.
+_Avoid_: detected answer, unvalidated proposal

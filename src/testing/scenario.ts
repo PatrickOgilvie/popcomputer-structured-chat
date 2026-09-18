@@ -1,5 +1,6 @@
+import type { ExtractionContextContract } from "../core/extraction-context.js"
 import type { AnswerDetectorContract } from "../core/answer-detector.js"
-import { Effect, Layer, Ref, Schema } from "effect"
+import { Effect, Layer, Ref, Result, Schema } from "effect"
 import type {
   AnswerFields,
   CollectAnswers,
@@ -75,12 +76,32 @@ type ToolInput<Tool> =
     ? Schema.Schema.Type<InputSchema>
     : never
 
+const ScenarioExtractionPlanSchema = Schema.fromJsonString(Schema.Struct({
+  stage: Schema.String,
+  extracting: Schema.Array(Schema.Struct({ field: Schema.String })),
+  conversation: Schema.Array(Schema.Struct({
+    messageIndex: Schema.Natural,
+    role: Schema.Literals(["user", "assistant"]),
+    content: Schema.String,
+  })),
+}))
+
+const scenarioConversation = (request: ToolModelRequest) => {
+  const serialized = request.untrustedMessages.map((message, index) => {
+    const prefix = `Untrusted extraction plan JSON, part ${index + 1} of ${request.untrustedMessages.length}:\n`
+    return message.content.startsWith(prefix) ? message.content.slice(prefix.length) : message.content
+  }).join("")
+  const plan = Schema.decodeUnknownResult(ScenarioExtractionPlanSchema)(serialized)
+  return Result.isSuccess(plan) ? plan.success.conversation : request.untrustedMessages.map((message, messageIndex) => ({ ...message, messageIndex }))
+}
+
 const evidenceIndex = <Value>(
   request: ToolModelRequest,
   quoted: ScenarioQuote<Value>,
 ): number => {
+  const conversation = scenarioConversation(request)
   if (quoted.messageIndex !== undefined) {
-    const message = request.untrustedMessages[quoted.messageIndex]
+    const message = conversation.find(message => message.messageIndex === quoted.messageIndex)
 
     if (
       message === undefined ||
@@ -95,9 +116,9 @@ const evidenceIndex = <Value>(
     return quoted.messageIndex
   }
 
-  const matches = request.untrustedMessages.flatMap((message, index) =>
+  const matches = conversation.flatMap(message =>
     message.role === "user" && message.content.includes(quoted.quote)
-      ? [index]
+      ? [message.messageIndex]
       : [],
   )
 
@@ -137,8 +158,9 @@ const answers = <
   const Guards extends ModelGuardTuple,
   const Profile extends AnyModelProfile | undefined,
   const Detector extends AnswerDetectorContract | undefined,
+  const Enrichment extends ExtractionContextContract | undefined,
 >(
-  stage: CollectStage<Name, Fields, Guards, Profile, Detector>,
+  stage: CollectStage<Name, Fields, Guards, Profile, Detector, Enrichment>,
   proposed: QuotedAnswers<Fields>,
   options: {
     readonly nextQuestion?: ScenarioNextQuestion<Fields> | null
@@ -146,8 +168,11 @@ const answers = <
 ): ScenarioStep => ({
   respond: (request) => {
     const encodedAnswers: Record<string, JsonValue> = {}
-
-    for (const field of Object.keys(stage.fields)) {
+    const input = Schema.decodeUnknownSync(Schema.Struct({ properties: Schema.Struct({
+      answers: Schema.Struct({ properties: Schema.Record(Schema.String, JsonValueSchema) }),
+    }) }))(request.tools.find(tool => tool.name === "submit_answers")?.inputSchema)
+    const selected = Object.keys(input.properties.answers.properties)
+    for (const field of selected) {
       encodedAnswers[field] = null
     }
 
@@ -166,6 +191,7 @@ const answers = <
       if (value === undefined || answer === undefined) {
         continue
       }
+      if (!selected.includes(field)) throw new Error(`Scenario answer field ${field} is not selected for extraction`)
 
       encodedAnswers[field] = Schema.decodeUnknownSync(JsonValueSchema)(
         Schema.encodeSync(answer.schema)(value.value),
@@ -214,9 +240,10 @@ const replace = <
   const Guards extends ModelGuardTuple,
   const Profile extends AnyModelProfile | undefined,
   const Detector extends AnswerDetectorContract | undefined,
+  const Enrichment extends ExtractionContextContract | undefined,
   const Field extends ReplaceableField<Fields>,
 >(
-  stage: CollectStage<Name, Fields, Guards, Profile, Detector>,
+  stage: CollectStage<Name, Fields, Guards, Profile, Detector, Enrichment>,
   field: Field,
   value: CollectAnswers<Fields>[Field],
   options: { readonly quote: string; readonly messageIndex?: number },
@@ -253,9 +280,10 @@ const reconfirm = <
   const Guards extends ModelGuardTuple,
   const Profile extends AnyModelProfile | undefined,
   const Detector extends AnswerDetectorContract | undefined,
+  const Enrichment extends ExtractionContextContract | undefined,
   const Field extends ConfirmedField<Fields>,
 >(
-  stage: CollectStage<Name, Fields, Guards, Profile, Detector>,
+  stage: CollectStage<Name, Fields, Guards, Profile, Detector, Enrichment>,
   field: Field,
   options: { readonly quote: string; readonly messageIndex?: number },
 ): ScenarioRepair => {

@@ -21,17 +21,19 @@ const fields = {
   ),
 }
 
-// Jev marks which questions the latest message already answered. Only detected
-// fields may be filled by the ordinary generative extraction, and when none are
-// detected the model is not called at all.
+// Jev assesses answer presence; the LLM extracts values for detected and
+// uncertain fields through a narrowed schema and labelled context.
 export const Brief = Stage.collect({
   name: "brief",
   fields,
+  context: Stage.extractionContext(fields, ({ accepted, extracting }) =>
+    Effect.succeed({ currency: "GBP", extracting, previousBudget: accepted.budget?.value ?? null }),
+  ),
   detector: TypeSafe.detection(fields, {
     // Illustrative thresholds: calibrate against representative application data.
-    acceptance: {
-      need: { minimumProbability: 0.8 },
-      budget: { minimumProbability: 0.9 },
+    policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
+    overrides: {
+      need: { policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.8, undetectedAtOrBelow: 0.2 }) },
     },
   }),
 })
@@ -49,7 +51,6 @@ export const evaluatorLayer = (
     limits: {
       maximumQuestions: 16,
       maximumStateCharacters: 8_000,
-      maximumCandidatesPerField: 16,
     },
   })
 

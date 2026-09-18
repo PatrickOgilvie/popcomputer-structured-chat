@@ -46,7 +46,6 @@ const config = (fetch: NonNullable<TypeSafe.Config["fetch"]>) => ({
   limits: {
     maximumQuestions: 20,
     maximumStateCharacters: 10_000,
-    maximumCandidatesPerField: 20,
   },
   fetch,
 })
@@ -208,7 +207,7 @@ describe("TypeSafe boundaries", () => {
       const configuration = config(async () => Response.json(response))
       const result = await Effect.runPromise(Effect.gen(function* () {
         return yield* (yield* TypeSafe.Service).evaluate({ state: "Choose next tool", questions: TypeSafe.batch({ next: TypeSafe.choice("Next?", criteria) }) })
-      }).pipe(Effect.provide(TypeSafe.layer({ ...configuration, limits: { ...configuration.limits, maximumCandidatesPerField: 128 } })), Effect.result))
+      }).pipe(Effect.provide(TypeSafe.layer(configuration)), Effect.result))
       expect(result._tag).toBe(selected === 0.99 ? "Success" : "Failure")
     }
   })

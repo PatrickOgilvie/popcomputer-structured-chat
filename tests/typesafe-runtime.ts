@@ -13,7 +13,6 @@ export const runtimeConfig = (
   limits: {
     maximumQuestions: 20,
     maximumStateCharacters: 10_000,
-    maximumCandidatesPerField: 20,
   },
   fetch,
 })

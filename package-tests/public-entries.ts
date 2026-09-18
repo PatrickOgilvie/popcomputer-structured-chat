@@ -304,7 +304,10 @@ const detectedStage = Stage.collect({
   name: "package_detection",
   fields: detectedFields,
   detector: TypeSafe.detection(detectedFields, {
-    acceptance: { team: { minimumProbability: 0.9 } },
+    policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
   }),
+  context: Stage.extractionContext(detectedFields, ({ accepted, extracting }) =>
+    Effect.succeed({ previousTeam: accepted.team?.value ?? null, extracting }),
+  ),
 })
 void detectedStage

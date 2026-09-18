@@ -30,6 +30,7 @@ interface TrustedAcceptedAnswer {
 interface TrustedCollectStageState {
   readonly accepted: Readonly<Partial<Record<string, TrustedAcceptedAnswer>>>
   readonly asked: Readonly<Partial<Record<string, IssuedCollectQuestion>>>
+  readonly clarifying?: ReadonlyArray<string>
 }
 
 /** @internal Structural answer state accepted only after definition parsing. */

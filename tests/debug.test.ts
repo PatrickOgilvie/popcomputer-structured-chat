@@ -121,6 +121,52 @@ const completeState: DebugChatState = {
 }
 
 describe("Debug.inspect", () => {
+  test("shows an unresolved clarification while retaining the accepted value", async () => {
+    const snapshot = await Effect.runPromise(Debug.inspect(DebugChat, {
+      ...dateAcceptedState,
+      stages: { ...dateAcceptedState.stages, launch_details: { ...dateAcceptedState.stages.launch_details, clarifying: ["launchDate"] } },
+    }))
+    const stage = snapshot.stages[0]
+    if (stage?._tag !== "CollectStage") throw new Error("Expected collection")
+    expect(stage.fields.find(field => field.field === "launchDate")).toMatchObject({
+      clarificationPending: true, state: { _tag: "Accepted", value: launchDate.toISOString() },
+    })
+    expect(stage.status).toBe("current")
+  })
+  test("preserves choice options and the latest wording without losing the first issuance", async () => {
+    const issuedQuestion = {
+      messageIndex: 2,
+      text: "How much detail would you like?",
+      options: ["Brief response", "Detailed response"],
+      latest: {
+        messageIndex: 4,
+        text: "Would a short summary or a detailed explanation help?",
+        options: ["Short summary", "Detailed explanation"],
+      },
+    }
+    const snapshot = await Effect.runPromise(
+      Debug.inspect(DebugChat, {
+        ...dateAcceptedState,
+        stages: {
+          ...dateAcceptedState.stages,
+          launch_details: {
+            ...dateAcceptedState.stages.launch_details,
+            asked: {
+              ...dateAcceptedState.stages.launch_details.asked,
+              responseStyle: issuedQuestion,
+            },
+          },
+        },
+      }),
+    )
+    const collect = snapshot.stages[0]
+    if (collect?._tag !== "CollectStage") {
+      throw new Error("Expected a collect-stage debug projection")
+    }
+    expect(collect.fields.find((field) => field.field === "responseStyle")?.state)
+      .toEqual({ _tag: "Asked", issuedQuestion })
+  })
+
   test("projects initial stage, missing fields, labels, and tool metadata", async () => {
     const snapshot = await Effect.runPromise(
       Debug.inspect(DebugChat, ChatTest.initialState(DebugChat)),

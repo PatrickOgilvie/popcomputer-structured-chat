@@ -58,10 +58,7 @@ describe("optional TypeSafe adapter in workerd", () => {
       name: "brief",
       fields,
       detector: TypeSafe.detection(fields, {
-        acceptance: {
-          need: { minimumProbability: 0.9 },
-          budget: { minimumProbability: 0.9 },
-        },
+        policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
       }),
     })
     const layer = TypeSafe.layer({
@@ -101,10 +98,9 @@ describe("optional TypeSafe adapter in workerd", () => {
                     Schema.decodeUnknownSync(Schema.Json)({
                       name: "submit_answers",
                       arguments: {
-                        answers: { need: "strategy", budget: "50k_plus" },
+                        answers: { need: "strategy" },
                         evidence: [
                           { field: "need", quote: "strategy" },
-                          { field: "budget", quote: "strategy" },
                         ],
                         nextQuestion: null,
                       },

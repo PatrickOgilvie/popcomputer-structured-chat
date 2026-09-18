@@ -1,6 +1,6 @@
 import { Answer, Chat, Model, Question, Stage, Tool } from "../src/index.js"
 import * as TypeSafe from "../src/typesafe.js"
-import { Effect, Schema } from "effect"
+import { Context, Effect, Schema } from "effect"
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
@@ -17,7 +17,7 @@ const stage = Stage.collect({
   name: "billing",
   fields,
   detector: TypeSafe.detection(fields, {
-    acceptance: { interval: { minimumProbability: 0.9 } },
+    policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
   }),
 })
 const execution = stage.run({ state: stage.initialState, messages: [] })
@@ -75,7 +75,28 @@ const run = Effect.gen(function* () {
 void run
 void (() => {
   TypeSafe.detection(fields, {
-    // @ts-expect-error Every detector field needs an acceptance threshold.
-    acceptance: {},
+    policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
+    // @ts-expect-error Only registered field names may be overridden.
+    overrides: { unknown: {} },
   })
 })
+
+class BriefContext extends Context.Service<BriefContext, { readonly currency: string }>()("BriefContext") {}
+class ContextUnavailable extends Schema.TaggedError<ContextUnavailable>()("ContextUnavailable", {}) {}
+const enrichment = Stage.extractionContext(fields, ({ accepted, extracting }) => Effect.gen(function* () {
+  const service = yield* BriefContext
+  const previous: "monthly" | "annual" | undefined = accepted.interval?.value
+  const keys: ReadonlyArray<"interval"> = extracting
+  // @ts-expect-error Accepted answers retain the exact field registry.
+  void accepted.unknown
+  if (service.currency.length === 0) return yield* new ContextUnavailable()
+  return { currency: service.currency, previous: previous ?? null, keys }
+}))
+const enriched = Stage.collect({ name: "enriched", fields, context: enrichment })
+const enrichedRun = enriched.run({ state: enriched.initialState, messages: [] })
+type _ContextRequirementsAreExact = Expect<Equal<Effect.Services<typeof enrichedRun>, Model.Service | BriefContext>>
+type _ContextFailuresAreExact = Expect<Equal<Extract<Effect.Error<typeof enrichedRun>, ContextUnavailable | Stage.InvalidExtractionContext>, ContextUnavailable | Stage.InvalidExtractionContext>>
+const enrichedChat = Chat.define({ name: "enriched_chat", version: 1, stages: [enriched, Stage.tools({ name: "finish", instructions: ["Finish"], tools: [tool] })] })
+type _ContextRequirementsReachChat = Expect<Equal<Extract<Chat.Requirements<typeof enrichedChat>, BriefContext>, BriefContext>>
+type _EnrichedAnswersArePreserved = Expect<Equal<NonNullable<Chat.State<typeof enrichedChat>["stages"]["enriched"]["accepted"]["interval"]>["value"], "monthly" | "annual">>
+type _ContextErrorsReachChat = Expect<Equal<Extract<Chat.TurnError<typeof enrichedChat>, ContextUnavailable>, ContextUnavailable>>

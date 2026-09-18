@@ -50,7 +50,7 @@ export interface QuestionChoice<Value> {
   readonly value: Value
 }
 
-/** One application-authored question with a closed set of typed answers. */
+/** A fixed question with typed suggestions; the answer schema defines all accepted values. */
 export interface ChoiceQuestion<Value> {
   readonly _tag: "ChoiceQuestion"
   readonly text: string

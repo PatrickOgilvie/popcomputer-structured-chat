@@ -29,8 +29,8 @@ export type {
   ScoreQuestion,
 } from "./core/evaluation.js"
 /** Optional batched answer detection for collect-stage questions. */
-export { detection } from "./integrations/typesafe-detection.js"
+export { detection, detectionPolicy } from "./integrations/typesafe-detection.js"
 export type {
-  DetectionAcceptance,
+  DetectionPolicy,
   TypeSafeDetectionOptions as DetectionOptions,
 } from "./integrations/typesafe-detection.js"

@@ -28,10 +28,7 @@ const details = Stage.collect({
   name: "details",
   fields,
   detector: TypeSafe.detection(fields, {
-    acceptance: {
-      interval: { minimumProbability: 0.9 },
-      invoice: { minimumProbability: 0.9 },
-    },
+    policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
   }),
 })
 const finish = Tool.define({
@@ -53,7 +50,7 @@ const generativeModel = Layer.succeed(Model.Service, {
     Effect.succeed({
       name: "submit_answers",
       arguments: {
-        answers: { interval: "annual", invoice: null },
+        answers: { interval: "annual" },
         evidence: [{ field: "interval", quote: "Annual" }],
         nextQuestion: null,
       },

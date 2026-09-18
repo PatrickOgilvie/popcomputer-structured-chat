@@ -270,6 +270,7 @@ describe("Debug.present", () => {
       "ModelOutputRejected",
       "ModelInput",
       "ModelOutput",
+      "AnswerProposalAssessed",
       "ToolCalled",
       "QuestionAnswered",
       "StageAdvanced",

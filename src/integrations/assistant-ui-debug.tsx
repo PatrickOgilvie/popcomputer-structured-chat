@@ -1448,6 +1448,7 @@ const answerValuePreview = (value: DebugValue): string => {
  * Full questions, values, and evidence stay in the expanded body.
  */
 const fieldPreview = (field: DebugField): string => {
+  if (field.clarificationPending === true) return "Clarifying"
   switch (field.state._tag) {
     case "Accepted":
       return answerValuePreview(field.state.value)
@@ -1832,6 +1833,14 @@ const annotationContent = (
   event: Exclude<DebugTraceEvent, DebugPayloadEvent>,
 ): ReactNode => {
   switch (event._tag) {
+    case "AnswerProposalAssessed":
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Answer</span>
+          <strong>{humanizeIdentifier(event.field)}: {humanizeIdentifier(event.decision)}</strong>
+          <span>Attempt {event.attempt}{event.reason === null ? "" : ` · ${humanizeIdentifier(event.reason)}`}</span>
+        </>
+      )
     case "ModelCallFailed":
       return (
         <>

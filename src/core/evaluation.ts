@@ -212,7 +212,6 @@ export type EvaluationError =
 export interface EvaluationLimits {
   readonly maximumQuestions: number
   readonly maximumStateCharacters: number
-  readonly maximumCandidatesPerField: number
 }
 /** Effect service contract for reusable TypeSafe judgments. */
 export interface EvaluationService {

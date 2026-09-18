@@ -209,7 +209,8 @@ type CollectFields<Stage> =
     infer Fields,
     infer _Guards,
     infer _Profile,
-    infer _Resolver
+    infer _Resolver,
+    infer _Enrichment
   >
     ? Fields
     : never

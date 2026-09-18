@@ -363,11 +363,15 @@ describe("Stage.collect", () => {
     )
 
     expect(turn.complete).toBe(false)
-    expect(turn.state).toEqual(state)
+    expect(turn.state.accepted).toEqual(state.accepted)
+    expect(turn.state.asked.localOnly).toMatchObject({
+      ...state.asked.localOnly,
+      latest: { messageIndex: 3, text: "Could you clarify your answer? Only show local firms?", options: ["Yes", "No"] },
+    })
     expect(turn.question).toMatchObject({
       field: "localOnly",
       mode: "confirmed",
-      text: "Only show local firms?",
+      text: "Could you clarify your answer? Only show local firms?",
     })
   })
 
@@ -774,7 +778,7 @@ describe("Stage.collect", () => {
       location: accepted("Leeds", 0, "Leeds"),
     })
     expect(turn.state.asked).toEqual({
-      localOnly: { messageIndex: 1, text: "Only show local firms?" },
+      localOnly: { messageIndex: 1, text: "Only show local firms?", options: ["Yes", "No"] },
     })
     expect(turn.question).toEqual({
       field: "localOnly",
@@ -991,10 +995,12 @@ describe("Stage.collect", () => {
 
   test("applies stage question guidance and exposes one uncertainty escape", async () => {
     let instructions = ""
+    let context = ""
 
     const model = Layer.succeed(Model.Service, {
       requestTool: (request) => {
         instructions = request.instructions.join(" ")
+        context = request.untrustedMessages.map(message => message.content).join(" ")
 
         return Effect.succeed({
           name: "submit_answers",
@@ -1036,8 +1042,8 @@ describe("Stage.collect", () => {
     expect(instructions).toContain(
       "Ask one conversational question and explain why the answer improves the result.",
     )
-    expect(instructions).toContain("provide 3-5 contextual options")
-    expect(instructions).toContain('"Not sure yet"')
+    expect(context).toContain("provide 3-5 contextual options")
+    expect(context).toContain('"Not sure yet"')
   })
 
   test.each([

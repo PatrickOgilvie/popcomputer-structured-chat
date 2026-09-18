@@ -21,6 +21,8 @@ export interface DetectionFieldDecision {
   readonly description: string
   /** The exact question text issued to the user, when one has been asked. */
   readonly issuedQuestion?: string
+  /** Ordered labels from the latest issued question. */
+  readonly issuedOptions?: ReadonlyArray<string>
 }
 
 /** Bounded context supplied to an optional answer detector. */
@@ -33,6 +35,7 @@ export interface DetectionDecisionContext {
 export const DetectionSelectionSchema = Schema.TaggedUnion({
   Detected: { field: Schema.String },
   Undetected: { field: Schema.String },
+  Uncertain: { field: Schema.String },
 })
 /** Field-level detection outcome. */
 export type DetectionSelection = typeof DetectionSelectionSchema.Type
@@ -107,7 +110,7 @@ export interface PreparedDetection {
 }
 /** @internal Prepare detector questions only from eligible, current user evidence. */
 export const prepareAnswerDetection = (
-  detector: AnswerDetectorContract,
+  detector: Pick<AnswerDetectorContract, "fields">,
   input: {
     readonly messages: ReadonlyArray<ConversationMessage>
     readonly asked: Readonly<Partial<Record<string, IssuedCollectQuestion>>>
@@ -120,7 +123,6 @@ export const prepareAnswerDetection = (
   }
   if (latest === undefined || latest.role !== "user") return empty
   const quote = latest.content.trim()
-  if (quote.length > 2_000) return { ...empty, tooLong: true }
   if (quote.length === 0) return empty
   const index = input.messages.length - 1
   const evidence: EligibleEvidence = {
@@ -130,7 +132,7 @@ export const prepareAnswerDetection = (
   }
   const fields: Array<DetectionFieldDecision> = []
   for (const [name, field] of Object.entries(detector.fields)) {
-    const issued = input.asked[name]
+    const issued = Object.hasOwn(input.asked, name) ? input.asked[name] : undefined
     if (
       !canGroundAnswer(latest, field.mode) ||
       (field.mode === "confirmed" &&
@@ -143,11 +145,12 @@ export const prepareAnswerDetection = (
           field: name,
           mode: field.mode,
           description: field.description,
-          issuedQuestion: issued.text,
+          issuedQuestion: (issued.latest ?? issued).text,
+          issuedOptions: (issued.latest ?? issued).options ?? [],
         }
     fields.push(decision)
   }
-  return { context: { fields, evidence: [evidence] }, tooLong: false }
+  return { context: { fields, evidence: [evidence] }, tooLong: quote.length > 2_000 }
 }
 /** @internal Invoke the sealed detector while retaining its conditional Effect types. */
 export const runAnswerDetector = <D extends AnswerDetectorContract>(
@@ -179,8 +182,8 @@ export const runAnswerDetector = <D extends AnswerDetectorContract>(
     >
   >(effect)
 }
-/** @internal Validate one detection pass and return the detected field names. */
-export const readDetectedFields = (
+/** @internal Validate one detection pass and return fields eligible for extraction. */
+export const readExtractionFields = (
   expected: ReadonlyArray<string>,
   selections: ReadonlyArray<DetectionSelection>,
 ): Effect.Effect<ReadonlySet<string>, InvalidAnswerDetection> => {
@@ -194,7 +197,7 @@ export const readDetectedFields = (
   return Effect.succeed(
     new Set(
       selections
-        .filter((selection) => selection._tag === "Detected")
+        .filter((selection) => selection._tag !== "Undetected")
         .map((selection) => selection.field),
     ),
   )

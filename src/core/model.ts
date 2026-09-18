@@ -275,6 +275,8 @@ type PlanToolCallInput<
   readonly messages: ReadonlyArray<UntrustedMessage>
   readonly tools: ToolCallPlanner<Tools>
   readonly guards?: Guards
+  /** Internal owners with semantic repair use one shared attempt budget. */
+  readonly maximumAttempts?: 1 | 2
 } & ModelProfileInput<Profile>
 
 const invalidOutputRepairInstruction = TrustedInstructionSchema.make(
@@ -371,31 +373,34 @@ export const planToolCallAfterGuards = <
           )
 
       return requestParsedCall(input.instructions, 1).pipe(
-        Effect.catchIf(isRepairableModelOutput, (error) => {
-          const annotations =
-            error._tag === "InvalidToolCall" && error.path !== null
-              ? {
-                  attempt: 2,
-                  errorTag: error._tag,
-                  errorReason: error.reason,
-                  errorPath: error.path,
-                }
-              : {
-                  attempt: 2,
-                  errorTag: error._tag,
-                  errorReason: error.reason,
-                }
+        Effect.catchIf(
+          error => input.maximumAttempts !== 1 && isRepairableModelOutput(error),
+          (error) => {
+            const annotations =
+              error._tag === "InvalidToolCall" && error.path !== null
+                ? {
+                    attempt: 2,
+                    errorTag: error._tag,
+                    errorReason: error.reason,
+                    errorPath: error.path,
+                  }
+                : {
+                    attempt: 2,
+                    errorTag: error._tag,
+                    errorReason: error.reason,
+                  }
 
-          return Effect.logWarning("Retrying structured model output").pipe(
-            Effect.annotateLogs(annotations),
-            Effect.andThen(
-              requestParsedCall(
-                [...input.instructions, invalidOutputRepairInstruction],
-                2,
+            return Effect.logWarning("Retrying structured model output").pipe(
+              Effect.annotateLogs(annotations),
+              Effect.andThen(
+                requestParsedCall(
+                  [...input.instructions, invalidOutputRepairInstruction],
+                  2,
+                ),
               ),
-            ),
-          )
-        }),
+            )
+          },
+        ),
       )
     }),
     Effect.tap((call) =>

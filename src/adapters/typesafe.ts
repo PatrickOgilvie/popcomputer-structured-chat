@@ -61,7 +61,6 @@ const ConfigSchema = Schema.Struct({
   limits: Schema.Struct({
     maximumQuestions: PositiveInteger,
     maximumStateCharacters: PositiveInteger,
-    maximumCandidatesPerField: PositiveInteger,
   }),
 })
 const ResponseSchema = Schema.Struct({

@@ -180,6 +180,16 @@ For an adaptive choice, valid contextual model suggestions take precedence.
 the runtime validates both sources against the same option bounds and never
 extracts choices from conversational prose.
 
+Choice buttons are suggestions, not the full answer domain. The schema passed
+to `Answer.explicit` or `Answer.semantic` determines which values can be recorded.
+Use a non-empty string schema for open-ended timing or location requirements,
+even when `Question.choice` offers common answers. A user can then supply
+"ASAP" or "after funding is approved" and have that answer recorded with quoted
+evidence. A numeric budget can similarly accept £25k when its buttons offer
+£10k, £20k, and £50k. Use `Schema.Literals` only when the domain truly excludes
+every unlisted value. Jev assesses answer presence; the LLM extracts the value,
+and the schema and validators decide whether it can be accepted.
+
 - `Answer.semantic` instructs the model that it may infer a typed fact from
   quoted user evidence.
 - `Answer.explicit` instructs the model to require a direct user statement.
@@ -194,6 +204,15 @@ ordering are rejected, and repair requires reconfirmation. The
 verifies both the same way, as one exact quote from any user message. Choose
 `confirmed` when the ordering guarantee must hold against a misbehaving model,
 not just a well-prompted one.
+
+Collection proposals are assessed per field. Repeating an accepted value keeps its
+existing evidence; new or changed values require valid grounding, and corrections
+require evidence newer than the accepted answer. One malformed field does not
+discard independent valid proposals. Collection makes at most two model requests
+to recover output errors before asking for clarification. An unresolved correction
+retains the previous value while blocking stage completion. Application validator
+failures still reject the whole turn without changing the saved session. See the
+[recovery design note](docs/collect-proposal-recovery.md).
 
 | Answer mode | Server enforcement | Model interpretation |
 | --- | --- | --- |
@@ -993,9 +1012,9 @@ const ModelLive = OpenAICompatible.layer({
 
 ## Opt into TypeSafe judgments
 
-The optional `@popcomputer/structured-chat/typesafe` entry point adds typed Noul, Choice, Score, and batched evaluation through an Effect service. Attach `TypeSafe.detection(fields, options)` to a collect stage to mark which questions the latest message already answered — one batched Noul per field — and gate generative extraction to those fields, skipping the model when nothing is detected. Existing guards, evidence checks, validators, and session commits still determine acceptance.
+The optional `@popcomputer/structured-chat/typesafe` entry point adds typed Noul, Choice, Score, and batched evaluation through an Effect service. Attach `TypeSafe.detection(fields, options)` to a collect stage to mark which questions the latest message already answered — one batched Noul per field — and build a labelled extraction plan with a narrowed output schema. Detected and uncertain fields go to the LLM; confidently undetected fields remain untouched. Reusable `TypeSafe.detectionPolicy` values configure the probability bands, and `Stage.extractionContext` adds typed application data. Existing guards, evidence checks, validators, and session commits still determine acceptance.
 
-Install the optional `@typesafe-ai/sdk` peer and provide an explicit server-side `TypeSafe.layer`. See the [setup and behavior guide](docs/typesafe.md) and [compiled example](examples/typesafe.ts). Stages without a resolver keep their existing behavior; the package root remains independent of the SDK.
+Install the optional `@typesafe-ai/sdk` peer and provide an explicit server-side `TypeSafe.layer`. See the [setup and behavior guide](docs/typesafe.md) and [compiled example](examples/typesafe.ts). Stages without a detector or context capability keep their existing behavior; the package root remains independent of the SDK.
 
 ## Connect assistant-ui
 

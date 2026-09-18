@@ -25,9 +25,15 @@ import { ToolNameSchema } from "./tool.js"
 
 const DebugIndexSchema = Schema.Natural
 
-const DebugIssuedQuestionSchema = Schema.Struct({
+const DebugIssuedQuestionContextSchema = Schema.Struct({
   messageIndex: DebugIndexSchema,
   text: Schema.String,
+  options: Schema.optionalKey(Schema.Array(Schema.String)),
+})
+
+const DebugIssuedQuestionSchema = Schema.Struct({
+  ...DebugIssuedQuestionContextSchema.fields,
+  latest: Schema.optionalKey(DebugIssuedQuestionContextSchema),
 })
 
 const DebugAnswerEvidenceSchema = Schema.Struct({
@@ -85,6 +91,7 @@ const DebugFieldSchema = Schema.Struct({
   description: Schema.String,
   question: DebugQuestionSchema,
   state: DebugFieldStateSchema,
+  clarificationPending: Schema.optionalKey(Schema.Boolean),
 })
 
 const DebugStageStatusSchema = Schema.Literals([
@@ -359,12 +366,14 @@ export const inspectChatState = <
       let satisfiedFields = 0
 
       for (const field of inspectedSection.fields) {
-        const fieldBase = {
+        const definitionField = {
           field: field.field,
           mode: field.mode,
           description: field.description,
           question: projectQuestion(field.question),
         }
+        const fieldBase = runtimeState.stages[stage.name]?.clarifying?.includes(field.field) === true
+          ? { ...definitionField, clarificationPending: true } : definitionField
 
         if (
           !Predicate.isTagged(field.state, "Asked") &&
