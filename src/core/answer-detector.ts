@@ -5,8 +5,14 @@ import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
-import type { EligibleEvidence } from "./answer-resolver.js"
 import type { AnswerFields, IssuedCollectQuestion } from "./collect-stage.js"
+
+/** Evidence prepared by the core; a detector judges it but never authors values. */
+export interface EligibleEvidence {
+  readonly id: string
+  readonly messageIndex: number
+  readonly quote: string
+}
 
 /** One form question offered to an optional answer detector. */
 export interface DetectionFieldDecision {

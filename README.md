@@ -993,7 +993,7 @@ const ModelLive = OpenAICompatible.layer({
 
 ## Opt into TypeSafe judgments
 
-The optional `@popcomputer/structured-chat/typesafe` entry point adds typed Noul, Choice, Score, and batched evaluation through an Effect service. Attach `TypeSafe.collection(fields, options)` to a collection stage to classify registered enum or boolean values, with explicit abstention and acceptance thresholds. Or attach `TypeSafe.detection(fields, options)` to mark which questions the latest message already answered — one batched Noul per field — and gate generative extraction to those fields, skipping the model when nothing is detected. Existing guards, evidence checks, validators, and session commits still determine acceptance.
+The optional `@popcomputer/structured-chat/typesafe` entry point adds typed Noul, Choice, Score, and batched evaluation through an Effect service. Attach `TypeSafe.detection(fields, options)` to a collect stage to mark which questions the latest message already answered — one batched Noul per field — and gate generative extraction to those fields, skipping the model when nothing is detected. Existing guards, evidence checks, validators, and session commits still determine acceptance.
 
 Install the optional `@typesafe-ai/sdk` peer and provide an explicit server-side `TypeSafe.layer`. See the [setup and behavior guide](docs/typesafe.md) and [compiled example](examples/typesafe.ts). Stages without a resolver keep their existing behavior; the package root remains independent of the SDK.
 

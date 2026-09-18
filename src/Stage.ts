@@ -57,20 +57,6 @@ export type {
   InteractionCommandContext,
 } from "./core/interaction-stage.js"
 
-/** Construct an optional finite answer resolution strategy. */
-export {
-  defineAnswerResolver as resolver,
-  InvalidAnswerResolution,
-} from "./core/answer-resolver.js"
-export type {
-  AnswerResolver,
-  AnswerResolverContract,
-  CollectionDecisionContext,
-  CollectionResolution,
-  FieldSelection,
-  FiniteChoicesFor,
-} from "./core/answer-resolver.js"
-
 /** Construct an optional answer detection strategy. */
 export {
   defineAnswerDetector as detector,
@@ -83,4 +69,5 @@ export type {
   DetectionFieldDecision,
   DetectionResolution,
   DetectionSelection,
+  EligibleEvidence,
 } from "./core/answer-detector.js"

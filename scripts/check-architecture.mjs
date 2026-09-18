@@ -222,7 +222,6 @@ const inspectRootDependency = (file) => {
   if (
     file === "typesafe.ts" ||
     file === "adapters/typesafe.ts" ||
-    file === "integrations/typesafe-collection.ts" ||
     file === "integrations/typesafe-detection.ts"
   ) {
     errors.push(`root imports optional TypeSafe integration: ${file}`)

@@ -1,4 +1,4 @@
-import type { AnswerResolverContract } from "../core/answer-resolver.js"
+import type { AnswerDetectorContract } from "../core/answer-detector.js"
 import { Effect, Layer, Ref, Schema } from "effect"
 import type {
   AnswerFields,
@@ -136,9 +136,9 @@ const answers = <
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple,
   const Profile extends AnyModelProfile | undefined,
-  const Resolver extends AnswerResolverContract | undefined,
+  const Detector extends AnswerDetectorContract | undefined,
 >(
-  stage: CollectStage<Name, Fields, Guards, Profile, Resolver>,
+  stage: CollectStage<Name, Fields, Guards, Profile, Detector>,
   proposed: QuotedAnswers<Fields>,
   options: {
     readonly nextQuestion?: ScenarioNextQuestion<Fields> | null
@@ -213,10 +213,10 @@ const replace = <
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple,
   const Profile extends AnyModelProfile | undefined,
-  const Resolver extends AnswerResolverContract | undefined,
+  const Detector extends AnswerDetectorContract | undefined,
   const Field extends ReplaceableField<Fields>,
 >(
-  stage: CollectStage<Name, Fields, Guards, Profile, Resolver>,
+  stage: CollectStage<Name, Fields, Guards, Profile, Detector>,
   field: Field,
   value: CollectAnswers<Fields>[Field],
   options: { readonly quote: string; readonly messageIndex?: number },
@@ -252,10 +252,10 @@ const reconfirm = <
   const Fields extends AnswerFields,
   const Guards extends ModelGuardTuple,
   const Profile extends AnyModelProfile | undefined,
-  const Resolver extends AnswerResolverContract | undefined,
+  const Detector extends AnswerDetectorContract | undefined,
   const Field extends ConfirmedField<Fields>,
 >(
-  stage: CollectStage<Name, Fields, Guards, Profile, Resolver>,
+  stage: CollectStage<Name, Fields, Guards, Profile, Detector>,
   field: Field,
   options: { readonly quote: string; readonly messageIndex?: number },
 ): ScenarioRepair => {

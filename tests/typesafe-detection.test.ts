@@ -339,30 +339,6 @@ describe("TypeSafe detection invariants", () => {
     ).toThrow("exact stage fields")
   })
 
-  test("rejects a resolver and a detector on the same stage", () => {
-    const resolver = Stage.resolver(
-      fields,
-      {
-        need: [
-          { value: "a", meaning: "A" },
-          { value: "b", meaning: "B" },
-        ],
-        budget: [
-          { value: "under_25k", meaning: "Under" },
-          { value: "50k_plus", meaning: "Plus" },
-        ],
-        timeline: [
-          { value: "next_month", meaning: "Soon" },
-          { value: "later", meaning: "Later" },
-        ],
-      },
-      () => Effect.succeed({ _tag: "Resolved" as const, selections: [] }),
-    )
-    expect(() =>
-      Stage.collect({ name: "both", fields, resolver, detector }),
-    ).toThrow("not both")
-  })
-
   test("rejects detection acceptance that does not cover the fields", () => {
     expect(() =>
       TypeSafe.detection(fields, {

@@ -8,14 +8,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-## [0.8.0] - 2026-09-18
+### Breaking changes
 
-Collect stages can now let TypeSafe decide which questions the latest message
-already answered before any generative extraction runs.
+- A collect stage's TypeSafe strategy is detection only. The provider-neutral answer resolver, `TypeSafe.collection`, the `resolver` stage option, and their exports are removed; attach `TypeSafe.detection` instead. Detection supports every answer schema, including unbounded free-text fields, and gates the ordinary generative extraction to the fields it marks answered.
 
 ### Added
 
 - Provider-neutral answer detection and `TypeSafe.detection`: one batched Noul per stage question marks none, one, or many fields answered, gates generative extraction to detected fields, and skips the model when nothing is detected.
+- `Stage.detector` and the `AnswerDetector` contract define detection strategies without candidate values.
 
 ## [0.7.0] - 2026-09-18
 
@@ -296,8 +296,7 @@ const reply = Chat.turn(chat, input)
   questions, tools, commands, session persistence, browser presentation,
   assistant-ui integration, and transcript scenarios.
 
-[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.8.0...HEAD
-[0.8.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.7.0...v0.8.0
+[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.7.0...HEAD
 [0.7.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.4.0...v0.5.0

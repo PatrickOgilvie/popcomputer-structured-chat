@@ -27,20 +27,10 @@ const fields = {
 const details = Stage.collect({
   name: "details",
   fields,
-  resolver: TypeSafe.collection(fields, {
-    choices: {
-      interval: [
-        { value: "monthly", meaning: "Monthly" },
-        { value: "annual", meaning: "Annual" },
-      ],
-      invoice: [
-        { value: true, meaning: "Invoice requested" },
-        { value: false, meaning: "Invoice declined" },
-      ],
-    },
+  detector: TypeSafe.detection(fields, {
     acceptance: {
-      interval: { minimumProbability: 0.9, minimumConfidence: 0.8 },
-      invoice: { minimumProbability: 0.9, minimumConfidence: 0.8 },
+      interval: { minimumProbability: 0.9 },
+      invoice: { minimumProbability: 0.9 },
     },
   }),
 })
@@ -58,8 +48,16 @@ const chat = Chat.define({
     Stage.tools({ name: "finish", instructions: ["Finish"], tools: [finish] }),
   ],
 })
-const noModel = Layer.succeed(Model.Service, {
-  requestTool: () => Effect.die(new Error("Unexpected model call")),
+const generativeModel = Layer.succeed(Model.Service, {
+  requestTool: () =>
+    Effect.succeed({
+      name: "submit_answers",
+      arguments: {
+        answers: { interval: "annual", invoice: null },
+        evidence: [{ field: "interval", quote: "Annual" }],
+        nextQuestion: null,
+      },
+    }),
 })
 const control = Layer.succeed(Chat.TurnControl, {
   check: () => Effect.void,
@@ -71,28 +69,8 @@ const response = () =>
     model: "jev-test",
     usage: { input_tokens: 10, output_tokens: 2 },
     answers: {
-      interval: {
-        type: "choice",
-        choice: "candidate_1",
-        confidence: 1,
-        probabilities: {
-          candidate_0: 0,
-          candidate_1: 1,
-          no_answer: 0,
-          ambiguous: 0,
-        },
-      },
-      invoice: {
-        type: "choice",
-        choice: "no_answer",
-        confidence: 1,
-        probabilities: {
-          candidate_0: 0,
-          candidate_1: 0,
-          no_answer: 1,
-          ambiguous: 0,
-        },
-      },
+      interval: { type: "noul", noul: 0.99 },
+      invoice: { type: "noul", noul: 0.1 },
     },
   })
 const identity = (sessionId: string) => ({ namespace: "typesafe-runtime", sessionId })
@@ -103,7 +81,7 @@ const scope = (sessionId: string) => ({
   version: chat.version,
 })
 
-describe("TypeSafe collection persisted in D1", () => {
+describe("TypeSafe detection persisted in D1", () => {
   test("replays an observed batch without another evaluation or write", async () => {
     let requests = 0
     const store = makeD1ChatSessionStore(env.SESSIONS_DB)
@@ -133,7 +111,7 @@ describe("TypeSafe collection persisted in D1", () => {
             }),
           ),
         ),
-        Effect.provide(noModel),
+        Effect.provide(generativeModel),
         Effect.provide(control),
         Effect.provideService(Session.Store, store),
       ),
@@ -176,7 +154,7 @@ describe("TypeSafe collection persisted in D1", () => {
             }),
           ),
         ),
-        Effect.provide(noModel),
+        Effect.provide(generativeModel),
         Effect.provideService(Session.Store, store),
       ),
     )
@@ -233,7 +211,7 @@ describe("TypeSafe collection persisted in D1", () => {
         }).pipe(Effect.provide(layer))
       }).pipe(
         Effect.scoped,
-        Effect.provide(noModel),
+        Effect.provide(generativeModel),
         Effect.provideService(Session.Store, store),
       ),
     )

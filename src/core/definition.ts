@@ -10,7 +10,6 @@ export type StructuredDefinitionKind =
   | "interaction_stage"
   | "repair"
   | "model_guard"
-  | "answer_resolver"
   | "answer_detector"
 
 const structuredDefinitionKind = Symbol(

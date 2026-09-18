@@ -1,5 +1,8 @@
 # Keep TypeSafe evaluation optional and answer acceptance in the core
 
+> Superseded by [ADR 0004](./0004-detection-only-answer-strategy.md): the finite
+> candidate resolver is replaced by detection for collect stages.
+
 Expose typed Noul, Choice, Score, and batch evaluation through `@popcomputer/structured-chat/typesafe`, backed by an explicit Effect service and the optional official SDK peer. A root import must remain usable without the SDK. Configuration, request deadlines, retries, and error sanitization belong to the adapter; application code owns thresholds and any resulting actions.
 
 Add a provider-neutral answer resolver to `Stage.collect`. For the first integration, callers register finite string or boolean values against each field schema. The core pairs those values with eligible evidence and the resolver returns candidate IDs or abstentions. The ordinary submission parser, guards, validators, evidence checks, correction rules, and optimistic session commit continue to determine acceptance. A classifier cannot supply an accepted value, fabricate a quote, or turn observed speech into explicit confirmation.

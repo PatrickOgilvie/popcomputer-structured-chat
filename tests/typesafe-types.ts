@@ -16,16 +16,8 @@ const fields = {
 const stage = Stage.collect({
   name: "billing",
   fields,
-  resolver: TypeSafe.collection(fields, {
-    choices: {
-      interval: [
-        { value: "monthly", meaning: "Every month" },
-        { value: "annual", meaning: "Every year" },
-      ],
-    },
-    acceptance: {
-      interval: { minimumProbability: 0.9, minimumConfidence: 0.8 },
-    },
+  detector: TypeSafe.detection(fields, {
+    acceptance: { interval: { minimumProbability: 0.9 } },
   }),
 })
 const execution = stage.run({ state: stage.initialState, messages: [] })
@@ -38,32 +30,9 @@ type _ProviderErrorsPropagate = Expect<
     TypeSafe.EvaluationError
   >
 >
-const detectionStage = Stage.collect({
-  name: "billing_detection",
-  fields,
-  detector: TypeSafe.detection(fields, {
-    acceptance: { interval: { minimumProbability: 0.9 } },
-  }),
-})
-const detectionExecution = detectionStage.run({
-  state: detectionStage.initialState,
-  messages: [],
-})
-type _DetectionRequirementsAreExact = Expect<
-  Equal<Effect.Services<typeof detectionExecution>, Model.Service | TypeSafe.Service>
->
-type _DetectionErrorsPropagate = Expect<
+type _RejectionsAreSurfaced = Expect<
   Equal<
-    Extract<Effect.Error<typeof detectionExecution>, TypeSafe.EvaluationError>,
-    TypeSafe.EvaluationError
-  >
->
-type _DetectionRejectionsAreSurfaced = Expect<
-  Equal<
-    Extract<
-      Effect.Error<typeof detectionExecution>,
-      Stage.InvalidAnswerDetection
-    >,
+    Extract<Effect.Error<typeof execution>, Stage.InvalidAnswerDetection>,
     Stage.InvalidAnswerDetection
   >
 >
@@ -105,24 +74,6 @@ const run = Effect.gen(function* () {
 })
 void run
 void (() => {
-  TypeSafe.collection(fields, {
-    // @ts-expect-error Candidate values must satisfy the answer's literal type.
-    choices: { interval: [{ value: "weekly", meaning: "Every week" }] },
-    acceptance: {
-      interval: { minimumProbability: 0.9, minimumConfidence: 0.8 },
-    },
-  })
-  const numeric = {
-    count: Answer.explicit(Schema.Number, {
-      description: "Count",
-      ask: Question.fixed("How many?"),
-    }),
-  }
-  TypeSafe.collection(numeric, {
-    // @ts-expect-error Finite collection supports strings and booleans, not arbitrary numbers.
-    choices: { count: [{ value: 1, meaning: "One" }] },
-    acceptance: { count: { minimumProbability: 0.9, minimumConfidence: 0.8 } },
-  })
   TypeSafe.detection(fields, {
     // @ts-expect-error Every detector field needs an acceptance threshold.
     acceptance: {},
