@@ -8,6 +8,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-18
+
+Collect stages can now let TypeSafe decide which questions the latest message
+already answered before any generative extraction runs.
+
 ### Breaking changes
 
 - A collect stage's TypeSafe strategy is detection only. The provider-neutral answer resolver, `TypeSafe.collection`, the `resolver` stage option, and their exports are removed; attach `TypeSafe.detection` instead. Detection supports every answer schema, including unbounded free-text fields, and gates the ordinary generative extraction to the fields it marks answered.
@@ -296,7 +301,8 @@ const reply = Chat.turn(chat, input)
   questions, tools, commands, session persistence, browser presentation,
   assistant-ui integration, and transcript scenarios.
 
-[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.7.0...v0.9.0
 [0.7.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.4.0...v0.5.0
