@@ -8,6 +8,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-18
+
+Optional TypeSafe evaluation brings calibrated, typed decisions from the
+System One model family into structured chats without changing stages that do
+not opt in.
+
 ### Added
 
 - Optional TypeSafe SDK adapter with typed Noul, Choice, Score, and batch evaluation, explicit Effect configuration, bounded retries, cancellation, and sanitized failures.
@@ -281,7 +287,8 @@ const reply = Chat.turn(chat, input)
   questions, tools, commands, session persistence, browser presentation,
   assistant-ui integration, and transcript scenarios.
 
-[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.3.1...v0.4.0
