@@ -8,6 +8,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-18
+
+Collect stages can now let TypeSafe decide which questions the latest message
+already answered before any generative extraction runs.
+
 ### Added
 
 - Provider-neutral answer detection and `TypeSafe.detection`: one batched Noul per stage question marks none, one, or many fields answered, gates generative extraction to detected fields, and skips the model when nothing is detected.
@@ -291,7 +296,8 @@ const reply = Chat.turn(chat, input)
   questions, tools, commands, session persistence, browser presentation,
   assistant-ui integration, and transcript scenarios.
 
-[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.4.0...v0.5.0
