@@ -80,6 +80,47 @@ Abstention, low confidence, provider errors, and malformed responses do not trig
 
 Errors contain bounded reason codes, never credentials, request text, response bodies, or SDK exception messages. Evaluation spans contain model, question count, and usage metadata; collection spans contain selection counts. Ordinary structured-chat debug/session facilities still retain their existing conversation and evidence data.
 
+## Detect answered questions
+
+`TypeSafe.detection(fields, { acceptance })` binds every stage field to one Noul question — "does the latest user message answer this field?" — and evaluates them in one batched request. Fields whose probability meets their `minimumProbability` are the only ones the ordinary generative extraction may fill this turn; when nothing is detected the model is not called and the stage asks its pending question again. Unlike `collection`, detection needs no candidate values, so free-text and other unbounded answers participate.
+
+```ts
+const fields = {
+  need: Answer.semantic(Schema.Trimmed.check(Schema.isNonEmpty()), {
+    description: "The agency need",
+    ask: Question.adaptive("Ask what help is needed.", {
+      fallback: "What do you need help with?",
+    }),
+  }),
+  budget: Answer.explicit(Schema.Literals(["under_25k", "50k_plus"]), {
+    description: "The budget band",
+    ask: Question.adaptiveChoice("Ask for the budget band.", {
+      minimumOptions: 2,
+      maximumOptions: 4,
+    }),
+  }),
+}
+
+const Brief = Stage.collect({
+  name: "brief",
+  fields,
+  detector: TypeSafe.detection(fields, {
+    acceptance: {
+      need: { minimumProbability: 0.8 },
+      budget: { minimumProbability: 0.9 },
+    },
+    criteria: {
+      budget: {
+        true: "The message states a budget or spending range.",
+        false: "The message does not mention money.",
+      },
+    },
+  }),
+})
+```
+
+Each Noul carries the field description, the exact issued question text when one has been asked, and the answer mode's grounding rule. Noul returns one probability and no separate confidence, so acceptance uses a probability threshold only. A detector is authoritative for which fields may be filled, but it never supplies values: the existing generative extraction produces them and every existing acceptance rule still applies. One message can mark none, one, or many fields answered — the batched request evaluates all questions at once. Evidence beyond 2,000 characters, or over the configured question and state budgets, falls back to the generative path; provider failures propagate. Detection reads only the latest user message, matching collection. A stage accepts one `resolver` or one `detector`, not both.
+
 ## Reuse judgments outside collection
 
 ```ts

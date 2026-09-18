@@ -32,6 +32,15 @@ import {
   type ResolverError,
   type ResolverRequirements,
 } from "./answer-resolver.js"
+import {
+  prepareAnswerDetection,
+  readDetectedFields,
+  runAnswerDetector,
+  InvalidAnswerDetection,
+  type AnswerDetectorContract,
+  type DetectorError,
+  type DetectorRequirements,
+} from "./answer-detector.js"
 import type {
   ModelGuardError,
   ModelGuardRequirements,
@@ -55,6 +64,7 @@ import {
 } from "./definition.js"
 import type { RepairCorrection } from "./repair.js"
 import { recordDebugEvent } from "./debug-trace.js"
+import type { JsonValue } from "./json-value.js"
 
 /** Safe reason that a collect-stage model proposal was rejected. */
 export const InvalidCollectStageResponseReasonSchema = Schema.Literals([
@@ -325,12 +335,14 @@ export type DefineCollectStageInput<
   Guards extends ModelGuardTuple,
   Profile extends AnyModelProfile | undefined = undefined,
   Resolver extends AnswerResolverContract | undefined = undefined,
+  Detector extends AnswerDetectorContract | undefined = undefined,
 > = {
   readonly name: Name
   readonly questions?: CollectQuestionPolicy
   readonly fields: Fields
   readonly guards?: Guards
   readonly resolver?: Resolver
+  readonly detector?: Detector
 } & ModelProfileInput<Profile>
 
 /** One schema-derived stage that is complete only when every fact is known. */
@@ -340,6 +352,7 @@ export interface CollectStage<
   Guards extends ModelGuardTuple = readonly [],
   Profile extends AnyModelProfile | undefined = undefined,
   Resolver extends AnswerResolverContract | undefined = undefined,
+  Detector extends AnswerDetectorContract | undefined = undefined,
 > extends CollectStageDefinitionContract {
   readonly _tag: "CollectStage"
   readonly name: Name
@@ -387,11 +400,14 @@ export interface CollectStage<
     | CollectAnswerValidationError<Fields>
     | ModelGuardError<Guards>
     | ResolverError<Resolver>
-    | (Resolver extends AnswerResolverContract ? InvalidAnswerResolution : never),
+    | (Resolver extends AnswerResolverContract ? InvalidAnswerResolution : never)
+    | DetectorError<Detector>
+    | (Detector extends AnswerDetectorContract ? InvalidAnswerDetection : never),
     | ModelRequirement<Profile>
     | CollectAnswerValidationRequirements<Fields>
     | ModelGuardRequirements<Guards>
     | ResolverRequirements<Resolver>
+    | DetectorRequirements<Detector>
   >
 }
 
@@ -416,15 +432,37 @@ export const defineCollectStage = <
   const Guards extends ModelGuardTuple = readonly [],
   const Profile extends AnyModelProfile | undefined = undefined,
   const Resolver extends AnswerResolverContract | undefined = undefined,
+  const Detector extends AnswerDetectorContract | undefined = undefined,
 >(
-  definition: DefineCollectStageInput<Name, Fields, Guards, Profile, Resolver>,
-): CollectStage<Name, Fields, Guards, Profile, Resolver> => {
+  definition: DefineCollectStageInput<
+    Name,
+    Fields,
+    Guards,
+    Profile,
+    Resolver,
+    Detector
+  >,
+): CollectStage<Name, Fields, Guards, Profile, Resolver, Detector> => {
   StageNameSchema.make(definition.name)
   if (
     definition.resolver !== undefined &&
     definition.resolver.fields !== definition.fields
   ) {
     throw new Error("Answer resolver must be bound to the exact stage fields")
+  }
+  if (
+    definition.detector !== undefined &&
+    definition.detector.fields !== definition.fields
+  ) {
+    throw new Error("Answer detector must be bound to the exact stage fields")
+  }
+  if (
+    definition.resolver !== undefined &&
+    definition.detector !== undefined
+  ) {
+    throw new Error(
+      "A collect stage accepts one resolver or one detector, not both",
+    )
   }
 
   const questionGuidanceSchema = Schema.Trimmed.check(
@@ -1358,8 +1396,19 @@ export const defineCollectStage = <
 
     const input = { instructions, messages, tools: toolSet, guards, ...modelInput }
     const resolver = definition.resolver
-    const resolvedStep = resolver === undefined
-      ? runToolStep<readonly [typeof submitAnswers], Guards, Profile>(input)
+    const detector = definition.detector
+    const generative = planToolCallAfterGuards<
+      readonly [typeof submitAnswers], Guards, Profile
+    >(input).pipe(Effect.flatMap(toolSet.execute))
+    const emptyProposal = (): Schema.Schema.Type<typeof ProposalSchema> =>
+      // SAFETY: every field is nullable for absence in the proposal schema.
+      cast<JsonValue, Schema.Schema.Type<typeof ProposalSchema>>({
+        answers: Object.fromEntries(fieldNames.map((field) => [field, null])),
+        evidence: [],
+        nextQuestion: null,
+      })
+    const detectedStep = detector === undefined
+      ? undefined
       : Effect.gen(function* () {
           const guardContext = {
             messages,
@@ -1371,28 +1420,103 @@ export const defineCollectStage = <
             latest?.role === "user" &&
             latest.content.toLocaleLowerCase("en") ===
               questions.escape.toLocaleLowerCase("en")
-          const prepared = prepareAnswerResolution(resolver, {
+          const prepared = prepareAnswerDetection(detector, {
             messages,
             asked: state.asked,
             escaped,
           })
-          const generative = planToolCallAfterGuards<
-            readonly [typeof submitAnswers], Guards, Profile
-          >(input).pipe(Effect.flatMap(toolSet.execute))
           if (prepared.tooLong) return yield* generative
           const resolution = prepared.context.fields.length === 0
             ? { _tag: "Resolved" as const, selections: [] }
-            : yield* runAnswerResolver(resolver, prepared.context)
+            : yield* runAnswerDetector(detector, prepared.context)
           if (resolution._tag === "NotApplicable") return yield* generative
-          const envelope = yield* resolutionCall(
-            definition.fields,
-            prepared,
+          const detected = yield* readDetectedFields(
+            prepared.context.fields.map((field) => field.field),
             resolution.selections,
           )
-          const call = yield* toolSet.parseCall(envelope)
-          yield* runModelCallGuards(guards, { ...guardContext, call })
-          return yield* toolSet.execute(call)
+          // Nothing was answered: keep the form on its pending question without
+          // paying for a generative extraction request.
+          if (detected.size === 0) {
+            const call = yield* toolSet.parseCall(
+              // SAFETY: every field is null or a JSON value in the proposal schema.
+              cast<unknown, JsonValue>({
+                name: "submit_answers",
+                arguments: emptyProposal(),
+              }),
+            )
+            yield* runModelCallGuards(guards, { ...guardContext, call })
+            return yield* toolSet.execute(call)
+          }
+          const execution = yield* generative
+          return {
+            ...execution,
+            serverResult: {
+              ...execution.serverResult,
+              answers: Object.fromEntries(
+                Object.entries(execution.serverResult.answers).map(
+                  ([field, value]) => [
+                    field,
+                    detected.has(field) ? value : null,
+                  ],
+                ),
+              ),
+              evidence: execution.serverResult.evidence.filter((entry) =>
+                detected.has(entry.field),
+              ),
+            },
+          }
         })
+    // SAFETY: every branch produces one parsed proposal; the detection branch
+    // may synthesize an empty proposal without asking the model.
+    const resolvedStep: Effect.Effect<
+      { readonly serverResult: Schema.Schema.Type<typeof ProposalSchema> },
+      | ChatModelUnavailable
+      | UnsupportedModelToolSchema
+      | InvalidToolCall
+      | InvalidToolProjection
+      | ModelGuardError<Guards>
+      | ResolverError<Resolver>
+      | InvalidAnswerResolution
+      | DetectorError<Detector>
+      | InvalidAnswerDetection,
+      | ModelRequirement<Profile>
+      | ModelGuardRequirements<Guards>
+      | ResolverRequirements<Resolver>
+      | DetectorRequirements<Detector>
+    > = detectedStep !== undefined
+      ? detectedStep
+      : resolver === undefined
+        ? runToolStep<readonly [typeof submitAnswers], Guards, Profile>(input)
+        : Effect.gen(function* () {
+            const guardContext = {
+              messages,
+              toolNames: toolSet.models.map(tool => tool.name),
+            }
+            yield* runModelGuards(guards, guardContext)
+            const latest = messages.at(-1)
+            const escaped = questions.escape !== undefined &&
+              latest?.role === "user" &&
+              latest.content.toLocaleLowerCase("en") ===
+                questions.escape.toLocaleLowerCase("en")
+            const prepared = prepareAnswerResolution(resolver, {
+              messages,
+              asked: state.asked,
+              escaped,
+            })
+            if (prepared.tooLong) return yield* generative
+            const resolution = prepared.context.fields.length === 0
+              ? { _tag: "Resolved" as const, selections: [] }
+              : yield* runAnswerResolver(resolver, prepared.context)
+            if (resolution._tag === "NotApplicable") return yield* generative
+            const envelope = yield* resolutionCall(
+              definition.fields,
+              prepared,
+              resolution.selections,
+            )
+            const call = yield* toolSet.parseCall(envelope)
+            yield* runModelCallGuards(guards, { ...guardContext, call })
+            return yield* toolSet.execute(call)
+          })
     return resolvedStep.pipe(
       Effect.flatMap(({ serverResult }) =>
         mergeProposal(state, messages, serverResult),
@@ -1424,11 +1548,11 @@ export const defineCollectStage = <
     )
   }
 
-  // SAFETY: resolver-only errors and requirements arise solely in the resolver
-  // branch. TypeScript cannot narrow the enclosing generic Resolver parameter.
+  // SAFETY: resolver- and detector-only errors and requirements arise solely in
+  // their branches. TypeScript cannot narrow the enclosing generic parameters.
   const run = cast<
     typeof runCollection,
-    CollectStage<Name, Fields, Guards, Profile, Resolver>["run"]
+    CollectStage<Name, Fields, Guards, Profile, Resolver, Detector>["run"]
   >(runCollection)
 
   // SAFETY: The chat runtime calls these erased operations only after the

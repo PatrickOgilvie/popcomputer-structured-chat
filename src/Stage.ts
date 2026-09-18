@@ -70,3 +70,17 @@ export type {
   FieldSelection,
   FiniteChoicesFor,
 } from "./core/answer-resolver.js"
+
+/** Construct an optional answer detection strategy. */
+export {
+  defineAnswerDetector as detector,
+  InvalidAnswerDetection,
+} from "./core/answer-detector.js"
+export type {
+  AnswerDetector,
+  AnswerDetectorContract,
+  DetectionDecisionContext,
+  DetectionFieldDecision,
+  DetectionResolution,
+  DetectionSelection,
+} from "./core/answer-detector.js"

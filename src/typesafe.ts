@@ -34,3 +34,9 @@ export type {
   ChoiceAcceptance,
   TypeSafeCollectionOptions as CollectionOptions,
 } from "./integrations/typesafe-collection.js"
+/** Optional batched answer detection for collect-stage questions. */
+export { detection } from "./integrations/typesafe-detection.js"
+export type {
+  DetectionAcceptance,
+  TypeSafeDetectionOptions as DetectionOptions,
+} from "./integrations/typesafe-detection.js"

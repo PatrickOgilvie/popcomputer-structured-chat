@@ -44,6 +44,8 @@ const result = await Effect.runPromise(
 )
 if (result.answers.ready.probability !== 1)
   throw new Error("TypeSafe subpath failed")
+if (!TypeSafe.detection)
+  throw new Error("TypeSafe detection export failed")
 process.stdout.write(
   "TypeSafe package smoke passed; root import is independent of the SDK.\n",
 )

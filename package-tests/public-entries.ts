@@ -10,6 +10,7 @@ import {
   Answer,
   Chat,
   Question,
+  Stage,
   Tool,
   View,
 } from "@popcomputer/structured-chat"
@@ -292,3 +293,18 @@ const typeSafeJudgment: Effect.Effect<
   return result.answers.team.value
 })
 void typeSafeJudgment
+
+const detectedFields = {
+  team: Answer.explicit(Schema.Literals(["billing", "support"]), {
+    description: "The owning team",
+    ask: Question.fixed("Which team?"),
+  }),
+}
+const detectedStage = Stage.collect({
+  name: "package_detection",
+  fields: detectedFields,
+  detector: TypeSafe.detection(detectedFields, {
+    acceptance: { team: { minimumProbability: 0.9 } },
+  }),
+})
+void detectedStage

@@ -8,6 +8,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Provider-neutral answer detection and `TypeSafe.detection`: one batched Noul per stage question marks none, one, or many fields answered, gates generative extraction to detected fields, and skips the model when nothing is detected.
+
 ## [0.7.0] - 2026-09-18
 
 Optional TypeSafe evaluation brings calibrated, typed decisions from the
@@ -17,7 +21,7 @@ not opt in.
 ### Added
 
 - Optional TypeSafe SDK adapter with typed Noul, Choice, Score, and batch evaluation, explicit Effect configuration, bounded retries, cancellation, and sanitized failures.
-- Provider-neutral collection resolvers and `TypeSafe.collection` for registered enum and boolean answers, preserving evidence, guards, validators, corrections, and session revision checks.
+- Provider-neutral answer resolvers and `TypeSafe.collection` for registered enum and boolean answers, preserving evidence, guards, validators, corrections, and session revision checks.
 - Node and workerd adapter checks, real D1 replay/conflict coverage, and a compiled TypeSafe usage example.
 
 ## [0.6.0] - 2026-09-12
