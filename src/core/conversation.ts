@@ -106,7 +106,8 @@ export interface ConversationNode {
 }
 
 interface LeafTurn {
-  readonly _tag: "Question" | "ToolResult" | "Complete"
+  readonly clarification?: { readonly text: string }
+  readonly _tag: "Question" | "Clarification" | "ToolResult" | "Complete"
   readonly stage: string
   readonly state: RuntimeChatState
   readonly question?: {
@@ -1384,9 +1385,11 @@ export const makeConversation = (input: {
 
     const modelText = Predicate.isTagged(turn, "Question")
       ? turn.question?.text
-      : turn.result === undefined
-        ? undefined
-        : readToolExecutionModelContext(turn.result)
+      : Predicate.isTagged(turn, "Clarification")
+        ? turn.clarification?.text
+        : turn.result === undefined
+          ? undefined
+          : readToolExecutionModelContext(turn.result)
 
     if (modelText !== undefined) {
       const next = append(state, messages, frame.id, authored(modelText))

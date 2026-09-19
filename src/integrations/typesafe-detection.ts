@@ -7,6 +7,7 @@ import {
   type DetectionFieldDecision,
 } from "../core/answer-detector.js"
 import type { AnswerFields } from "../core/collect-stage.js"
+import { UnavailablePolicySchema, withUnavailableFallback, type UnavailablePolicy } from "./typesafe-availability.js"
 import {
   batch,
   DescriptionSchema,
@@ -35,6 +36,8 @@ const OverrideSchema = Schema.Struct({
 /** One default policy and field-specific policy or rubric overrides. */
 export interface TypeSafeDetectionOptions<Fields extends AnswerFields> {
   readonly policy: DetectionPolicy
+  /** Hand judging back to the model on transient outages. Defaults to fail. */
+  readonly onUnavailable?: UnavailablePolicy
   readonly overrides?: {
     readonly [K in keyof Fields]?: {
       readonly policy?: DetectionPolicy
@@ -60,6 +63,7 @@ export const detection = <const Fields extends AnswerFields>(
   options: TypeSafeDetectionOptions<Fields>,
 ): AnswerDetector<Fields, EvaluationError, TypeSafeService> => {
   const policy = detectionPolicy(options.policy)
+  const onUnavailable = Schema.decodeUnknownSync(UnavailablePolicySchema)(options.onUnavailable ?? "fail")
   const overrides = Schema.decodeUnknownSync(Schema.Record(Schema.String, OverrideSchema))(
     structuredClone(options.overrides ?? {}), { onExcessProperty: "error" },
   )
@@ -136,6 +140,9 @@ export const detection = <const Fields extends AnswerFields>(
         uncertainCount: selections.filter(selection => selection._tag === "Uncertain").length,
       })
       return DetectionResolutionSchema.cases.Resolved.make({ selections })
-    }).pipe(Effect.withSpan("popcomputer.structured_chat.detect.resolve")),
+    }).pipe(
+      withUnavailableFallback(onUnavailable, "detection"),
+      Effect.withSpan("popcomputer.structured_chat.detect.resolve"),
+    ),
   )
 }

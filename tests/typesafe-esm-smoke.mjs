@@ -10,7 +10,7 @@ const guard = registerHooks({
 })
 try {
   const core = await import("@popcomputer/structured-chat")
-  if (!core.Stage.collect || !core.Model.guard)
+  if (!core.Stage.collect || !core.Stage.toolSelector || !core.Stage.toolInputs || !core.Model.guard)
     throw new Error("Root import failed without TypeSafe")
 } finally {
   guard.deregister()
@@ -43,8 +43,8 @@ const result = await Effect.runPromise(
 )
 if (result.answers.ready.probability !== 1)
   throw new Error("TypeSafe subpath failed")
-if (!TypeSafe.detection)
-  throw new Error("TypeSafe detection export failed")
+if (!TypeSafe.detection || !TypeSafe.selection || !TypeSafe.selectionPolicy)
+  throw new Error("TypeSafe detection or selection export failed")
 process.stdout.write(
   "TypeSafe package smoke passed; root import is independent of the SDK.\n",
 )

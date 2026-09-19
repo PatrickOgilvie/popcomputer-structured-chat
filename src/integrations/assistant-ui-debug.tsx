@@ -1833,6 +1833,14 @@ const annotationContent = (
   event: Exclude<DebugTraceEvent, DebugPayloadEvent>,
 ): ReactNode => {
   switch (event._tag) {
+    case "TypeSafeFallback":
+      return <><span className="pcsc-debug__annotation-tag">Fallback</span><strong>LLM {event.operation}</strong><span>Jev unavailable: {humanizeIdentifier(event.reason)}</span></>
+    case "ToolClarificationAsked":
+      return <><span className="pcsc-debug__annotation-tag">Clarification</span><strong>More information needed</strong><span>{humanizeIdentifier(event.stage)}</span></>
+    case "ToolSelectionAssessed":
+      return <><span className="pcsc-debug__annotation-tag">Selection</span><strong>{humanizeIdentifier(event.decision._tag)}</strong><span>{event.decision._tag === "Selected" ? event.decision.target._tag === "Tool" ? humanizeIdentifier(event.decision.target.name) : "Conversation repair" : humanizeIdentifier(event.stage)}</span></>
+    case "ToolArgumentsResolved":
+      return <><span className="pcsc-debug__annotation-tag">Arguments</span><strong>{humanizeIdentifier(event.tool)}</strong><span>{humanizeIdentifier(event.source)}</span></>
     case "AnswerProposalAssessed":
       return (
         <>

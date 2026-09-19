@@ -280,8 +280,15 @@ export interface PresentableToolTurn {
   }
 }
 
+/** A tool-stage clarification has no collected-answer field. */
+export interface PresentableClarificationTurn {
+  readonly _tag: "Clarification"
+  readonly stage: string
+  readonly clarification: { readonly text: string }
+}
+
 /** Domain-turn shapes accepted by browser presentation. */
-export type PresentableTurn = PresentableQuestionTurn | PresentableToolTurn
+export type PresentableTurn = PresentableQuestionTurn | PresentableToolTurn | PresentableClarificationTurn
 
 /** Optional application projections for question and tool-result messages. */
 export interface PresentChatReplyOptions<Turn extends PresentableTurn> {
@@ -476,6 +483,8 @@ export const presentChatReply = <Turn extends PresentableTurn>(
   InvalidChatPresentation
 > => {
   const buildContent = (): ReadonlyArray<AssistantMessagePart> => {
+    if (Predicate.isTagged(reply.turn, "Clarification"))
+      return [Text.make(reply.turn.clarification.text)]
     if (Predicate.isTagged(reply.turn, "Question")) {
       // SAFETY: The discriminant narrows the generic Turn to its question
       // member even though TypeScript cannot retain that fact through Extract.

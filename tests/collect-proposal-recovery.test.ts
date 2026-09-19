@@ -44,6 +44,49 @@ const ukState = {
 }
 
 describe("collection proposal recovery", () => {
+  test.each([false, true])("a country correction resumes the unanswered timing question without clarification (detection: %s)", async detection => {
+    const brief = makeBrief(detection)
+    const state = {
+      accepted: {
+        ...ukState.accepted,
+        market: { value: "France", evidence: { messageIndex: 2, quote: "France" } },
+      },
+      asked: { ...ukState.asked, timeline: { messageIndex: 3, text: "When would you like to get started?" } },
+    }
+    const messages = [...ukMessages.slice(0, 2), Session.Message.submitted("France"),
+      Session.Message.authored("When would you like to get started?"), Session.Message.submitted("actually, the UK")]
+    const model = scripted([
+      call({ location: null, market: "UK", timeline: null }, [{ field: "market", quote: "actually, the UK" }],
+        { field: "timeline", text: "When would you like to get started?", options: [] }),
+      call({ location: null, market: null, timeline: "within_three_months" }, [{ field: "timeline", quote: "Within three months" }]),
+    ])
+    const corrected = await Effect.runPromise(brief.run({ state, messages }).pipe(Effect.provide(model.layer)))
+    expect(corrected.state.accepted.market).toEqual({ value: "UK", evidence: { messageIndex: 4, quote: "actually, the UK" } })
+    expect(corrected.state.accepted.location).toEqual(state.accepted.location)
+    expect(corrected.state.accepted.timeline).toBeUndefined()
+    expect(corrected.state.clarifying).toBeUndefined()
+    expect(corrected.question).toMatchObject({ field: "timeline", text: "When would you like to get started?" })
+    expect(model.requests).toHaveLength(1)
+    const restored = await Effect.runPromise(Schema.encodeEffect(brief.stateSchema)(corrected.state).pipe(Effect.flatMap(Schema.decodeUnknownEffect(brief.stateSchema))))
+    const answered = await Effect.runPromise(brief.run({ state: restored, messages: [...messages,
+      Session.Message.authored("When would you like to get started?"), Session.Message.submitted("Within three months")],
+    }).pipe(Effect.provide(model.layer)))
+    expect(answered.complete).toBe(true)
+    expect(answered.state.accepted.market).toEqual(corrected.state.accepted.market)
+    expect(answered.state.accepted.timeline?.value).toBe("within_three_months")
+  })
+
+  test.each([false, true])("an absent proposal preserves existing clarification state (already clarifying: %s)", async clarifying => {
+    const brief = makeBrief()
+    const model = scripted([call({ location: null, market: null, timeline: null })])
+    const state = clarifying ? { ...ukState, clarifying: ["market"] as const } : ukState
+    const turn = await Effect.runPromise(brief.run({ state, messages: [...ukMessages.slice(0, 2), Session.Message.submitted("Just a moment")] }).pipe(Effect.provide(model.layer)))
+    expect(turn.state.accepted).toEqual(state.accepted)
+    expect(turn.state.clarifying).toEqual(clarifying ? ["market"] : undefined)
+    expect(turn.question?.text).toBe(clarifying ? "Could you clarify your answer? Which country is your team based in?" : "Which country is your team based in?")
+    expect(model.requests).toHaveLength(1)
+  })
+
   test.each([false, true])("accepts UK beside an unchanged location without another request (detection: %s)", async detection => {
     const brief = makeBrief(detection)
     const model = scripted([call({ location: "local", market: "UK", timeline: null }, [{ field: "market", quote: "the UK" }])])

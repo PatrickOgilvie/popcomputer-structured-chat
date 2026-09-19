@@ -1,3 +1,4 @@
+import type { ToolSelectorContract } from "./tool-selection.js"
 import { ToolContext } from "./tool-context.js"
 import {
   readInteractionStageRuntime,
@@ -196,7 +197,9 @@ type ChatToolExecution<Stage> =
           infer _Name,
           infer Tools,
           infer _Guards,
-          infer _Profile
+          infer _Profile,
+          infer _Selection,
+          infer _Inputs
         >
       ? ToolSetExecution<Tools>
       : Stage extends CommandStage<
@@ -229,7 +232,9 @@ type StageEffect<Stage> =
             infer _ToolName,
             infer _Tools,
             infer _ToolGuards,
-            infer _ToolProfile
+            infer _ToolProfile,
+            infer _Selection,
+            infer _Inputs
           >
         ? ReturnType<Stage["run"]>
         : Stage extends CommandStage<
@@ -257,6 +262,12 @@ export type ChatTurn<
   Version extends number,
   Stages extends ChatStageTuple,
 > =
+  | (Extract<Stages[number], { readonly selection: ToolSelectorContract }> extends never ? never : {
+      readonly _tag: "Clarification"
+      readonly stage: string
+      readonly state: ChatState<Name, Version, Stages>
+      readonly clarification: { readonly text: string }
+    })
   | {
       readonly _tag: "Question"
       readonly stage: string
@@ -1017,13 +1028,15 @@ export const defineChat = <
 
       yield* recordTurnAnnotations(runtimeState, nextRuntimeState)
 
-      const toolModelContext = Predicate.isTagged(turn, "Question")
+      const toolModelContext = Predicate.isTagged(turn, "Question") || Predicate.isTagged(turn, "Clarification")
         ? undefined
         : readToolExecutionModelContext(turn.result)
 
       const persistedMessages: ReadonlyArray<ConversationMessage> =
         Predicate.isTagged(turn, "Question")
           ? [...messages, authored(turn.question.text)]
+          : Predicate.isTagged(turn, "Clarification")
+            ? [...messages, authored(turn.clarification.text)]
           : toolModelContext === undefined
             ? messages
             : [...messages, authored(toolModelContext)]

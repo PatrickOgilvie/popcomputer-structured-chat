@@ -127,6 +127,7 @@ const DebugStageSchema = Schema.Union([
     ...DebugStageBaseFields,
     tools: Schema.Array(ToolNameSchema),
     afterExecution: ToolStageAfterExecutionSchema,
+    selection: Schema.optionalKey(Schema.Struct({ boundInputs: Schema.Array(ToolNameSchema) })),
   }),
   Schema.Struct({
     _tag: Schema.Literal("CommandStage"),
@@ -329,15 +330,16 @@ export const inspectChatState = <
 
       if (Predicate.isTagged(stage, "ToolStage")) {
         const runtime = readToolStageRuntime(stage)
-        stages.push({
-          _tag: "ToolStage",
+        const summary = {
+          _tag: "ToolStage" as const,
           index,
           name: stage.name,
           status: stageStatus(runtimeState, index),
           repairPending,
           tools: runtime.toolNames,
           afterExecution: runtime.afterExecution,
-        })
+        }
+        stages.push(runtime.selectionEnabled ? { ...summary, selection: { boundInputs: runtime.boundInputs } } : summary)
         continue
       }
 

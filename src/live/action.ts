@@ -77,6 +77,8 @@ export const present = (
       options.speech === undefined
         ? Predicate.isTagged(reply.turn, "Question")
           ? reply.turn.question.text
+          : Predicate.isTagged(reply.turn, "Clarification")
+            ? reply.turn.clarification.text
           : undefined
         : options.speech
 

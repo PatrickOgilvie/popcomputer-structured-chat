@@ -47,6 +47,26 @@ import {
   type StructuredDefinition,
 } from "./definition.js"
 
+import {
+  makeToolPlanner,
+  type ToolStagePlan,
+  type SelectedToolRun,
+  type ToolClarification,
+} from "./tool-planning.js"
+import type { FixedQuestion, AdaptiveQuestion } from "./question.js"
+import type {
+  ToolSelectorContract,
+  SelectorError,
+  SelectorRequirements,
+  ToolPlanningFrame,
+} from "./tool-selection.js"
+import {
+  toolInputResolver,
+  type ToolInputsContract,
+  type ToolInputsError,
+  type ToolInputsRequirements,
+} from "./tool-inputs.js"
+
 export { StageNameSchema } from "./stage-name.js"
 
 /** State transition applied after one tool-stage execution. */
@@ -66,10 +86,15 @@ export type DefineToolStageInput<
   Tools extends ToolTuple,
   Guards extends ModelGuardTuple,
   Profile extends AnyModelProfile | undefined = undefined,
+  Selection extends ToolSelectorContract | undefined = undefined,
+  Inputs extends ToolInputsContract | undefined = undefined,
 > = {
   readonly name: Name
   readonly instructions: readonly [string, ...ReadonlyArray<string>]
   readonly tools: Tools
+  readonly selection?: Selection
+  readonly inputs?: Inputs
+  readonly clarification?: FixedQuestion | AdaptiveQuestion
   readonly guards?: Guards
   readonly afterExecution?: ToolStageAfterExecution
 } & ModelProfileInput<Profile>
@@ -78,14 +103,18 @@ export type DefineToolStageInput<
 export interface ToolStageRuntime {
   readonly afterExecution: ToolStageAfterExecution
   readonly toolNames: ReadonlyArray<string>
+  readonly selectionEnabled: boolean
+  readonly boundInputs: ReadonlyArray<string>
   readonly withRepair: (
     repair: RepairTool,
   ) => (
     messages: ReadonlyArray<UntrustedMessage>,
-  ) => Effect.Effect<RepairDecision, unknown, unknown>
+    frame?: ToolPlanningFrame,
+  ) => Effect.Effect<RepairDecision | ToolClarification, unknown, unknown>
   readonly run: (
     messages: ReadonlyArray<UntrustedMessage>,
-  ) => Effect.Effect<unknown, unknown, unknown>
+    frame?: ToolPlanningFrame,
+  ) => Effect.Effect<SelectedToolRun<unknown>, unknown, unknown>
 }
 
 const toolStageRuntime = Symbol("@popcomputer/structured-chat/ToolStageRuntime")
@@ -141,37 +170,53 @@ export interface ToolStage<
   Tools extends ToolTuple,
   Guards extends ModelGuardTuple,
   Profile extends AnyModelProfile | undefined = undefined,
+  Selection extends ToolSelectorContract | undefined = undefined,
+  Inputs extends ToolInputsContract | undefined = undefined,
 > extends ToolStageDefinitionContract {
   readonly _tag: "ToolStage"
   readonly name: Name
   readonly toolSet: ToolSet<Tools>
   readonly guards: Guards
   readonly afterExecution: ToolStageAfterExecution
+  readonly selection: Selection
 
   /** Ask for and parse one stage-scoped call without executing it. */
   readonly plan: (
     messages: ReadonlyArray<UntrustedMessage>,
+    frame?: ToolPlanningFrame,
   ) => Effect.Effect<
-    ToolSetCall<Tools>,
+    Selection extends undefined ? ToolSetCall<Tools> : ToolStagePlan<Tools>,
     | ChatModelUnavailable
     | UnsupportedModelToolSchema
     | InvalidToolCall
-    | ModelGuardError<Guards>,
-    ModelRequirement<Profile> | ModelGuardRequirements<Guards>
+    | ModelGuardError<Guards>
+    | SelectorError<Selection>
+    | ToolInputsError<Inputs>,
+    | ModelRequirement<Profile>
+    | ModelGuardRequirements<Guards>
+    | SelectorRequirements<Selection>
+    | ToolInputsRequirements<Inputs>
   >
 
   /** Run one required tool call against this stage's capabilities. */
   readonly run: (
     messages: ReadonlyArray<UntrustedMessage>,
+    frame?: ToolPlanningFrame,
   ) => Effect.Effect<
-    ToolSetExecution<Tools>,
+    Selection extends undefined
+      ? ToolSetExecution<Tools>
+      : SelectedToolRun<ToolSetExecution<Tools>>,
     | ChatModelUnavailable
     | UnsupportedModelToolSchema
     | ToolSetError<Tools>
-    | ModelGuardError<Guards>,
+    | ModelGuardError<Guards>
+    | SelectorError<Selection>
+    | ToolInputsError<Inputs>,
     | ModelRequirement<Profile>
     | ToolSetRequirements<Tools>
     | ModelGuardRequirements<Guards>
+    | SelectorRequirements<Selection>
+    | ToolInputsRequirements<Inputs>
   >
 }
 
@@ -284,9 +329,18 @@ const defineToolStage = <
   const Tools extends ToolTuple,
   const Guards extends ModelGuardTuple = readonly [],
   const Profile extends AnyModelProfile | undefined = undefined,
+  const Selection extends ToolSelectorContract | undefined = undefined,
+  const Inputs extends ToolInputsContract | undefined = undefined,
 >(
-  definition: DefineToolStageInput<Name, Tools, Guards, Profile>,
-): ToolStage<Name, Tools, Guards, Profile> => {
+  definition: DefineToolStageInput<
+    Name,
+    Tools,
+    Guards,
+    Profile,
+    Selection,
+    Inputs
+  >,
+): ToolStage<Name, Tools, Guards, Profile, Selection, Inputs> => {
   StageNameSchema.make(definition.name)
   const instructions = definition.instructions.map(Instruction.make)
   const toolSet = defineToolSet(...definition.tools)
@@ -310,7 +364,7 @@ const defineToolStage = <
     definition.afterExecution ?? "stay",
   )
 
-  const plan = (messages: ReadonlyArray<UntrustedMessage>) =>
+  const legacyPlan = (messages: ReadonlyArray<UntrustedMessage>) =>
     planToolCall<Tools, Guards, Profile>({
       instructions,
       messages,
@@ -323,20 +377,112 @@ const defineToolStage = <
       }),
     )
 
-  const run: ToolStage<Name, Tools, Guards, Profile>["run"] = (messages) =>
-    plan(messages).pipe(Effect.flatMap(toolSet.execute))
+  if (
+    definition.selection === undefined &&
+    (definition.inputs !== undefined || definition.clarification !== undefined)
+  )
+    throw new Error("Tool inputs and clarification require selection")
+  const selectedPlan =
+    definition.selection === undefined
+      ? undefined
+      : makeToolPlanner({
+          name: definition.name,
+          tools: definition.tools,
+          instructions,
+          guards,
+          selection: definition.selection,
+          inputs: definition.inputs,
+          clarification: definition.clarification,
+          model: modelInput,
+        })
+  const planRuntime = (
+    messages: ReadonlyArray<UntrustedMessage>,
+    frame?: ToolPlanningFrame,
+  ) =>
+    selectedPlan === undefined
+      ? legacyPlan(messages)
+      : selectedPlan(messages, frame)
+  // SAFETY: configuration chooses exactly the result/error/service branch exposed by Selection.
+  const plan = Fn.cast<
+    typeof planRuntime,
+    ToolStage<Name, Tools, Guards, Profile, Selection, Inputs>["plan"]
+  >(planRuntime)
+  const runSelected = (
+    messages: ReadonlyArray<UntrustedMessage>,
+    frame?: ToolPlanningFrame,
+  ) => {
+    if (selectedPlan === undefined)
+      return legacyPlan(messages).pipe(
+        Effect.flatMap(toolSet.execute),
+        Effect.map((execution) => ({ _tag: "Executed" as const, execution })),
+      )
+    return selectedPlan(messages, frame).pipe(
+      Effect.flatMap(
+        (
+          result,
+        ): Effect.Effect<
+          SelectedToolRun<ToolSetExecution<Tools>>,
+          ToolSetError<Tools>,
+          ToolSetRequirements<Tools>
+        > => {
+          if (result._tag === "Clarification") return Effect.succeed(result)
+          // SAFETY: selectedPlan parses only members of this registry when no repair is offered.
+          const call = Fn.cast<typeof result.call, ToolSetCall<Tools>>(
+            result.call,
+          )
+          return toolSet
+            .execute(call)
+            .pipe(
+              Effect.map((execution) => ({
+                _tag: "Executed" as const,
+                execution,
+              })),
+            )
+        },
+      ),
+    )
+  }
+  const runRuntime = (
+    messages: ReadonlyArray<UntrustedMessage>,
+    frame?: ToolPlanningFrame,
+  ) =>
+    selectedPlan === undefined
+      ? legacyPlan(messages).pipe(Effect.flatMap(toolSet.execute))
+      : runSelected(messages, frame)
+  // SAFETY: the configured selection branch determines the public result; all tool errors/services are retained.
+  const run = Fn.cast<
+    typeof runRuntime,
+    ToolStage<Name, Tools, Guards, Profile, Selection, Inputs>["run"]
+  >(runRuntime)
 
   const withRepair = (repair: RepairTool) => {
     const combined = compileRepairToolRegistry(definition.tools, repair)
 
-    return (messages: ReadonlyArray<UntrustedMessage>) =>
-      planToolCall<readonly [RepairTool, ...Tools], Guards, Profile>({
+    return (
+      messages: ReadonlyArray<UntrustedMessage>,
+      frame?: ToolPlanningFrame,
+    ) => {
+      if (selectedPlan !== undefined)
+        return selectedPlan(messages, frame, repair).pipe(
+          Effect.map((result) => {
+            if (result._tag === "Clarification") return result
+            // SAFETY: the same repair and query definitions were used by the planner and registry.
+            return combined.decide(
+              Fn.cast<
+                typeof result.call,
+                ToolSetCall<readonly [RepairTool, ...Tools]>
+              >(result.call),
+            )
+          }),
+        )
+      return planToolCall<readonly [RepairTool, ...Tools], Guards, Profile>({
         instructions,
         messages,
         tools: combined.planner,
         guards,
         ...modelInput,
       }).pipe(Effect.map(combined.decide))
+    }
   }
 
   return structuredDefinition("tool_stage")({
@@ -345,13 +491,23 @@ const defineToolStage = <
     toolSet,
     guards,
     afterExecution,
+    selection: Fn.cast<typeof definition.selection, Selection>(
+      definition.selection,
+    ),
     plan,
     run,
     [toolStageRuntime]: {
       afterExecution,
       toolNames: definition.tools.map(({ name }) => name),
       withRepair,
-      run,
+      run: runSelected,
+      selectionEnabled: selectedPlan !== undefined,
+      boundInputs: definition.tools
+        .filter(
+          (tool) =>
+            toolInputResolver(definition.inputs, tool.name) !== undefined,
+        )
+        .map((tool) => tool.name),
     },
   })
 }

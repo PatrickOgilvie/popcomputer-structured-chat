@@ -6,6 +6,36 @@ export const collect = Stage.collect
 /** Define one repeatable or terminal query-tool stage. */
 export const tools = Stage.tools
 
+export {
+  defineToolSelector as toolSelector,
+  InvalidToolSelection,
+  InvalidToolPlanningContext,
+} from "./core/tool-selection.js"
+export type {
+  ToolSelector,
+  ToolSelectorContract,
+  ToolSelection,
+  ToolSelectionContext,
+  SelectionTarget,
+  ToolPlanningFrame,
+  SelectionAcceptedAnswer,
+  ToolStageTrigger,
+} from "./core/tool-selection.js"
+export {
+  defineToolInputs as toolInputs,
+  InvalidToolInput,
+} from "./core/tool-inputs.js"
+export type {
+  ToolInputs,
+  ToolInputsContract,
+  ToolInputResolvers,
+} from "./core/tool-inputs.js"
+export type {
+  ToolStagePlan,
+  SelectedToolRun,
+  ToolClarification,
+} from "./core/tool-planning.js"
+
 /** Define one terminal idempotent command stage. */
 export const command = Stage.command
 

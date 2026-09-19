@@ -40,11 +40,11 @@ export const DetectionSelectionSchema = Schema.TaggedUnion({
 /** Field-level detection outcome. */
 export type DetectionSelection = typeof DetectionSelectionSchema.Type
 
-/** A bounded detector can decline an input before evaluating it. */
+/** A detector can decline an input or hand off after provider unavailability. */
 export const DetectionResolutionSchema = Schema.TaggedUnion({
   Resolved: { selections: Schema.Array(DetectionSelectionSchema) },
   NotApplicable: {
-    reason: Schema.Literals(["evidence_too_long", "question_budget_exceeded"]),
+    reason: Schema.Literals(["evidence_too_long", "question_budget_exceeded", "provider_unavailable"]),
   },
 })
 /** The result of attempting a detection strategy. */

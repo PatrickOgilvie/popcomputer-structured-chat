@@ -1,12 +1,24 @@
+import { Schema } from "effect"
+import { JsonValueSchema } from "../../core/json-value.js"
+import {
+  InvalidToolPlanningContext,
+  type ToolPlanningFrame,
+  type ToolStageTrigger,
+  type SelectionAcceptedAnswer,
+} from "../../core/tool-selection.js"
+import type { ToolClarification } from "../../core/tool-planning.js"
 import { ToolContext } from "../../core/tool-context.js"
 import {
   readInteractionStageRuntime,
   type InteractionStageDefinitionContract,
   type InteractionCommandContext,
 } from "../../core/interaction-stage.js"
-import { Predicate, Data, Effect, Result } from "effect"
+import { Data, Effect, Result } from "effect"
 import type { CollectStageDefinitionContract } from "../../core/collect-stage.js"
-import { readCollectStageRuntime } from "../../core/collect-stage.js"
+import {
+  readCollectStageInspection,
+  readCollectStageRuntime,
+} from "../../core/collect-stage.js"
 import type { InvalidChatTransition } from "../../core/chat.js"
 import type { ConversationMessage } from "../../core/conversation-message.js"
 import type {
@@ -58,7 +70,8 @@ interface ProcessInput {
   readonly planRepair:
     | ((
         messages: ReadonlyArray<ConversationMessage>,
-      ) => Effect.Effect<RepairDecision, unknown, unknown>)
+        frame?: ToolPlanningFrame,
+      ) => Effect.Effect<RepairDecision | ToolClarification, unknown, unknown>)
     | undefined
   readonly invalidTransition: (
     reason: "already_complete" | "invalid_state",
@@ -117,11 +130,45 @@ export const make = (input: ProcessInput): Process => {
     }
   }
 
+  const planningFrame = (state: RuntimeChatState, trigger: ToolStageTrigger) =>
+    Effect.gen(function* () {
+      const accepted: Array<SelectionAcceptedAnswer> = []
+      for (const stage of input.stages) {
+        if (stage._tag !== "CollectStage") continue
+        const saved = state.stages[stage.name]
+        if (saved === undefined) continue
+        for (const field of readCollectStageInspection(stage).fields) {
+          const answer = saved.accepted[field.field]
+          if (answer === undefined) continue
+          const value = yield* field.encodeValue(answer.value).pipe(
+            Effect.flatMap((encoded) =>
+              Schema.decodeUnknownEffect(JsonValueSchema)(encoded),
+            ),
+            Effect.mapError(
+              () =>
+                new InvalidToolPlanningContext({
+                  stage: stage.name,
+                  field: field.field,
+                }),
+            ),
+          )
+          accepted.push({
+            stage: stage.name,
+            field: field.field,
+            value,
+            evidence: answer.evidence,
+          })
+        }
+      }
+      return { trigger, accepted }
+    })
+
   const runTrusted = (
     state: RuntimeChatState,
     messages: ReadonlyArray<ConversationMessage>,
     commandContext?: InteractionCommandContext<unknown>,
     allowRepair = false,
+    trigger: ToolStageTrigger = "user_reply",
   ): Effect.Effect<unknown, unknown, unknown> =>
     Effect.suspend(() => {
       const planned = locate(state)
@@ -172,69 +219,69 @@ export const make = (input: ProcessInput): Process => {
 
         case "Tool": {
           const runtime = readToolStageRuntime(node.stage)
-
-          if (allowRepair && input.planRepair !== undefined) {
-            return input.planRepair(messages).pipe(
-              Effect.flatMap((decision) => {
-                if (Predicate.isTagged(decision, "Query")) {
-                  return decision.execute.pipe(
-                    Effect.map((result) => ({
-                      _tag: "ToolResult" as const,
-                      stage: node.stage.name,
-                      state,
-                      result,
-                    })),
-                  )
+          const clarify = (result: ToolClarification) => ({
+            _tag: "Clarification" as const,
+            stage: node.stage.name,
+            state,
+            clarification: { text: result.text },
+          })
+          return Effect.gen(function* () {
+            const frame = runtime.selectionEnabled
+              ? yield* planningFrame(state, trigger)
+              : undefined
+            if (allowRepair && input.planRepair !== undefined) {
+              const decision = yield* input.planRepair(messages, frame)
+              if (decision._tag === "Clarification") return clarify(decision)
+              if (decision._tag === "Query") {
+                const result = yield* decision.execute
+                return {
+                  _tag: "ToolResult" as const,
+                  stage: node.stage.name,
+                  state,
+                  result,
                 }
-
-                return input
-                  .applyRepairs(state, messages, decision.proposal.corrections)
-                  .pipe(
-                    Effect.flatMap((repairedState) => {
-                      const continueTurn = Effect.suspend(() =>
-                        runTrusted(
-                          repairedState,
-                          messages,
-                          commandContext,
-                          false,
-                        ),
-                      )
-
-                      const from = input.stages[state.stage]
-                      const to = input.stages[repairedState.stage]
-
-                      return repairedState.stage === state.stage ||
-                        from === undefined ||
-                        to === undefined
-                        ? continueTurn
-                        : recordDebugEvent({
-                            _tag: "StageAdvanced",
-                            from: from.name,
-                            to: to.name,
-                          }).pipe(Effect.andThen(continueTurn))
-                    }),
-                  )
-              }),
-            )
-          }
-
-          return runtime.run(messages).pipe(
-            Effect.map((result) =>
-              runtime.afterExecution === "complete"
-                ? {
-                    _tag: "Complete" as const,
-                    stage: node.stage.name,
-                    state: { ...state, status: "complete" as const },
-                    result,
-                  }
-                : {
-                    _tag: "ToolResult" as const,
-                    stage: node.stage.name,
-                    state,
-                    result,
-                  },
-            ),
-          )
+              }
+              const repairedState = yield* input.applyRepairs(
+                state,
+                messages,
+                decision.proposal.corrections,
+              )
+              const from = input.stages[state.stage]
+              const to = input.stages[repairedState.stage]
+              if (
+                repairedState.stage !== state.stage &&
+                from !== undefined &&
+                to !== undefined
+              )
+                yield* recordDebugEvent({
+                  _tag: "StageAdvanced",
+                  from: from.name,
+                  to: to.name,
+                })
+              return yield* runTrusted(
+                repairedState,
+                messages,
+                commandContext,
+                false,
+                "after_repair",
+              )
+            }
+            const outcome = yield* runtime.run(messages, frame)
+            if (outcome._tag === "Clarification") return clarify(outcome)
+            return runtime.afterExecution === "complete"
+              ? {
+                  _tag: "Complete" as const,
+                  stage: node.stage.name,
+                  state: { ...state, status: "complete" as const },
+                  result: outcome.execution,
+                }
+              : {
+                  _tag: "ToolResult" as const,
+                  stage: node.stage.name,
+                  state,
+                  result: outcome.execution,
+                }
+          })
         }
 
         case "Collect": {
@@ -286,7 +333,13 @@ export const make = (input: ProcessInput): Process => {
                     }
 
               const continueTurn = Effect.suspend(() =>
-                runTrusted(advancedState, messages, commandContext, false),
+                runTrusted(
+                  advancedState,
+                  messages,
+                  commandContext,
+                  false,
+                  "stage_entered",
+                ),
               )
 
               const nextStageDefinition = input.stages[nextStage]

@@ -176,7 +176,7 @@ export const presentChatDebugReply = <
     "_tag" in input ? input : { _tag: "Succeeded", reply: input, events: [] }
 
   const trace = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     events: outcome.events,
   }
 

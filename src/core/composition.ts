@@ -188,6 +188,12 @@ export interface InvocationReference {
 /** Common presentation shape produced by the existing stage runner. */
 export type ConversationTurn =
   | {
+      readonly _tag: "Clarification"
+      readonly stage: string
+      readonly state: ConversationState
+      readonly clarification: { readonly text: string }
+    }
+  | {
       readonly _tag: "Question"
       readonly stage: string
       readonly state: ConversationState

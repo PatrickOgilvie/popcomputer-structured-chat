@@ -30,7 +30,9 @@ New answers keep their existing grounding rules. Corrections must cite evidence 
 
 ## Clarification off-ramp
 
-An ambiguous reply (null for the issued pending question) or an unresolved rejected proposal leads to clarification. Adaptive questions can use model-proposed wording for the runtime-selected field. Fixed questions retain their application-owned wording with a short clarification lead-in. No extra model request is needed to generate the fallback.
+An unresolved rejected proposal leads to clarification. A null or omitted value means no proposal for that field; it does not establish that the user attempted to answer its question. In particular, correcting an earlier country answer while timing is pending must update the country and resume the normal timing question. Absence neither creates nor clears a persistent clarification marker.
+
+For an ambiguous attempted answer, the model can suggest focused wording for an adaptive question; null alone does not persist an ambiguity judgment. Adaptive questions can use model-proposed wording for the runtime-selected field. Fixed questions retain their application-owned wording, adding a short clarification lead-in only for an actual pending clarification. No extra model request is needed to generate the fallback.
 
 Persist optional `clarifying` field names alongside accepted answers and issued questions. This is necessary for corrections: an existing answer stays visible, but an unresolved correction must prevent stage completion and search. Clarifications take precedence over other missing fields. A fresh grounded answer clears the marker; reaffirming an unchanged value requires fresh evidence after the clarification question, preserves the original accepted evidence, and skips the validator. An application-defined uncertainty resolution can also resolve it; an unconfigured uncertainty response cannot silently restore the old value.
 
@@ -45,6 +47,8 @@ Record bounded per-field debug events and spans with field, attempt, decision, a
 ## Verification
 
 - Replay the exact UK proposal with a redundant location and no location evidence: one model call, original location evidence retained, UK accepted, timing next.
+- With timing already issued, correct France to UK while leaving timing null: preserve other facts, update UK and its evidence, resume the original timing question, and accept timing on the next turn. Cover both direct and detector-backed extraction and the persisted state round trip.
+- Null for an issued pending field must preserve, rather than create or clear, its existing clarification state.
 - Exercise the same behavior with and without detection, and with schema-decoded object values.
 - Submit mixed valid and invalid values/evidence: retain valid proposals, narrow repair to failed fields, accept repaired values, and cap total calls at two.
 - Exhaust repair or return malformed output: retain independent good proposals and ask only for missing answers.

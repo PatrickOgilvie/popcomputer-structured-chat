@@ -12,6 +12,8 @@ export type StructuredDefinitionKind =
   | "model_guard"
   | "answer_detector"
   | "extraction_context"
+  | "tool_selector"
+  | "tool_inputs"
 
 const structuredDefinitionKind = Symbol(
   "@popcomputer/structured-chat/StructuredDefinitionKind",

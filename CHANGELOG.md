@@ -8,6 +8,27 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-19
+
+### Added
+
+- Add `TypeSafe.selection` and reusable probability/margin policies for Jev to choose a query tool or conversation repair, with explicit uncertain, no-match, and not-applicable outcomes.
+- Add provider-neutral `Stage.toolSelector` and typed `Stage.toolInputs` capabilities. Application-bound inputs can execute without a generative request; other selected tools receive a narrowed argument-planning schema.
+- Preserve clarification, repair, input ownership, validation, and execution guards through selection and LLM fallback. Supply labelled accepted answers, evidence, and transition context to the planner.
+- Add opt-in `onUnavailable: "fallback"` to TypeSafe detection and selection. Temporary network failures, timeouts, rate limits, and server errors hand judging back to the LLM after bounded retries; authentication, malformed responses, and cancellation retain their existing failure behaviour.
+- Trace selection decisions, argument ownership, clarification, TypeSafe provider calls, and outage handoffs.
+
+### Fixed
+
+- Treat an absent collection proposal as no change. Correcting a previous country answer now resumes the unanswered timing question without falsely asking the user to clarify it. Existing unresolved clarifications remain pending.
+
+### Consumer notes
+
+- Chat and conversation turn unions now include `Clarification`. Consumers that exhaustively handle turn tags must handle its `clarification.text`; built-in presenters render it as assistant text.
+- Selection-enabled tool stages return `Call` or `Clarification` from `plan`, and `Executed` or `Clarification` from `run`. Stages without selection retain their existing method results.
+- Debug capture emits trace schema version 2 with new event types. The package reader accepts versions 1 and 2. Custom trace consumers should handle the new events and additional not-applicable reasons.
+- TypeSafe outage fallback is explicit and defaults to `"fail"` in the package. No new mandatory dependency is introduced.
+
 ## [0.10.0] - 2026-09-18
 
 ### Added
@@ -322,7 +343,8 @@ const reply = Chat.turn(chat, input)
   questions, tools, commands, session persistence, browser presentation,
   assistant-ui integration, and transcript scenarios.
 
-[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/4bf19c2...v0.10.0
 [0.9.1]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.7.0...v0.9.0

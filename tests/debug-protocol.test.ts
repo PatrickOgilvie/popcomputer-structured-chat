@@ -123,7 +123,7 @@ describe("Debug.present", () => {
       kind: "collect",
     })
     expect(response.trace).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       events: [],
     })
   })
@@ -380,7 +380,7 @@ describe("Debug.present", () => {
       outcome: "failure",
       session: { id: "debug:failed" },
       trace: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         events: [
           expect.objectContaining({
             _tag: "ModelInput",

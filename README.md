@@ -1012,6 +1012,29 @@ const ModelLive = OpenAICompatible.layer({
 
 ## Opt into TypeSafe judgments
 
+Tool stages can also use Jev to select an action before argument extraction:
+
+```ts
+const tools = [Search, Compare] as const
+const stage = Stage.tools({
+  name: "search",
+  instructions: ["Find or compare results for the accepted brief."],
+  tools,
+  selection: TypeSafe.selection(tools, {
+    policy: TypeSafe.selectionPolicy({
+      minimumProbability: 0.9,
+      minimumMargin: 0.15,
+    }),
+  }),
+})
+```
+
+Use `Stage.toolInputs` for application-owned arguments and
+`Stage.toolSelector` to compose custom routing rules. Uncertain selection falls
+back to the LLM; missing intent or details can produce a non-executing
+`Clarification` turn. See [tool selection](docs/typesafe.md#select-tools-with-jev)
+for bindings, repair, guards and context contracts.
+
 The optional `@popcomputer/structured-chat/typesafe` entry point adds typed Noul, Choice, Score, and batched evaluation through an Effect service. Attach `TypeSafe.detection(fields, options)` to a collect stage to mark which questions the latest message already answered — one batched Noul per field — and build a labelled extraction plan with a narrowed output schema. Detected and uncertain fields go to the LLM; confidently undetected fields remain untouched. Reusable `TypeSafe.detectionPolicy` values configure the probability bands, and `Stage.extractionContext` adds typed application data. Existing guards, evidence checks, validators, and session commits still determine acceptance.
 
 Install the optional `@typesafe-ai/sdk` peer and provide an explicit server-side `TypeSafe.layer`. See the [setup and behavior guide](docs/typesafe.md) and [compiled example](examples/typesafe.ts). Stages without a detector or context capability keep their existing behavior; the package root remains independent of the SDK.

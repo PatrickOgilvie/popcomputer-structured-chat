@@ -1,3 +1,4 @@
+import { ToolSelectionSchema } from "./tool-selection.js"
 import type { Result } from "effect"
 import { Context, Effect, Schema } from "effect"
 import { JsonValueSchema } from "./json-value.js"
@@ -24,6 +25,20 @@ export type CollectProposalRejectionReason = typeof CollectProposalRejectionReas
 
 /** One ordered model-I/O or semantic annotation in a captured debug turn. */
 export const StructuredChatDebugEventSchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("ToolClarificationAsked"), sequence: DebugSequenceSchema, stage: DebugNameSchema }),
+  Schema.Struct({
+    _tag: Schema.Literal("TypeSafeFallback"), sequence: DebugSequenceSchema,
+    operation: Schema.Literals(["detection", "selection"]),
+    reason: Schema.Literals(["network", "timeout", "rate_limited", "overloaded", "server"]),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal("ToolSelectionAssessed"), sequence: DebugSequenceSchema,
+    stage: DebugNameSchema, decision: ToolSelectionSchema,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal("ToolArgumentsResolved"), sequence: DebugSequenceSchema,
+    stage: DebugNameSchema, tool: DebugNameSchema, source: Schema.Literals(["application", "model"]),
+  }),
   Schema.Struct({
     _tag: Schema.Literal("AnswerProposalAssessed"),
     sequence: DebugSequenceSchema,
@@ -124,7 +139,7 @@ const StructuredChatDebugEventsSchema = Schema.Array(
 
 /** One server turn's bounded, non-persisted debug event stream. */
 export const StructuredChatDebugTraceSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(1),
+  schemaVersion: Schema.Literals([1, 2]),
   events: StructuredChatDebugEventsSchema,
 })
 
