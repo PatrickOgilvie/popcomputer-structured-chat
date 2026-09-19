@@ -1,6 +1,7 @@
 declare global {
   namespace Cloudflare {
     interface Env {
+      readonly SQLITE_SESSIONS: DurableObjectNamespace
       readonly SESSIONS_DB: D1Database
       readonly TEST_MIGRATIONS: ReadonlyArray<{
         readonly name: string

@@ -386,6 +386,18 @@ policy, authenticated transport, a token counter, durable storage, and an
 idempotent browser publisher. Observed speech does not satisfy confirmed
 answers, and interrupted sessions require explicit reconciliation.
 
+### Durable sessions on SQLite with Effect SQL
+
+The optional `@popcomputer/structured-chat/effect-sqlite` entry provides
+`Session.Store` from an application-owned SQLite `SqlClient`. Use `layer(options?)`
+or `makeSqliteChatSessionStore(options?)`; no database driver is imported by the
+package root. D1 and Effect SQL share the same provenance codecs, optimistic
+revisions and terminal expiry policy.
+
+Apply the existing `migrations/d1/0001_structured_chat_sessions.sql` SQLite schema
+through your application's migration runner. See the [SQLite guide](docs/sqlite.md)
+for driver setup, transactions, retention and adapting an existing SQL capability.
+
 ### Durable sessions on Cloudflare D1
 
 The package ships a production-ready `Session.Store` adapter for

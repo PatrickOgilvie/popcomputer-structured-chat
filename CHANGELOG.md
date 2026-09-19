@@ -6,7 +6,18 @@ file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.11.1] - 2026-09-19
+
+### Added
+
+- Add optional `/effect-sqlite` session persistence using an application-owned SQLite `SqlClient`, with store construction, a `Session.Store` layer and explicit retention cleanup.
+- Add `/sqlite` for application-owned Effect SQL execution capabilities. D1 and Effect SQL share provenance-preserving codecs, optimistic revisions, expiry tombstones and the existing SQLite migration.
+- Verify nonempty chat save/reload/resume, transaction rollback on failure/defect/interruption, private-query trace suppression, and native Durable Object SQLite behavior.
+
+### Consumer notes
+
+- Applications own driver installation, client scope, authorization and migration execution. No new mandatory runtime dependency or D1 schema change is introduced.
+- The SQLite adapter preserves caller transactions and does not retry conflicts, open connections, or automatically migrate legacy sessions.
 
 ## [0.11.0] - 2026-09-19
 

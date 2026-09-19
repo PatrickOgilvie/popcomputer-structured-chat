@@ -13,9 +13,11 @@ export default defineConfig(async () => {
   return {
     plugins: [
       cloudflareTest({
+        main: "./tests/cloudflare/sqlite-probe.ts",
         miniflare: {
           compatibilityDate: "2026-08-22",
           d1Databases: ["SESSIONS_DB"],
+          durableObjects: { SQLITE_SESSIONS: { className: "SqliteStorageProbe", useSQLite: true } },
           bindings: { TEST_MIGRATIONS: migrations },
         },
       }),

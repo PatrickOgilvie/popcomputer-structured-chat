@@ -311,3 +311,17 @@ const detectedStage = Stage.collect({
   ),
 })
 void detectedStage
+
+// SQLite adapters consume the caller's SQL capability and keep failures in Session.Store.
+const sqliteApi = await import("@popcomputer/structured-chat/effect-sqlite")
+const sqlApi = await import("@popcomputer/structured-chat/sqlite")
+const sqliteStore: Effect.Effect<Root.Session.StoreService, never, import("effect/unstable/sql/SqlClient").SqlClient> = sqliteApi.makeSqliteChatSessionStore()
+const sqliteLayer: Layer.Layer<Root.Session.Store, never, import("effect/unstable/sql/SqlClient").SqlClient> = sqliteApi.layer()
+const sqlPort: import("@popcomputer/structured-chat/sqlite").ChatSessionSql = {
+  read: () => Effect.succeed(null),
+  write: () => Effect.succeed(0),
+}
+const sqlStore: Root.Session.StoreService = sqlApi.makeSqlChatSessionStore(sqlPort)
+void sqliteStore
+void sqliteLayer
+void sqlStore
