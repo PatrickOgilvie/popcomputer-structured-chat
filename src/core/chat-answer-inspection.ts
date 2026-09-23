@@ -1,9 +1,10 @@
-import { Predicate, Effect, Schema } from "effect"
+import { isAnswerStage } from "./answer-collection.js"
+import { Effect, Schema } from "effect"
 import type { AnswerMode } from "./answer.js"
 import {
   readCollectStageInspection,
   type AcceptedAnswerEvidence,
-  type CollectStageDefinitionContract,
+  type AnswerStageDefinitionContract,
   type CollectStageInspectionField,
   type IssuedCollectQuestion,
 } from "./collect-stage.js"
@@ -39,7 +40,7 @@ export interface TrustedChatAnswerState {
 }
 
 type ChatAnswerInspectionStage =
-  | CollectStageDefinitionContract
+  | AnswerStageDefinitionContract
   | {
       readonly _tag: "ToolStage" | "CommandStage" | "InteractionStage"
       readonly name: string
@@ -112,7 +113,7 @@ export const inspectChatAnswers = (
     const sections: Array<InspectedAnswerSection> = []
 
     for (const stage of input.definition.stages) {
-      if (!Predicate.isTagged(stage, "CollectStage")) {
+      if (!isAnswerStage(stage)) {
         continue
       }
 

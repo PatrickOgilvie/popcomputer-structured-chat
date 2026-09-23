@@ -400,7 +400,7 @@ describe("StructuredChatDebugPanel", () => {
     expect(html).toContain("Resource Finder")
     expect(html).toContain("Request Details")
     expect(html).toContain("Required Answers")
-    expect(html).toContain("4 of 5 answered")
+    expect(html).toContain("4 of 5 required answers answered")
     expect(html).toContain(
       "Request Details is current. 4 of 5 required answers are answered.",
     )
@@ -446,8 +446,10 @@ describe("StructuredChatDebugPanel", () => {
     expect(html).toContain('aria-label="Collapse debug panel"')
   })
 
-  test("opens only the most recently first-issued unresolved field", () => {
+  test.each([false, true])("opens the most recently issued unresolved field (reissued: %s)", reissued => {
     const store = createStructuredChatDebugStore()
+    const currentQuestion = { messageIndex: 4, text: "When do you need this?" }
+    const issuedQuestion = reissued ? { ...currentQuestion, messageIndex: 1, latest: currentQuestion } : currentQuestion
 
     const multipleAskedSnapshot: StructuredChatDebugSnapshot = {
       ...snapshot,
@@ -462,10 +464,7 @@ describe("StructuredChatDebugPanel", () => {
                       ...field,
                       state: {
                         _tag: "Asked" as const,
-                        issuedQuestion: {
-                          messageIndex: 4,
-                          text: "When do you need this?",
-                        },
+                        issuedQuestion,
                       },
                     }
                   : field,

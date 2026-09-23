@@ -55,3 +55,38 @@ _Avoid_: confirmation, workflow commitment
 **Accepted answer**:
 A retained answer value supported by eligible evidence and satisfying its acceptance rules. New grounded input may correct it.
 _Avoid_: detected answer, unvalidated proposal
+
+**Interview**:
+A stage that collects required and optional answers by choosing the next question
+or registered query tool in response to the conversation. Tool use retains the
+interview’s progress and does not complete the stage. Required answers govern readiness to finish;
+question order is a separate decision.
+_Avoid_: fixed questionnaire, unrestricted chat
+
+**Question selection**:
+A proposal to ask one eligible question, use a registered query tool, or finish an interview. It uses the
+retained conversation and accepted answers but cannot accept values or bypass
+completion requirements.
+_Avoid_: answer detection, extraction, accepted answer
+
+**Answer objective**:
+The information an interview seeks to establish, independently of the wording
+used to ask for it. A required objective can be satisfied by eligible evidence
+without directly asking its default question.
+_Avoid_: mandatory wording, fixed questionnaire item
+
+**Probe**:
+A question that gathers evidence for an answer objective through the participant's
+examples, circumstances, or desired changes. A probe does not introduce a separate
+answer objective merely because its wording is different.
+_Avoid_: flavour field, additional required answer
+
+**Question focus**:
+The interview question issued to the user and awaiting a reply. Focus is persisted
+independently of declaration order; a reply may also answer or correct other fields.
+_Avoid_: first missing field, confirmed answer
+
+**Declined answer**:
+An optional field the user explicitly chose not to supply, with retained user
+evidence. Absence alone is not a decline; newer evidence may supply the answer.
+_Avoid_: default value, accepted answer

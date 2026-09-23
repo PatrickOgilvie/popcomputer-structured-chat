@@ -7,7 +7,7 @@ import {
 import { ChatNameSchema, ChatVersionSchema } from "./chat-identity.js"
 import {
   CollectAnswerFieldNameSchema,
-  type CollectStageDefinitionContract,
+  type AnswerStageDefinitionContract,
 } from "./collect-stage.js"
 import { JsonValueSchema } from "./json-value.js"
 import { StageNameSchema } from "./stage-name.js"
@@ -85,7 +85,7 @@ export type StructuredChatUserAnswerSnapshot = Schema.Schema.Type<
 >
 
 type UserAnswerProjectionStage =
-  | CollectStageDefinitionContract
+  | AnswerStageDefinitionContract
   | {
       readonly _tag: "ToolStage" | "CommandStage" | "InteractionStage"
       readonly name: string

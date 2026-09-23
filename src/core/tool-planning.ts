@@ -51,7 +51,13 @@ const clarify = defineTool({
   description:
     "Ask one question instead of executing when the action or required details are unclear. Never invent arguments.",
   input: Schema.Struct({
-    text: Schema.Trimmed.check(Schema.isNonEmpty(), Schema.isMaxLength(500)),
+    // Keep refinement-generated allOf out of strict provider schemas while
+    // validating the decoded wording before it becomes a clarification.
+    text: Schema.String.pipe(
+      Schema.decodeTo(
+        Schema.Trimmed.check(Schema.isNonEmpty(), Schema.isMaxLength(500)),
+      ),
+    ),
   }),
   execute: () => Effect.die(new Error("Planning controls cannot execute")),
 })

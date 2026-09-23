@@ -3,6 +3,13 @@ import { Stage } from "./core/stage.js"
 /** Define one collect stage. */
 export const collect = Stage.collect
 
+/** Collect required and optional answers in conversation-dependent order. */
+export const interview = Stage.interview
+
+export { defineQuestionSelector as questionSelector, InvalidQuestionSelection, InvalidQuestionPlanningContext } from "./core/question-selection.js"
+export type { InterviewBank, InterviewFields, InterviewField, InterviewTools, InterviewToolName, InterviewTrigger, QuestionSelector, QuestionSelectorContract, QuestionSelection, QuestionSelectionContext, QuestionTarget, QuestionCandidate } from "./core/question-selection.js"
+export type { InterviewStage as Interview, InterviewState, InterviewPhase, InterviewTurn, InterviewAnswers, InterviewToolExecution, InterviewPlanningFrame, DefineInterviewStageInput as DefineInterviewInput } from "./core/interview-stage.js"
+
 /** Define one repeatable or terminal query-tool stage. */
 export const tools = Stage.tools
 

@@ -19,6 +19,7 @@ export const collectProposalPlanner = (
       quote: JsonValueSchema,
     })).check(Schema.isMaxLength(Math.max(1, fields.length * 2))),
     nextQuestion: Schema.optionalKey(JsonValueSchema),
+    declines: Schema.optionalKey(JsonValueSchema),
   })
   const transport = defineTool({
     name: "submit_answers",

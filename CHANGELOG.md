@@ -6,6 +6,25 @@ file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.12.0] - 2026-09-23
+
+### Added
+
+- Add `Stage.interview` with required and optional answer banks, conversation-aware question order, grounded optional declines, persisted question focus, and explicit completion.
+- Allow Interview stages to select registered query tools alongside questions, clarify missing tool arguments, and retain answer progress. Tools see answers accepted during the same turn.
+- Add Effect-native `Stage.questionSelector` and `TypeSafe.questionSelection`. Question selection uses the complete retained conversation and validated answers; Jev can hand uncertain decisions to the LLM.
+- Share answer extraction, grounding, validation, confirmation, and repair between collect and interview stages. Interview state and accepted answers work with chat sessions, composition, and debug projections.
+- Compose `Question.choice(Question.adaptive(...), options)` for contextual wording with fixed typed suggestions. Budget uncertainty can produce a helpful follow-up while retaining numeric options and keeping the answer unresolved.
+
+### Fixed
+
+- Preserve accepted-answer types for Interviews with bound tool inputs.
+
+- Persist pending reconfirmation in shared answer state, so correcting an optional confirmed interview answer blocks completion until it is confirmed again or explicitly declined.
+- Render interview debug focus from its persisted field and calculate required progress separately from optional answers. Collection debug focus follows the latest question issuance.
+
 ## [0.11.1] - 2026-09-19
 
 ### Added

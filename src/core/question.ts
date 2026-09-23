@@ -1,4 +1,4 @@
-import { Data, Schema } from "effect"
+import { Data, Predicate, Schema } from "effect"
 
 const QuestionTextSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
@@ -50,10 +50,13 @@ export interface QuestionChoice<Value> {
   readonly value: Value
 }
 
-/** A fixed question with typed suggestions; the answer schema defines all accepted values. */
+/** Typed suggestions with fixed or goal-generated wording; values remain application-owned. */
 export interface ChoiceQuestion<Value> {
   readonly _tag: "ChoiceQuestion"
+  /** Authored wording, used as the fallback when a goal is supplied. */
   readonly text: string
+  /** Optional goal for adapting only the question text to the conversation. */
+  readonly goal?: string
   readonly options: readonly [
     QuestionChoice<Value>,
     ...ReadonlyArray<QuestionChoice<Value>>,
@@ -73,6 +76,11 @@ export type QuestionDefinitionContract =
   | AdaptiveQuestion
   | AdaptiveChoiceQuestion
   | ChoiceQuestion<unknown>
+
+/** @internal Whether model-authored text is permitted for this question. */
+export const hasAdaptiveWording = (question: QuestionDefinitionContract): boolean =>
+  question._tag === "AdaptiveQuestion" || question._tag === "AdaptiveChoiceQuestion" ||
+  (question._tag === "ChoiceQuestion" && question.goal !== undefined)
 
 interface QuestionConstructors extends Data.TaggedEnum.WithGenerics<1> {
   readonly taggedEnum:
@@ -152,7 +160,7 @@ const choice = <
     ...ReadonlyArray<QuestionChoice<unknown>>,
   ],
 >(
-  text: string,
+  prompt: string | AdaptiveQuestion,
   options: Options,
 ): ChoiceQuestion<Options[number]["value"]> => {
   const firstOption = {
@@ -173,10 +181,11 @@ const choice = <
     throw new Error("Choice question labels must be unique")
   }
 
-  return Definition.ChoiceQuestion({
-    text: QuestionTextSchema.make(text),
+  const question = Definition.ChoiceQuestion({
+    text: QuestionTextSchema.make(Predicate.isString(prompt) ? prompt : prompt.fallback),
     options: [firstOption, ...remainingOptions],
   })
+  return Predicate.isString(prompt) ? question : Definition.ChoiceQuestion({ ...question, goal: QuestionGoalSchema.make(prompt.goal) })
 }
 
 /** Constructors for static, adaptive, and typed choice questions. */

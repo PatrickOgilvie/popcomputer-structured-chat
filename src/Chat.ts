@@ -1,3 +1,6 @@
+import type { InterviewStage } from "./core/interview-stage.js"
+import type { InterviewFields } from "./core/question-selection.js"
+import type { AnswerStageDefinitionContract } from "./core/answer-collection.js"
 import { Effect, Function as Fn } from "effect"
 import type { ChatSessionStore } from "./core/session.js"
 import type { ChatContext } from "./core/chat-context.js"
@@ -5,7 +8,6 @@ import type {
   AcceptedAnswer,
   CollectAnswers,
   CollectStage,
-  CollectStageDefinitionContract,
 } from "./core/collect-stage.js"
 import type { StructuredDefinition } from "./core/definition.js"
 import type {
@@ -203,8 +205,8 @@ export type Requirements<Chat extends AnyDefinition> =
       ? ChatRequirements<Stages>
       : never
 
-type CollectFields<Stage> =
-  Stage extends CollectStage<
+type AnswerFieldsOf<Stage> =
+  Stage extends InterviewStage<infer _IN, infer Bank, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II> ? InterviewFields<Bank> :   Stage extends CollectStage<
     infer _Name,
     infer Fields,
     infer _Guards,
@@ -468,14 +470,14 @@ export const acceptedAnswer = <
   const Version extends number,
   const Stages extends ChatStageTuple,
   const Explorations extends ChatExplorationTuple,
-  Stage extends Extract<Stages[number], CollectStageDefinitionContract>,
-  Field extends keyof CollectFields<Stage> & string,
+  Stage extends Extract<Stages[number], AnswerStageDefinitionContract>,
+  Field extends keyof AnswerFieldsOf<Stage> & string,
 >(
   chat: Definition<Name, Version, Stages, Explorations>,
   state: ChatState<Name, Version, Stages>,
   stage: Stage,
   field: Field,
-): AcceptedAnswer<CollectAnswers<CollectFields<Stage>>[Field]> | undefined =>
+): AcceptedAnswer<CollectAnswers<AnswerFieldsOf<Stage>>[Field]> | undefined =>
   read(chat).getAcceptedAnswer(state, stage, field)
 
 export {

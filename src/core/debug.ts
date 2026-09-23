@@ -61,6 +61,7 @@ const DebugQuestionSchema = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("ChoiceQuestion"),
     text: Schema.String,
+    goal: Schema.optionalKey(Schema.String),
     options: Schema.Array(
       Schema.Struct({
         label: Schema.String,
@@ -123,6 +124,19 @@ const DebugStageSchema = Schema.Union([
     fields: Schema.Array(DebugFieldSchema),
   }),
   Schema.Struct({
+    _tag: Schema.Literal("InterviewStage"),
+    tools: Schema.Array(ToolNameSchema),
+    ...DebugStageBaseFields,
+    satisfiedFields: Schema.Natural,
+    totalFields: Schema.Natural,
+    fields: Schema.Array(DebugFieldSchema),
+    requiredFields: Schema.Array(Schema.String),
+    optionalFields: Schema.Array(Schema.String),
+    phase: Schema.Literals(["Ready", "AwaitingReply", "Complete"]),
+    focus: Schema.NullOr(Schema.String),
+    declinedFields: Schema.Array(Schema.String),
+  }),
+  Schema.Struct({
     _tag: Schema.Literal("ToolStage"),
     ...DebugStageBaseFields,
     tools: Schema.Array(ToolNameSchema),
@@ -147,7 +161,7 @@ export const StructuredChatDebugSnapshotSchema = Schema.Struct({
   currentStage: Schema.Struct({
     index: DebugIndexSchema,
     name: StageNameSchema,
-    kind: Schema.Literals(["collect", "tool", "command", "interaction"]),
+    kind: Schema.Literals(["collect", "interview", "tool", "command", "interaction"]),
   }),
   stages: Schema.Array(DebugStageSchema),
 })
@@ -222,12 +236,14 @@ const projectQuestion = (
         maximumOptions: question.maximumOptions,
         fallbackOptions: question.fallbackOptions,
       }
-    case "ChoiceQuestion":
-      return {
+    case "ChoiceQuestion": {
+      const projected = {
         _tag: question._tag,
         text: question.text,
         options: question.options.map(({ label }) => ({ label })),
       }
+      return question.goal === undefined ? projected : { ...projected, goal: question.goal }
+    }
   }
 }
 
@@ -237,6 +253,8 @@ const stageKind = (
   switch (stage._tag) {
     case "CollectStage":
       return "collect"
+    case "InterviewStage":
+      return "interview"
     case "ToolStage":
       return "tool"
     case "InteractionStage":
@@ -411,6 +429,21 @@ export const inspectChatState = <
         })
       }
 
+      if (stage._tag === "InterviewStage") {
+        const details = yield* Schema.decodeUnknownEffect(Schema.Struct({
+          phase: Schema.TaggedUnion({ Ready: {}, Complete: {}, AwaitingReply: { field: Schema.String, issuedMessageIndex: Schema.Natural } }),
+          declined: Schema.Record(Schema.String, Schema.Unknown),
+        }))(runtimeState.stages[stage.name]).pipe(Effect.mapError(() => invalidProjection("invalid_state")))
+        stages.push({
+          _tag: "InterviewStage", index, name: stage.name, tools: stage.tools.map(tool => tool.name),
+          status: stageStatus(runtimeState, index), repairPending, satisfiedFields,
+          totalFields: inspectedSection.fields.length, fields,
+          requiredFields: Object.keys(stage.required), optionalFields: Object.keys(stage.optional),
+          phase: details.phase._tag, focus: details.phase._tag === "AwaitingReply" ? details.phase.field : null,
+          declinedFields: Object.keys(details.declined),
+        })
+        continue
+      }
       stages.push({
         _tag: "CollectStage",
         index,

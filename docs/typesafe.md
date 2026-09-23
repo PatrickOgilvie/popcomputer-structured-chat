@@ -217,6 +217,62 @@ replace an accepted, application-authored reply hint.
 This capability currently applies to query-tool stages. Command and interaction
 stages retain their existing planning and admission behaviour.
 
+## Select interview questions with Jev
+
+Bind question selection to the same required and optional answer definitions and
+query tools as the interview:
+
+```ts
+const bank = {
+  required: { goal: GoalAnswer, budget: BudgetAnswer },
+  optional: { timeline: TimelineAnswer },
+  tools: [FindExamples],
+}
+
+const Brief = Stage.interview({
+  name: "brief",
+  ...bank,
+  instructions: ["Build a useful brief, following the user's priorities."],
+  selection: TypeSafe.questionSelection(bank, {
+    policy: TypeSafe.selectionPolicy({
+      minimumProbability: 0.9,
+      minimumMargin: 0.15,
+    }),
+    onUnavailable: "fallback",
+  }),
+})
+```
+
+Jev chooses among the runtime's eligible questions, registered query tools, an uncertainty option, and
+`Finish` when completion is allowed. It receives the complete retained
+conversation, current issued question, accepted answers after validation, stage
+instructions, and required/optional and clarification metadata. Question selection
+is separate from answer detection: `detector` decides which values to interpret;
+`selection` decides the next question or tool after those values have been checked.
+A selected tool uses the standard argument planner (or bound application inputs),
+can clarify missing arguments, and keeps the interview open.
+
+The same probability and winner-margin policy used for tool selection applies.
+Ties and uncertain judgments hand selection to the LLM. `maximumCandidates` and
+the adapter's context limits produce an explicit `NotApplicable` handoff instead
+of truncating the conversation. Adaptive question wording still uses the stage's
+model; a selected fixed question needs no wording request. Invalid model selection
+falls back to an eligible clarification, required question, or completion in that
+order. Invalid selections never fall back to executing a tool. Provider failures remain typed failures unless covered by the configured
+availability fallback.
+
+For application logic, `Stage.questionSelector(bank, callback)` preserves the
+callback's Effect errors and service requirements through `Stage.interview` and
+`Chat`. The callback returns `Selected` with an offered target, `Uncertain`, or
+`NotApplicable`. An unavailable target, including premature `Finish`, fails with
+`InvalidQuestionSelection`; the turn is not committed. Do not mutate the supplied
+context. Omit the interview's `selection` to choose and phrase through the LLM.
+
+Required and optional keys must be disjoint. Bindings may use separately composed
+maps containing the exact same answer definitions; required/optional membership
+must also match for question selectors. Existing collect-stage binding rules are
+unchanged. See [the compiled example](../examples/interview.ts).
+
 ## Disable Jev or recover from an outage
 
 Detection and selection each accept the same explicit availability policy:

@@ -1,3 +1,6 @@
+import type { InterviewStage, InterviewStageDefinitionContract, InterviewToolExecution, InterviewState } from "./interview-stage.js"
+import type { InterviewFields } from "./question-selection.js"
+import { isAnswerStage, type AnswerStageDefinitionContract } from "./answer-collection.js"
 import type { ToolSelectorContract } from "./tool-selection.js"
 import { ToolContext } from "./tool-context.js"
 import {
@@ -101,6 +104,7 @@ export class InvalidChatTransition extends Schema.TaggedError<InvalidChatTransit
 
 /** Minimum runtime identity retained for every structured chat stage. */
 export type ChatStageDefinitionContract =
+  | InterviewStageDefinitionContract
   | CollectStageDefinitionContract
   | ToolStageDefinitionContract
   | CommandStageDefinitionContract
@@ -121,8 +125,10 @@ type UnionToIntersection<Union> = (
   ? Intersection
   : never
 
-type CollectStateEntry<Stage> =
-  Stage extends CollectStage<
+type AnswerStateEntry<Stage> =
+  Stage extends InterviewStage<infer IName, infer Bank, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II>
+    ? { readonly [Key in IName]: InterviewState<Bank> }
+    :   Stage extends CollectStage<
     infer Name,
     infer Fields,
     infer _Guards,
@@ -133,13 +139,13 @@ type CollectStateEntry<Stage> =
     ? { readonly [Key in Name]: CollectStageState<Fields> }
     : never
 
-type ChatCollectStage<Stages extends ChatStageTuple> = Extract<
+type ChatAnswerStage<Stages extends ChatStageTuple> = Extract<
   Stages[number],
-  CollectStageDefinitionContract
+  AnswerStageDefinitionContract
 >
 
-type CollectFields<Stage> =
-  Stage extends CollectStage<
+type AnswerFieldsOf<Stage> =
+  Stage extends InterviewStage<infer _IN, infer Bank, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II> ? InterviewFields<Bank> :   Stage extends CollectStage<
     infer _Name,
     infer Fields,
     infer _Guards,
@@ -152,10 +158,10 @@ type CollectFields<Stage> =
 
 /** Persisted state entries derived from every collect stage. */
 export type ChatStageStates<Stages extends ChatStageTuple> = [
-  CollectStateEntry<Stages[number]>,
+  AnswerStateEntry<Stages[number]>,
 ] extends [never]
   ? Readonly<Record<never, never>>
-  : UnionToIntersection<CollectStateEntry<Stages[number]>>
+  : UnionToIntersection<AnswerStateEntry<Stages[number]>>
 
 /** Complete server-owned state for one structured chat session. */
 export interface ChatState<
@@ -174,7 +180,7 @@ export interface ChatState<
 }
 
 type ChatQuestion<Stage> =
-  Stage extends CollectStage<
+  Stage extends InterviewStage<infer _IN, infer Bank, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II> ? CollectStagePrompt<InterviewFields<Bank>> :   Stage extends CollectStage<
     infer _Name,
     infer Fields,
     infer _Guards,
@@ -186,6 +192,7 @@ type ChatQuestion<Stage> =
     : never
 
 type ChatToolExecution<Stage> =
+  Stage extends InterviewStage<infer _IN, infer Bank, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II> ? InterviewToolExecution<Bank> :
   Stage extends InteractionStage<
     infer _IName,
     infer ITools,
@@ -212,7 +219,7 @@ type ChatToolExecution<Stage> =
         : never
 
 type StageEffect<Stage> =
-  Stage extends InteractionStage<
+  Stage extends InterviewStage<infer _IN, infer _IB, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II> ? ReturnType<Stage["run"]> :   Stage extends InteractionStage<
     infer _IName,
     infer _ITools,
     infer _IGuards,
@@ -262,7 +269,7 @@ export type ChatTurn<
   Version extends number,
   Stages extends ChatStageTuple,
 > =
-  | (Extract<Stages[number], { readonly selection: ToolSelectorContract }> extends never ? never : {
+  | (Extract<Stages[number], { readonly selection: ToolSelectorContract } | { readonly _tag: "InterviewStage"; readonly tools: ToolTuple }> extends never ? never : {
       readonly _tag: "Clarification"
       readonly stage: string
       readonly state: ChatState<Name, Version, Stages>
@@ -373,13 +380,13 @@ export interface ChatDefinition<
 
   /** Read one accepted value together with its supporting transcript data. */
   readonly getAcceptedAnswer: <
-    Stage extends ChatCollectStage<Stages>,
-    Field extends keyof CollectFields<Stage> & string,
+    Stage extends ChatAnswerStage<Stages>,
+    Field extends keyof AnswerFieldsOf<Stage> & string,
   >(
     state: ChatState<Name, Version, Stages>,
     stage: Stage,
     field: Field,
-  ) => AcceptedAnswer<CollectAnswers<CollectFields<Stage>>[Field]> | undefined
+  ) => AcceptedAnswer<CollectAnswers<AnswerFieldsOf<Stage>>[Field]> | undefined
 
   /** Strictly parse persisted server-owned chat state. */
   readonly parseState: (
@@ -498,7 +505,7 @@ export const defineChat = <
   if (
     definition.stages
       .slice(0, -1)
-      .some((stage) => !Predicate.isTagged(stage, "CollectStage"))
+      .some((stage) => !isAnswerStage(stage))
   ) {
     throw new Error(
       "Only collect stages may precede the final executable stage",
@@ -532,26 +539,26 @@ export const defineChat = <
   const stateFields: Record<string, Schema.Codec<unknown, unknown>> = {}
   const initialStages: Record<string, CollectStageRuntime["initialState"]> = {}
 
-  const collectStages: Array<{
+  const answerStages: Array<{
     readonly index: number
-    readonly stage: CollectStageDefinitionContract
+    readonly stage: AnswerStageDefinitionContract
     readonly runtime: ReturnType<typeof readCollectStageRuntime>
   }> = []
 
   for (const [index, stage] of definition.stages.entries()) {
-    if (!Predicate.isTagged(stage, "CollectStage")) {
+    if (!isAnswerStage(stage)) {
       continue
     }
 
     const runtime = readCollectStageRuntime(stage)
     stateFields[stage.name] = runtime.stateSchema
     initialStages[stage.name] = runtime.initialState
-    collectStages.push({ index, stage, runtime })
+    answerStages.push({ index, stage, runtime })
   }
 
   const finalStageIndex = definition.stages.length - 1
 
-  if (repair !== undefined && collectStages.length === 0) {
+  if (repair !== undefined && answerStages.length === 0) {
     throw new Error("Conversation repair requires at least one collect stage")
   }
 
@@ -570,7 +577,7 @@ export const defineChat = <
       return undefined
     }
 
-    const schemas = collectStages.map(({ runtime }) => runtime.repairSchema)
+    const schemas = answerStages.map(({ runtime }) => runtime.repairSchema)
     const [firstSchema, ...remainingSchemas] = schemas
 
     if (firstSchema === undefined) {
@@ -610,7 +617,7 @@ export const defineChat = <
     if (
       pendingStages.some(
         (index, position) =>
-          definition.stages[index]?._tag !== "CollectStage" ||
+          (definition.stages[index] === undefined || !isAnswerStage(definition.stages[index])) ||
           (position > 0 && index <= (pendingStages[position - 1] ?? -1)),
       )
     ) {
@@ -622,7 +629,7 @@ export const defineChat = <
         return false
       }
 
-      for (const { index, stage, runtime } of collectStages) {
+      for (const { index, stage, runtime } of answerStages) {
         const stageState = state.stages[stage.name]
 
         if (stageState === undefined || !runtime.isValid(stageState)) {
@@ -657,7 +664,7 @@ export const defineChat = <
     for (let index = 0; index < definition.stages.length; index += 1) {
       const stage = definition.stages[index]
 
-      if (stage?._tag !== "CollectStage") {
+      if (stage === undefined || !isAnswerStage(stage)) {
         continue
       }
 
@@ -766,7 +773,7 @@ export const defineChat = <
     messages: ReadonlyArray<ConversationMessage>,
   ): boolean =>
     definition.stages.every((stage) => {
-      if (!Predicate.isTagged(stage, "CollectStage")) {
+      if (!isAnswerStage(stage)) {
         return true
       }
 
@@ -826,7 +833,7 @@ export const defineChat = <
       let stages = { ...state.stages }
       const pendingStages: Array<number> = []
 
-      for (const { index, stage, runtime } of collectStages) {
+      for (const { index, stage, runtime } of answerStages) {
         const stageRepairs = grouped.get(stage.name)
 
         if (stageRepairs === undefined) {
@@ -1231,7 +1238,7 @@ export const defineChat = <
       return cast<
         typeof accepted,
         | AcceptedAnswer<
-            CollectAnswers<CollectFields<typeof stage>>[typeof field]
+            CollectAnswers<AnswerFieldsOf<typeof stage>>[typeof field]
           >
         | undefined
       >(accepted)

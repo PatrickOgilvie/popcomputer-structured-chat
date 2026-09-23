@@ -1,3 +1,4 @@
+import { isAnswerStage } from "./answer-collection.js"
 import { Predicate, Data, Effect, Function as Fn, Schema } from "effect"
 import type { AnyDefinition } from "../Chat.js"
 import { readBranch, type BranchContract, type Branches } from "./branch.js"
@@ -316,7 +317,7 @@ export const makeConversation = (input: {
         )
 
         for (const stage of node.leaf.stages) {
-          if (!Predicate.isTagged(stage, "CollectStage")) continue
+          if (!isAnswerStage(stage)) continue
           const stageState = workflow.stages[stage.name]
 
           if (
@@ -629,6 +630,8 @@ export const makeConversation = (input: {
         return stage.tools
       case "CommandStage":
         return [stage.command]
+      case "InterviewStage":
+        return stage.tools
       case "CollectStage":
       case undefined:
         return []

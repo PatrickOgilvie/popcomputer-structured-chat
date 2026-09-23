@@ -11,6 +11,7 @@ import {
   Tool,
 } from "../src/index.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"
+import * as OpenAI from "../src/model/openai-compatible.js"
 import type { JsonValue } from "../src/core/json-value.js"
 import { presentChatReply } from "../src/core/protocol.js"
 import { captureDebugEvents } from "../src/core/debug-trace.js"
@@ -345,6 +346,115 @@ describe("tool selection", () => {
     ).toEqual({ _tag: "Clarification", text: "Which agency should I compare?" })
     expect(model.requests).toHaveLength(1)
   })
+
+  test.each([
+    { path: "selected", selection: selected },
+    {
+      path: "uncertain",
+      selection: Stage.toolSelector(tools, () =>
+        Effect.succeed({ _tag: "Uncertain" }),
+      ),
+    },
+    {
+      path: "provider unavailable",
+      selection: Stage.toolSelector(tools, () =>
+        Effect.succeed({
+          _tag: "NotApplicable",
+          reason: "provider_unavailable",
+        }),
+      ),
+    },
+  ])("strict OpenAI planning supports clarification: $path", async ({ selection }) => {
+    const requests: Array<OpenAI.ProviderRequest> = []
+    const layer = OpenAI.layer({
+      timeoutMilliseconds: 1_000,
+      provider: OpenAI.Provider.openAI({
+        model: "gpt-5.6-luna",
+        complete: (request) => {
+          requests.push(request)
+          return Promise.resolve({
+            choices: [{
+              message: {
+                tool_calls: [{
+                  function: {
+                    name: "request_tool_clarification",
+                    arguments: JSON.stringify({ text: "Which agency?" }),
+                  },
+                }],
+              },
+            }],
+          })
+        },
+      }),
+    })
+    expect(
+      await Effect.runPromise(
+        Stage.tools({ ...base, selection }).run([]).pipe(Effect.provide(layer)),
+      ),
+    ).toEqual({ _tag: "Clarification", text: "Which agency?" })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.input.tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        function: expect.objectContaining({
+          name: "request_tool_clarification",
+          strict: true,
+          parameters: expect.objectContaining({
+            type: "object",
+            required: ["text"],
+            additionalProperties: false,
+          }),
+        }),
+      }),
+    ]))
+    expect(JSON.stringify(requests[0]?.input.tools)).not.toContain('"allOf"')
+  })
+
+  test.each([
+    { label: "empty", text: "" },
+    { label: "whitespace only", text: " " },
+    { label: "leading whitespace", text: " leading" },
+    { label: "trailing whitespace", text: "trailing " },
+    { label: "over 500 characters", text: "x".repeat(501) },
+  ])(
+    "invalid clarification wording still exhausts the bounded retry: $label",
+    async ({ text }) => {
+      const proposal = { name: "request_tool_clarification", arguments: { text } }
+      const model = recordingModel(proposal, proposal)
+      const stage = Stage.tools({
+        ...base,
+        selection: selected,
+        clarification: Question.adaptive("Ask for an agency.", {
+          fallback: "Which agency?",
+        }),
+      })
+      expect(
+        await Effect.runPromise(stage.run([]).pipe(Effect.provide(model.layer))),
+      ).toEqual({ _tag: "Clarification", text: "Which agency?" })
+      expect(model.requests).toHaveLength(2)
+    },
+  )
+
+  test.each([
+    { label: "one character", text: "x" },
+    { label: "500 characters", text: "x".repeat(500) },
+    { label: "multiple lines", text: "Which agency?\nPlease name one." },
+  ])(
+    "valid clarification wording is retained: $label",
+    async ({ text }) => {
+      const model = recordingModel({
+        name: "request_tool_clarification",
+        arguments: { text },
+      })
+      expect(
+        await Effect.runPromise(
+          Stage.tools({ ...base, selection: selected })
+            .run([])
+            .pipe(Effect.provide(model.layer)),
+        ),
+      ).toEqual({ _tag: "Clarification", text })
+      expect(model.requests).toHaveLength(1)
+    },
+  )
 
   test("pre-planning guards prevent classification", async () => {
     class Denied extends Schema.TaggedError<Denied>()("Denied", {}) {}

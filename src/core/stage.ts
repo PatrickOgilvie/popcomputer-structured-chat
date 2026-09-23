@@ -41,6 +41,7 @@ import {
 import type { RepairTool } from "./repair.js"
 import { defineInteractionStage } from "./interaction-stage.js"
 import { defineCollectStage } from "./collect-stage.js"
+import { defineInterviewStage } from "./interview-stage.js"
 import { StageNameSchema } from "./stage-name.js"
 import {
   structuredDefinition,
@@ -593,6 +594,7 @@ const defineCommandStage = <
 /** Constructors for sequential structured chat stages. */
 export const Stage = {
   collect: defineCollectStage,
+  interview: defineInterviewStage,
   tools: defineToolStage,
   command: defineCommandStage,
   interact: defineInteractionStage,

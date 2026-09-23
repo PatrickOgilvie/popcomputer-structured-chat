@@ -1,3 +1,4 @@
+import { isAnswerStage } from "../../core/answer-collection.js"
 import { Schema } from "effect"
 import { JsonValueSchema } from "../../core/json-value.js"
 import {
@@ -14,7 +15,7 @@ import {
   type InteractionCommandContext,
 } from "../../core/interaction-stage.js"
 import { Data, Effect, Result } from "effect"
-import type { CollectStageDefinitionContract } from "../../core/collect-stage.js"
+import type { AnswerStageDefinitionContract } from "../../core/collect-stage.js"
 import {
   readCollectStageInspection,
   readCollectStageRuntime,
@@ -50,7 +51,7 @@ export interface RuntimeChatState {
 }
 
 type ActiveNode = Data.TaggedEnum<{
-  Collect: { readonly stage: CollectStageDefinitionContract }
+  Collect: { readonly stage: AnswerStageDefinitionContract }
   Tool: { readonly stage: ToolStageDefinitionContract }
   Command: { readonly stage: CommandStageDefinitionContract }
   Interaction: { readonly stage: InteractionStageDefinitionContract }
@@ -61,7 +62,7 @@ const ActiveNode = Data.taggedEnum<ActiveNode>()
 interface ProcessInput {
   readonly chat: string
   readonly stages: ReadonlyArray<
-    | CollectStageDefinitionContract
+    | AnswerStageDefinitionContract
     | ToolStageDefinitionContract
     | CommandStageDefinitionContract
     | InteractionStageDefinitionContract
@@ -119,6 +120,7 @@ export const make = (input: ProcessInput): Process => {
     }
 
     switch (stage._tag) {
+      case "InterviewStage":
       case "CollectStage":
         return Result.succeed(ActiveNode.Collect({ stage }))
       case "ToolStage":
@@ -134,7 +136,7 @@ export const make = (input: ProcessInput): Process => {
     Effect.gen(function* () {
       const accepted: Array<SelectionAcceptedAnswer> = []
       for (const stage of input.stages) {
-        if (stage._tag !== "CollectStage") continue
+        if (!isAnswerStage(stage)) continue
         const saved = state.stages[stage.name]
         if (saved === undefined) continue
         for (const field of readCollectStageInspection(stage).fields) {
@@ -292,7 +294,10 @@ export const make = (input: ProcessInput): Process => {
             return Effect.fail(input.invalidTransition("invalid_state"))
           }
 
-          return runtime.run({ state: collectState, messages }).pipe(
+          const execution = node.stage._tag === "InterviewStage"
+            ? planningFrame(state, state.repair?.pendingStages.includes(state.stage) === true ? "after_repair" : trigger).pipe(Effect.flatMap(frame => runtime.run({ state: collectState, messages, frame })))
+            : runtime.run({ state: collectState, messages })
+          return execution.pipe(
             Effect.flatMap((turn) => {
               const nextState: RuntimeChatState = {
                 ...state,
@@ -302,6 +307,9 @@ export const make = (input: ProcessInput): Process => {
                 },
               }
 
+              if ("action" in turn) return Effect.succeed(turn.action._tag === "Clarification"
+                ? { _tag: "Clarification" as const, clarification: { text: turn.action.text }, stage: node.stage.name, state: nextState }
+                : { ...turn.action, stage: node.stage.name, state: nextState })
               if (!turn.complete) {
                 return Effect.succeed({
                   _tag: "Question" as const,

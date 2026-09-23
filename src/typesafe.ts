@@ -1,4 +1,6 @@
 /** Optional TypeSafe primitives and Effect service. */
+export { questionSelection } from "./integrations/typesafe-question-selection.js"
+export type { TypeSafeQuestionSelectionOptions as QuestionSelectionOptions } from "./integrations/typesafe-question-selection.js"
 export {
   batch,
   choice,

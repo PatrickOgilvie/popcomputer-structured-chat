@@ -105,6 +105,88 @@ typed relationships. Structured chat contributes the closed tool schema, stage
 policy, result projections, and UI protocol. The graph's typed failures and
 Effect requirements flow through the tool without another adapter layer.
 
+## Choose questions from the conversation
+
+`Stage.interview` collects a required and optional answer bank in a conversational
+order. After each reply, it validates proposed answers, then chooses the next
+question or query tool using the complete retained conversation and the updated answers.
+
+```ts
+const Brief = Stage.interview({
+  name: "brief",
+  required: { goal: GoalAnswer, budget: BudgetAnswer },
+  optional: { timeline: TimelineAnswer },
+  tools: [FindExamples],
+  instructions: [
+    "Follow the user's priorities. Ask about timing when a deadline matters.",
+    "Finish once the brief is useful and further questions would add little.",
+  ],
+  questions: { escape: "Not sure yet" },
+})
+```
+
+The bank uses ordinary `Answer` and `Question` definitions, including grounding
+modes, validators, fixed choices, and adaptive wording. Required answers must be
+accepted before finishing. Optional questions can come first, be skipped, or be
+explicitly declined. Information already supplied by the user can satisfy a field
+without asking it again; confirmed answers still require a submission after their
+question was issued.
+
+Omit `selection` for LLM selection, supply `Stage.questionSelector(bank, callback)`
+for an Effect policy, or use `TypeSafe.questionSelection(bank, options)` for Jev.
+Selectors receive eligible candidates, the issued question, source-bearing
+conversation messages, and accepted answers from this and earlier stages. They
+may select an offered `Question`, `Tool` (by registered name), or `Finish`, or return
+`Uncertain` to use the LLM. Include the same `tools` tuple in the selector bank.
+The runtime only offers `Finish` when all required answers are accepted and no
+clarification remains. Selection never accepts answer values.
+
+Tools are optional query capabilities scoped to the interview. A request such as
+“show me examples” can produce a `ToolResult` before required answers are complete,
+then the conversation can resume collecting answers. Tool execution keeps the
+current stage and its progress. `Tool.Context` includes answers accepted in the
+same turn. The standard tool planner validates arguments or returns `Clarification`
+when details are missing; `inputs: Stage.toolInputs(tools, resolvers)` can supply
+application-owned arguments, and `clarification` customizes that prompt. Direct
+`run` exposes either outcome in `action`; `Chat.turn` emits its ordinary tool result
+or clarification. Commands remain in command or interaction stages.
+
+`canFinish(state)` expresses readiness; `isComplete(state)` requires a committed
+finish decision. A completed direct `run` returns typed `answers` with required
+values present and optional values possibly absent. `Chat.turn` persists question
+focus, grounded declines, and completion with the existing session revision.
+Use a new chat definition version when replacing an existing collect stage, since
+the interview state has additional fields.
+
+See the [compiled interview example](examples/interview.ts) and
+[Jev question selection](docs/typesafe.md#select-interview-questions-with-jev).
+`Stage.collect` keeps its existing declaration-order progression.
+
+Typed suggestions can keep their values while the model adapts the question text:
+
+```ts
+Question.choice(
+  Question.adaptive(
+    "Ask one natural question about a comfortable budget for the work discussed.",
+    { fallback: "What budget have you set aside?" },
+  ),
+  [{ label: "£10k", value: 10000 }, { label: "£20k", value: 20000 }],
+)
+```
+
+This works with numeric and structured answer values. The model controls only the
+wording; the application's option labels and values stay fixed. A string first
+argument keeps the wording fixed too. `Question.adaptiveChoice` remains the option
+for generated string suggestions. Validation-rejection questions use their
+authored text or fallback.
+
+A required answer can explicitly represent uncertainty. For example, define budget
+with `Schema.Union([Schema.Finite, Schema.Literal("undecided")])` and
+`escape: { value: "undecided" }`, alongside the stage's
+`questions: { escape: "Not sure yet" }`. Choosing that option accepts `"undecided"`
+and satisfies the required answer. An unmentioned budget remains unanswered;
+tool input schemas should also represent the undecided value.
+
 ## Put a free-form conversation on rails
 
 Collection stages describe meaning, not a fixed form wizard:

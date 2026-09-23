@@ -39,9 +39,9 @@ export interface StructuredChatDebugPanelProps {
 
 type DebugStage = StructuredChatDebugSnapshot["stages"][number]
 
-type DebugCollectStage = Extract<DebugStage, { readonly _tag: "CollectStage" }>
+type DebugAnswerStage = Extract<DebugStage, { readonly _tag: "CollectStage" | "InterviewStage" }>
 
-type DebugField = DebugCollectStage["fields"][number]
+type DebugField = DebugAnswerStage["fields"][number]
 
 type DebugQuestion = DebugField["question"]
 
@@ -1233,6 +1233,7 @@ const humanizeIdentifier = (identifier: string): string =>
 
 const stageKindLabel = (stage: DebugStage): string => {
   switch (stage._tag) {
+    case "InterviewStage":
     case "CollectStage":
       return "Questions"
     case "ToolStage":
@@ -1596,11 +1597,21 @@ const AnswerDetails = ({
   )
 }
 
+/** Completion progress excludes optional interview answers. */
+const requiredAnswerProgress = (stage: DebugAnswerStage) => {
+  if (stage._tag === "CollectStage") {
+    return { fields: stage.fields, satisfied: stage.satisfiedFields, total: stage.totalFields }
+  }
+  const fields = stage.fields.filter(field => stage.requiredFields.includes(field.field))
+  return { fields, satisfied: fields.filter(field => field.state._tag === "Accepted").length, total: fields.length }
+}
+
 /** Right-aligned stage metric: progress where it exists, otherwise the kind. */
-const stageMetaLabel = (stage: DebugStage): string =>
-  Predicate.isTagged(stage, "CollectStage")
-    ? `${stage.satisfiedFields}/${stage.totalFields}`
-    : stageKindLabel(stage)
+const stageMetaLabel = (stage: DebugStage): string => {
+  if (stage._tag !== "CollectStage" && stage._tag !== "InterviewStage") return stageKindLabel(stage)
+  const progress = requiredAnswerProgress(stage)
+  return `${progress.satisfied}/${progress.total}`
+}
 
 const StageSummary = ({ stage }: { readonly stage: DebugStage }) => (
   <summary className="pcsc-debug__stage-summary">
@@ -1628,33 +1639,35 @@ const RepairNotice = ({
     </div>
   ) : null
 
-const mostRecentlyFirstAskedField = (
+const mostRecentlyAskedField = (
   fields: ReadonlyArray<DebugField>,
 ): DebugField | null => {
   let mostRecent: DebugField | null = null
   let mostRecentMessageIndex = -1
 
   for (const field of fields) {
-    if (
-      Predicate.isTagged(field.state, "Asked") &&
-      field.state.issuedQuestion.messageIndex > mostRecentMessageIndex
-    ) {
+    if (!Predicate.isTagged(field.state, "Asked")) continue
+    const issued = field.state.issuedQuestion.latest ?? field.state.issuedQuestion
+    if (issued.messageIndex > mostRecentMessageIndex) {
       mostRecent = field
-      mostRecentMessageIndex = field.state.issuedQuestion.messageIndex
+      mostRecentMessageIndex = issued.messageIndex
     }
   }
 
   return mostRecent
 }
 
-const CollectStageDetails = ({
+const AnswerStageDetails = ({
   stage,
 }: {
-  readonly stage: DebugCollectStage
+  readonly stage: DebugAnswerStage
 }) => {
+  const progress = requiredAnswerProgress(stage)
   const focusedAnswer =
     stage.status === "current"
-      ? mostRecentlyFirstAskedField(stage.fields)
+      ? stage._tag === "InterviewStage"
+        ? stage.fields.find(field => field.field === stage.focus) ?? null
+        : mostRecentlyAskedField(stage.fields)
       : null
 
   return (
@@ -1666,16 +1679,17 @@ const CollectStageDetails = ({
     >
       <StageSummary stage={stage} />
       <div className="pcsc-debug__stage-body">
-        <h3 className="pcsc-debug__sr-only">Required Answers</h3>
+        {stage._tag === "InterviewStage" && stage.tools.length > 0 && <p className="pcsc-debug__question-copy">Available tools: {stage.tools.map(humanizeIdentifier).join(", ")}</p>}
+        <h3 className="pcsc-debug__sr-only">{stage._tag === "InterviewStage" ? "Interview Answers" : "Required Answers"}</h3>
         <div
           className="pcsc-debug__meter"
           role="progressbar"
-          aria-label={`${stage.satisfiedFields} of ${stage.totalFields} answered`}
+          aria-label={`${progress.satisfied} of ${progress.total} required answers answered`}
           aria-valuemin={0}
-          aria-valuemax={stage.totalFields}
-          aria-valuenow={stage.satisfiedFields}
+          aria-valuemax={progress.total}
+          aria-valuenow={progress.satisfied}
         >
-          {stage.fields.map((field) => (
+          {progress.fields.map((field) => (
             <span
               className="pcsc-debug__meter-segment"
               data-status={fieldStateName(field.state)}
@@ -1762,8 +1776,9 @@ const CommandStageDetails = ({
 
 const StageDetails = ({ stage }: { readonly stage: DebugStage }) => {
   switch (stage._tag) {
+    case "InterviewStage":
     case "CollectStage":
-      return <CollectStageDetails stage={stage} />
+      return <AnswerStageDetails stage={stage} />
     case "ToolStage":
       return <ToolStageDetails stage={stage} />
     case "InteractionStage":
@@ -2045,8 +2060,9 @@ const debugAnnouncement = (
 
   const stageName = humanizeIdentifier(snapshot.currentStage.name)
 
-  if (stage?._tag === "CollectStage") {
-    return `${stageName} is current. ${stage.satisfiedFields} of ${stage.totalFields} required answers are answered.`
+  if (stage?._tag === "CollectStage" || stage?._tag === "InterviewStage") {
+    const progress = requiredAnswerProgress(stage)
+    return `${stageName} is current. ${progress.satisfied} of ${progress.total} required answers are answered.`
   }
 
   return `${stageName} is the current step.`

@@ -5,6 +5,8 @@ export type StructuredDefinitionKind =
   | "outbound_message"
   | "tool"
   | "collect_stage"
+  | "interview_stage"
+  | "question_selector"
   | "tool_stage"
   | "command_stage"
   | "interaction_stage"
