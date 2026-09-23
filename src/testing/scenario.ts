@@ -1,19 +1,20 @@
-import type { ExtractionContextContract } from "../core/extraction-context.js"
-import type { AnswerDetectorContract } from "../core/answer-detector.js"
 import { Effect, Layer, Ref, Result, Schema } from "effect"
+
+import type { AnswerDetectorContract } from "../core/answer-detector.js"
 import type {
   AnswerFields,
   CollectAnswers,
   CollectStage,
 } from "../core/collect-stage.js"
+import type { ExtractionContextContract } from "../core/extraction-context.js"
+import { JsonValueSchema, type JsonValue } from "../core/json-value.js"
+import type { ModelGuardTuple } from "../core/model-guard.js"
 import {
   StructuredChatModel,
   type AnyModelProfile,
   type ToolModelRequest,
 } from "../core/model.js"
-import type { ModelGuardTuple } from "../core/model-guard.js"
 import type { StructuredTool, ToolDefinitionContract } from "../core/tool.js"
-import { JsonValueSchema, type JsonValue } from "../core/json-value.js"
 
 const scenarioQuote = Symbol(
   "@popcomputer/structured-chat/testing/ScenarioQuote",
@@ -76,23 +77,38 @@ type ToolInput<Tool> =
     ? Schema.Schema.Type<InputSchema>
     : never
 
-const ScenarioExtractionPlanSchema = Schema.fromJsonString(Schema.Struct({
-  stage: Schema.String,
-  extracting: Schema.Array(Schema.Struct({ field: Schema.String })),
-  conversation: Schema.Array(Schema.Struct({
-    messageIndex: Schema.Natural,
-    role: Schema.Literals(["user", "assistant"]),
-    content: Schema.String,
-  })),
-}))
+const ScenarioExtractionPlanSchema = Schema.fromJsonString(
+  Schema.Struct({
+    stage: Schema.String,
+    extracting: Schema.Array(Schema.Struct({ field: Schema.String })),
+    conversation: Schema.Array(
+      Schema.Struct({
+        messageIndex: Schema.Natural,
+        role: Schema.Literals(["user", "assistant"]),
+        content: Schema.String,
+      }),
+    ),
+  }),
+)
 
 const scenarioConversation = (request: ToolModelRequest) => {
-  const serialized = request.untrustedMessages.map((message, index) => {
-    const prefix = `Untrusted extraction plan JSON, part ${index + 1} of ${request.untrustedMessages.length}:\n`
-    return message.content.startsWith(prefix) ? message.content.slice(prefix.length) : message.content
-  }).join("")
-  const plan = Schema.decodeUnknownResult(ScenarioExtractionPlanSchema)(serialized)
-  return Result.isSuccess(plan) ? plan.success.conversation : request.untrustedMessages.map((message, messageIndex) => ({ ...message, messageIndex }))
+  const serialized = request.untrustedMessages
+    .map((message, index) => {
+      const prefix = `Untrusted extraction plan JSON, part ${index + 1} of ${request.untrustedMessages.length}:\n`
+      return message.content.startsWith(prefix)
+        ? message.content.slice(prefix.length)
+        : message.content
+    })
+    .join("")
+  const plan = Schema.decodeUnknownResult(ScenarioExtractionPlanSchema)(
+    serialized,
+  )
+  return Result.isSuccess(plan)
+    ? plan.success.conversation
+    : request.untrustedMessages.map((message, messageIndex) => ({
+        ...message,
+        messageIndex,
+      }))
 }
 
 const evidenceIndex = <Value>(
@@ -101,7 +117,9 @@ const evidenceIndex = <Value>(
 ): number => {
   const conversation = scenarioConversation(request)
   if (quoted.messageIndex !== undefined) {
-    const message = conversation.find(message => message.messageIndex === quoted.messageIndex)
+    const message = conversation.find(
+      (message) => message.messageIndex === quoted.messageIndex,
+    )
 
     if (
       message === undefined ||
@@ -116,7 +134,7 @@ const evidenceIndex = <Value>(
     return quoted.messageIndex
   }
 
-  const matches = conversation.flatMap(message =>
+  const matches = conversation.flatMap((message) =>
     message.role === "user" && message.content.includes(quoted.quote)
       ? [message.messageIndex]
       : [],
@@ -168,9 +186,15 @@ const answers = <
 ): ScenarioStep => ({
   respond: (request) => {
     const encodedAnswers: Record<string, JsonValue> = {}
-    const input = Schema.decodeUnknownSync(Schema.Struct({ properties: Schema.Struct({
-      answers: Schema.Struct({ properties: Schema.Record(Schema.String, JsonValueSchema) }),
-    }) }))(request.tools.find(tool => tool.name === "submit_answers")?.inputSchema)
+    const input = Schema.decodeUnknownSync(
+      Schema.Struct({
+        properties: Schema.Struct({
+          answers: Schema.Struct({
+            properties: Schema.Record(Schema.String, JsonValueSchema),
+          }),
+        }),
+      }),
+    )(request.tools.find((tool) => tool.name === "submit_answers")?.inputSchema)
     const selected = Object.keys(input.properties.answers.properties)
     for (const field of selected) {
       encodedAnswers[field] = null
@@ -191,7 +215,10 @@ const answers = <
       if (value === undefined || answer === undefined) {
         continue
       }
-      if (!selected.includes(field)) throw new Error(`Scenario answer field ${field} is not selected for extraction`)
+      if (!selected.includes(field))
+        throw new Error(
+          `Scenario answer field ${field} is not selected for extraction`,
+        )
 
       encodedAnswers[field] = Schema.decodeUnknownSync(JsonValueSchema)(
         Schema.encodeSync(answer.schema)(value.value),

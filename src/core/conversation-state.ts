@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+
 import { ChatNameSchema, ChatVersionSchema } from "./chat-identity.js"
 import { JsonValueSchema } from "./json-value.js"
 import { ChatSessionIdSchema } from "./session.js"

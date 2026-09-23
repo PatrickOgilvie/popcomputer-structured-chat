@@ -1,5 +1,6 @@
 import { Effect, Layer, Redacted, Schema } from "effect"
 import { describe, expect, test } from "vitest"
+
 import {
   Answer,
   Model,
@@ -13,29 +14,98 @@ import { cancellationCase, runtimeConfig } from "../typesafe-runtime.js"
 
 describe("optional TypeSafe adapter in workerd", () => {
   test("hands an unavailable selector to the model without losing application inputs", async () => {
-    const search = Tool.define({ name: "search", description: "Search", input: Schema.Struct({ query: Schema.String }), execute: input => Effect.succeed(input.query) })
-    const tools = [search] as const
-    const stage = Stage.tools({ name: "search", tools, instructions: ["Search"],
-      selection: TypeSafe.selection(tools, { policy: TypeSafe.selectionPolicy({ minimumProbability: 0.9, minimumMargin: 0.1 }), onUnavailable: "fallback" }),
-      inputs: Stage.toolInputs(tools, { search: () => Effect.succeed({ query: "application-owned" }) }),
+    const search = Tool.define({
+      name: "search",
+      description: "Search",
+      input: Schema.Struct({ query: Schema.String }),
+      execute: (input) => Effect.succeed(input.query),
     })
-    const provider = TypeSafe.layer(runtimeConfig(async () => Response.json({}, { status: 503 })))
-    const model = Layer.succeed(Model.Service, Model.Service.of({ requestTool: () => Effect.succeed({ name: "search", arguments: {} }) }))
-    expect(await Effect.runPromise(stage.run([]).pipe(Effect.provide(Layer.merge(provider, model))))).toMatchObject({ _tag: "Executed", execution: { serverResult: "application-owned" } })
+    const tools = [search] as const
+    const stage = Stage.tools({
+      name: "search",
+      tools,
+      instructions: ["Search"],
+      selection: TypeSafe.selection(tools, {
+        policy: TypeSafe.selectionPolicy({
+          minimumProbability: 0.9,
+          minimumMargin: 0.1,
+        }),
+        onUnavailable: "fallback",
+      }),
+      inputs: Stage.toolInputs(tools, {
+        search: () => Effect.succeed({ query: "application-owned" }),
+      }),
+    })
+    const provider = TypeSafe.layer(
+      runtimeConfig(async () => Response.json({}, { status: 503 })),
+    )
+    const model = Layer.succeed(
+      Model.Service,
+      Model.Service.of({
+        requestTool: () => Effect.succeed({ name: "search", arguments: {} }),
+      }),
+    )
+    expect(
+      await Effect.runPromise(
+        stage.run([]).pipe(Effect.provide(Layer.merge(provider, model))),
+      ),
+    ).toMatchObject({
+      _tag: "Executed",
+      execution: { serverResult: "application-owned" },
+    })
   })
   test("selects a tool and executes bound input without a generative request", async () => {
-    const search = Tool.define({ name: "search", description: "Search", input: Schema.Struct({ query: Schema.String }), execute: input => Effect.succeed(input.query) })
-    const tools = [search] as const
-    const stage = Stage.tools({ name: "search", tools, instructions: ["Search"],
-      selection: TypeSafe.selection(tools, { policy: TypeSafe.selectionPolicy({ minimumProbability: 0.9, minimumMargin: 0.1 }) }),
-      inputs: Stage.toolInputs(tools, { search: () => Effect.succeed({ query: "branding" }) }),
+    const search = Tool.define({
+      name: "search",
+      description: "Search",
+      input: Schema.Struct({ query: Schema.String }),
+      execute: (input) => Effect.succeed(input.query),
     })
-    const provider = TypeSafe.layer(runtimeConfig(async () => Response.json({
-      model: "jev-test", usage: { input_tokens: 10, output_tokens: 2 },
-      answers: { select_tool: { type: "choice", choice: "tool_0", probabilities: { tool_0: 0.98, none: 0.01, uncertain: 0.01 }, confidence: 0.9 } },
-    })))
-    const model = Layer.succeed(Model.Service, Model.Service.of({ requestTool: () => Effect.die(new Error("Unexpected model call")) }))
-    expect(await Effect.runPromise(stage.run([]).pipe(Effect.provide(Layer.merge(provider, model))))).toMatchObject({ _tag: "Executed", execution: { serverResult: "branding" } })
+    const tools = [search] as const
+    const stage = Stage.tools({
+      name: "search",
+      tools,
+      instructions: ["Search"],
+      selection: TypeSafe.selection(tools, {
+        policy: TypeSafe.selectionPolicy({
+          minimumProbability: 0.9,
+          minimumMargin: 0.1,
+        }),
+      }),
+      inputs: Stage.toolInputs(tools, {
+        search: () => Effect.succeed({ query: "branding" }),
+      }),
+    })
+    const provider = TypeSafe.layer(
+      runtimeConfig(async () =>
+        Response.json({
+          model: "jev-test",
+          usage: { input_tokens: 10, output_tokens: 2 },
+          answers: {
+            select_tool: {
+              type: "choice",
+              choice: "tool_0",
+              probabilities: { tool_0: 0.98, none: 0.01, uncertain: 0.01 },
+              confidence: 0.9,
+            },
+          },
+        }),
+      ),
+    )
+    const model = Layer.succeed(
+      Model.Service,
+      Model.Service.of({
+        requestTool: () => Effect.die(new Error("Unexpected model call")),
+      }),
+    )
+    expect(
+      await Effect.runPromise(
+        stage.run([]).pipe(Effect.provide(Layer.merge(provider, model))),
+      ),
+    ).toMatchObject({
+      _tag: "Executed",
+      execution: { serverResult: "branding" },
+    })
   })
   test("runs the real SDK and parses its typed response", async () => {
     const layer = TypeSafe.layer({
@@ -84,7 +154,10 @@ describe("optional TypeSafe adapter in workerd", () => {
       name: "brief",
       fields,
       detector: TypeSafe.detection(fields, {
-        policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
+        policy: TypeSafe.detectionPolicy({
+          detectedAtOrAbove: 0.9,
+          undetectedAtOrBelow: 0.1,
+        }),
       }),
     })
     const layer = TypeSafe.layer({
@@ -125,9 +198,7 @@ describe("optional TypeSafe adapter in workerd", () => {
                       name: "submit_answers",
                       arguments: {
                         answers: { need: "strategy" },
-                        evidence: [
-                          { field: "need", quote: "strategy" },
-                        ],
+                        evidence: [{ field: "need", quote: "strategy" }],
                         nextQuestion: null,
                       },
                     }),

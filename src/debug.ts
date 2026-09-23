@@ -1,6 +1,5 @@
 import { Predicate, Effect, Function as Fn, Result, Schema } from "effect"
-import type { ChatSessionStore } from "./core/session.js"
-import type { ConversationState } from "./core/conversation-state.js"
+
 import {
   turn as runTurn,
   type AnyDefinition,
@@ -16,6 +15,17 @@ import type {
   ChatStageTuple,
   ChatState,
 } from "./core/chat.js"
+import type { AnyComposedDefinition } from "./core/composition.js"
+import type { ConversationState } from "./core/conversation-state.js"
+import {
+  presentChatDebugReply,
+  type CapturedChatDebugOutcome,
+  type PresentChatDebugReplyOptions,
+  type StructuredChatDebugTurnResponse,
+} from "./core/debug-protocol.js"
+import { StructuredChatDebugTurnResponseSchema } from "./core/debug-protocol.js"
+import { captureDebugEvents } from "./core/debug-trace.js"
+import type { StructuredChatDebugEvent } from "./core/debug-trace.js"
 import {
   inspectChatState,
   type InspectChatStateOptions,
@@ -23,25 +33,16 @@ import {
   type StructuredChatDebugSnapshot,
 } from "./core/debug.js"
 import {
-  presentChatDebugReply,
-  type CapturedChatDebugOutcome,
-  type PresentChatDebugReplyOptions,
-  type StructuredChatDebugTurnResponse,
-} from "./core/debug-protocol.js"
-import { captureDebugEvents } from "./core/debug-trace.js"
-import {
   presentChatReply,
   type PresentChatReplyOptions,
   type InvalidChatPresentation,
 } from "./core/protocol.js"
-import type { StructuredChatDebugEvent } from "./core/debug-trace.js"
-import { StructuredChatDebugTurnResponseSchema } from "./core/debug-protocol.js"
+import type { ChatSessionStore } from "./core/session.js"
+import { ChatSessionIdSchema } from "./core/session.js"
 import {
   hasComposition,
   readConversation,
 } from "./internal/chat/composition-definition.js"
-import type { AnyComposedDefinition } from "./core/composition.js"
-import { ChatSessionIdSchema } from "./core/session.js"
 import { read } from "./internal/chat/definition.js"
 
 const TurnOptionsSchema = Schema.Struct({

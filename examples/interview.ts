@@ -1,16 +1,30 @@
-import { Effect, Schema } from "effect"
-import { Answer, Chat, Question, Stage, Tool } from "@popcomputer/structured-chat"
+import {
+  Answer,
+  Chat,
+  Question,
+  Stage,
+  Tool,
+} from "@popcomputer/structured-chat"
 import * as TypeSafe from "@popcomputer/structured-chat/typesafe"
+import { Effect, Schema } from "effect"
 
-const Budget = Schema.Union([Schema.Finite.check(Schema.isGreaterThan(0)), Schema.Literal("undecided")])
+const Budget = Schema.Union([
+  Schema.Finite.check(Schema.isGreaterThan(0)),
+  Schema.Literal("undecided"),
+])
 
 const FindExamples = Tool.define({
-  name: "find_examples", description: "Show example agency projects when the user asks for inspiration.",
+  name: "find_examples",
+  description:
+    "Show example agency projects when the user asks for inspiration.",
   input: Schema.Struct({}),
-  execute: () => Effect.succeed(["Museum brand identity", "Charity digital service"]),
+  execute: () =>
+    Effect.succeed(["Museum brand identity", "Charity digital service"]),
 })
 const tools = [FindExamples] as const
-const inputs = Stage.toolInputs(tools, { find_examples: () => Effect.succeed({}) })
+const inputs = Stage.toolInputs(tools, {
+  find_examples: () => Effect.succeed({}),
+})
 
 export const questions = {
   tools,
@@ -20,12 +34,19 @@ export const questions = {
       ask: Question.fixed("What do you want to achieve?"),
     }),
     budget: Answer.explicit(Budget, {
-      description: "The available project budget in pounds, or undecided if the user explicitly has not decided yet. An unmentioned budget is still unanswered.",
+      description:
+        "The available project budget in pounds, or undecided if the user explicitly has not decided yet. An unmentioned budget is still unanswered.",
       escape: { value: "undecided" },
-      ask: Question.choice(Question.adaptive(
-        "Ask about a comfortable budget for the work discussed. It is fine if the user has not decided yet.",
-        { fallback: "What budget have you set aside?" },
-      ), [{ label: "£10k", value: 10000 }, { label: "£20k", value: 20000 }]),
+      ask: Question.choice(
+        Question.adaptive(
+          "Ask about a comfortable budget for the work discussed. It is fine if the user has not decided yet.",
+          { fallback: "What budget have you set aside?" },
+        ),
+        [
+          { label: "£10k", value: 10000 },
+          { label: "£20k", value: 20000 },
+        ],
+      ),
     }),
   },
   optional: {
@@ -43,40 +64,70 @@ const instructions = [
 
 // Omit selection to let the model choose from the runtime's eligible actions.
 export const Brief = Stage.interview({
-  name: "brief", ...questions, instructions, inputs,
+  name: "brief",
+  ...questions,
+  instructions,
+  inputs,
   questions: { escape: "Not sure yet" },
 })
 
 export const JevBrief = Stage.interview({
-  name: "brief", ...questions, instructions, inputs,
+  name: "brief",
+  ...questions,
+  instructions,
+  inputs,
   questions: { escape: "Not sure yet" },
   selection: TypeSafe.questionSelection(questions, {
-    policy: TypeSafe.selectionPolicy({ minimumProbability: 0.9, minimumMargin: 0.15 }),
+    policy: TypeSafe.selectionPolicy({
+      minimumProbability: 0.9,
+      minimumMargin: 0.15,
+    }),
     onUnavailable: "fallback",
   }),
 })
 
 // A small application policy can handle one decision and delegate the rest.
-export const applicationSelection = Stage.questionSelector(questions, context => {
-  const finish = context.candidates.find(candidate => candidate.target._tag === "Finish")
-  const latest = context.conversation.at(-1)?.message
-  if (finish !== undefined && latest?.role === "user" && latest.content.toLowerCase().includes("search now")) {
-    return Effect.succeed({ _tag: "Selected", target: finish.target } as const)
-  }
-  return Effect.succeed({ _tag: "Uncertain" } as const)
-})
+export const applicationSelection = Stage.questionSelector(
+  questions,
+  (context) => {
+    const finish = context.candidates.find(
+      (candidate) => candidate.target._tag === "Finish",
+    )
+    const latest = context.conversation.at(-1)?.message
+    if (
+      finish !== undefined &&
+      latest?.role === "user" &&
+      latest.content.toLowerCase().includes("search now")
+    ) {
+      return Effect.succeed({
+        _tag: "Selected",
+        target: finish.target,
+      } as const)
+    }
+    return Effect.succeed({ _tag: "Uncertain" } as const)
+  },
+)
 
 const Search = Tool.define({
-  name: "search", description: "Search for agencies matching the brief",
+  name: "search",
+  description: "Search for agencies matching the brief",
   input: Schema.Struct({
     goal: Schema.String,
     budget: Budget,
     timeline: Schema.optionalKey(Schema.String),
   }),
-  execute: input => Effect.succeed({ brief: input }),
+  execute: (input) => Effect.succeed({ brief: input }),
 })
 
 export const AgencySearch = Chat.define({
-  name: "agency_search", version: 1,
-  stages: [Brief, Stage.tools({ name: "search", instructions: ["Search using the accepted brief."], tools: [Search] })],
+  name: "agency_search",
+  version: 1,
+  stages: [
+    Brief,
+    Stage.tools({
+      name: "search",
+      instructions: ["Search using the accepted brief."],
+      tools: [Search],
+    }),
+  ],
 })

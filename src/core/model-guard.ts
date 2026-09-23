@@ -1,4 +1,5 @@
 import { Effect, Function as Fn, Schema } from "effect"
+
 import {
   structuredDefinition,
   type StructuredDefinition,

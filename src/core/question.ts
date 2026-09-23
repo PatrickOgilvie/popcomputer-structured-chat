@@ -78,8 +78,11 @@ export type QuestionDefinitionContract =
   | ChoiceQuestion<unknown>
 
 /** @internal Whether model-authored text is permitted for this question. */
-export const hasAdaptiveWording = (question: QuestionDefinitionContract): boolean =>
-  question._tag === "AdaptiveQuestion" || question._tag === "AdaptiveChoiceQuestion" ||
+export const hasAdaptiveWording = (
+  question: QuestionDefinitionContract,
+): boolean =>
+  question._tag === "AdaptiveQuestion" ||
+  question._tag === "AdaptiveChoiceQuestion" ||
   (question._tag === "ChoiceQuestion" && question.goal !== undefined)
 
 interface QuestionConstructors extends Data.TaggedEnum.WithGenerics<1> {
@@ -182,10 +185,17 @@ const choice = <
   }
 
   const question = Definition.ChoiceQuestion({
-    text: QuestionTextSchema.make(Predicate.isString(prompt) ? prompt : prompt.fallback),
+    text: QuestionTextSchema.make(
+      Predicate.isString(prompt) ? prompt : prompt.fallback,
+    ),
     options: [firstOption, ...remainingOptions],
   })
-  return Predicate.isString(prompt) ? question : Definition.ChoiceQuestion({ ...question, goal: QuestionGoalSchema.make(prompt.goal) })
+  return Predicate.isString(prompt)
+    ? question
+    : Definition.ChoiceQuestion({
+        ...question,
+        goal: QuestionGoalSchema.make(prompt.goal),
+      })
 }
 
 /** Constructors for static, adaptive, and typed choice questions. */

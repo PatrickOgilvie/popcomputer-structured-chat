@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react"
+
 import type { StructuredChatSessionReference } from "../core/protocol.js"
 import type { StructuredChatUserAnswerSnapshot } from "../core/user-answer-projection.js"
 

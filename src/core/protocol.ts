@@ -1,16 +1,17 @@
 import { Predicate, cast, Effect, Result, Schema } from "effect"
-import { ChatSessionIdSchema, ChatSessionRevisionSchema } from "./session.js"
-import {
-  defineView,
-  type ViewData,
-  type ViewDefinitionContract,
-} from "./view.js"
+
 import { JsonValueSchema } from "./json-value.js"
+import { ChatSessionIdSchema, ChatSessionRevisionSchema } from "./session.js"
 import { ToolNameSchema } from "./tool.js"
 import {
   StructuredChatUserAnswerSnapshotSchema,
   type StructuredChatUserAnswerSnapshot,
 } from "./user-answer-projection.js"
+import {
+  defineView,
+  type ViewData,
+  type ViewDefinitionContract,
+} from "./view.js"
 
 /** Bounded plain text emitted by a structured chat presenter. */
 export const AssistantTextPartSchema = Schema.Struct({
@@ -288,7 +289,10 @@ export interface PresentableClarificationTurn {
 }
 
 /** Domain-turn shapes accepted by browser presentation. */
-export type PresentableTurn = PresentableQuestionTurn | PresentableToolTurn | PresentableClarificationTurn
+export type PresentableTurn =
+  | PresentableQuestionTurn
+  | PresentableToolTurn
+  | PresentableClarificationTurn
 
 /** Optional application projections for question and tool-result messages. */
 export interface PresentChatReplyOptions<Turn extends PresentableTurn> {

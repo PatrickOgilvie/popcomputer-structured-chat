@@ -1,5 +1,6 @@
 import { Context, Function as Fn, Schema } from "effect"
 import type { Effect } from "effect"
+
 import {
   JsonValueSchema,
   type JsonObject,
@@ -50,7 +51,9 @@ const QuestionSchema = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("Noul"),
     instructions: DescriptionSchema,
-    criteria: Schema.optional(Schema.Struct({ true: DescriptionSchema, false: DescriptionSchema })),
+    criteria: Schema.optional(
+      Schema.Struct({ true: DescriptionSchema, false: DescriptionSchema }),
+    ),
   }),
   Schema.Struct({
     _tag: Schema.Literal("Choice"),
@@ -85,9 +88,10 @@ export const noul = (
   instructions: Description,
   criteria?: Readonly<Record<"true" | "false", Description>>,
 ): NoulQuestion => {
-  const question: NoulQuestion = criteria === undefined
-    ? { _tag: "Noul", instructions }
-    : { _tag: "Noul", instructions, criteria }
+  const question: NoulQuestion =
+    criteria === undefined
+      ? { _tag: "Noul", instructions }
+      : { _tag: "Noul", instructions, criteria }
   Schema.decodeUnknownSync(QuestionSchema)(question)
   return question
 }

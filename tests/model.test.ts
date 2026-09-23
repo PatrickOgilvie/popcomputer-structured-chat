@@ -1,6 +1,8 @@
-import { Model, Tool } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
+
 import { Effect, Layer, Ref, Result, Schema } from "effect"
+
+import { Model, Tool } from "../src/index.js"
 
 class PromptInjectionRejected extends Schema.TaggedError<PromptInjectionRejected>()(
   "PromptInjectionRejected",

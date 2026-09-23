@@ -1,3 +1,7 @@
+import { describe, expect, test } from "bun:test"
+
+import { Predicate, Effect, Exit, Layer, Schema } from "effect"
+
 import {
   Answer,
   Chat,
@@ -7,8 +11,6 @@ import {
   Stage,
   Tool,
 } from "../src/index.js"
-import { describe, expect, test } from "bun:test"
-import { Predicate, Effect, Exit, Layer, Schema } from "effect"
 import { inMemoryChatSessionStore, Scenario } from "../src/testing.js"
 
 const Launch = Stage.collect({

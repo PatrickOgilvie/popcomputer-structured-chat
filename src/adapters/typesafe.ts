@@ -1,4 +1,3 @@
-import { nextDebugModelCall, recordDebugEvent } from "../core/debug-trace.js"
 import {
   APIConnectionError,
   APIError,
@@ -17,6 +16,8 @@ import {
   Schedule,
   Schema,
 } from "effect"
+
+import { nextDebugModelCall, recordDebugEvent } from "../core/debug-trace.js"
 import {
   batch,
   DescriptionSchema,
@@ -222,10 +223,11 @@ const encodeQuestions = (questions: QuestionMap): Questions =>
             type: "noul",
             instructions: sdkDescription(question.instructions),
           }
-          if (question.criteria !== undefined) encoded.criteria = {
-            true: sdkDescription(question.criteria.true),
-            false: sdkDescription(question.criteria.false),
-          }
+          if (question.criteria !== undefined)
+            encoded.criteria = {
+              true: sdkDescription(question.criteria.true),
+              false: sdkDescription(question.criteria.false),
+            }
           return [id, encoded]
         }
         case "Choice":
@@ -355,29 +357,57 @@ export const typeSafeLayer = (
             const attempt = Effect.gen(function* () {
               providerAttempt++
               const call = yield* nextDebugModelCall
-              const body = { model: parsed.model, state: sdkDescription(state), questions }
+              const body = {
+                model: parsed.model,
+                state: sdkDescription(state),
+                questions,
+              }
               // SAFETY: SDK descriptions and encoded questions are constructed
               // exclusively from parsed JSON descriptions and string discriminators.
               const request = Fn.cast<typeof body, JsonValue>(body)
-              yield* recordDebugEvent({ _tag: "ModelInput", call, provider: "typesafe", model: parsed.model, providerAttempt, request })
+              yield* recordDebugEvent({
+                _tag: "ModelInput",
+                call,
+                provider: "typesafe",
+                model: parsed.model,
+                providerAttempt,
+                request,
+              })
               return yield* Effect.tryPromise({
-                try: signal => client.systemOne(body, { signal, retry: { maxRetries: 0 } }),
+                try: (signal) =>
+                  client.systemOne(body, { signal, retry: { maxRetries: 0 } }),
                 catch: sdkFailure,
               }).pipe(
-                Effect.flatMap(raw => decodeResponse(snapshot.questions, raw)),
-                Effect.tap(result => {
+                Effect.flatMap((raw) =>
+                  decodeResponse(snapshot.questions, raw),
+                ),
+                Effect.tap((result) => {
                   // SAFETY: decodeResponse constructs plain finite scores, strings
                   // and usage numbers only; raw SDK responses never enter diagnostics.
                   const response = Fn.cast<typeof result, JsonValue>(result)
-                  return recordDebugEvent({ _tag: "ModelOutput", call, response })
+                  return recordDebugEvent({
+                    _tag: "ModelOutput",
+                    call,
+                    response,
+                  })
                 }),
-                Effect.tapError(error => recordDebugEvent({
-                  _tag: "ModelCallFailed", call,
-                  reason: error._tag === "TypeSafeInvalidResponse" ? "invalid_response"
-                    : error._tag === "TypeSafeUnavailable" && error.reason === "timeout" ? "timed_out" : "request_failed",
-                })),
+                Effect.tapError((error) =>
+                  recordDebugEvent({
+                    _tag: "ModelCallFailed",
+                    call,
+                    reason:
+                      error._tag === "TypeSafeInvalidResponse"
+                        ? "invalid_response"
+                        : error._tag === "TypeSafeUnavailable" &&
+                            error.reason === "timeout"
+                          ? "timed_out"
+                          : "request_failed",
+                  }),
+                ),
               )
-            }).pipe(Effect.withSpan("popcomputer.structured_chat.typesafe.attempt"))
+            }).pipe(
+              Effect.withSpan("popcomputer.structured_chat.typesafe.attempt"),
+            )
             const result = yield* attempt.pipe(
               Effect.retry({
                 times: parsed.retry.maximumAttempts - 1,

@@ -1,4 +1,6 @@
 import { Function as Fn } from "effect"
+
+import type { Definition } from "../../Chat.js"
 import type {
   ChatDefinition as RuntimeDefinition,
   ChatExplorationTuple,
@@ -7,7 +9,6 @@ import type {
 } from "../../core/chat.js"
 import { defineChat } from "../../core/chat.js"
 import { structuredDefinition } from "../../core/definition.js"
-import type { Definition } from "../../Chat.js"
 
 type AnyRuntimeDefinition = RuntimeDefinition<
   string,

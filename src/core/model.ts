@@ -1,5 +1,7 @@
 import { Predicate, Context, Effect, Function as Fn, Schema } from "effect"
-import type { InvalidToolCall, ModelToolDefinition } from "./tool.js"
+
+import { recordLatestDebugModelOutputRejected } from "./debug-trace.js"
+import type { JsonValue } from "./json-value.js"
 import {
   runModelCallGuards,
   runModelGuards,
@@ -17,8 +19,7 @@ import type {
   ToolCallPlanner,
   ToolTuple,
 } from "./tool-set.js"
-import type { JsonValue } from "./json-value.js"
-import { recordLatestDebugModelOutputRejected } from "./debug-trace.js"
+import type { InvalidToolCall, ModelToolDefinition } from "./tool.js"
 
 /** Bounded application-authored instruction supplied to a model adapter. */
 export const TrustedInstructionSchema = Schema.Trimmed.check(
@@ -308,7 +309,9 @@ export const planToolCall = <
   return runModelGuards(input.guards ?? [], {
     messages: input.messages,
     toolNames: input.tools.models.map(({ name }) => name),
-  }).pipe(Effect.andThen(planToolCallAfterGuards<Tools, Guards, Profile>(input)))
+  }).pipe(
+    Effect.andThen(planToolCallAfterGuards<Tools, Guards, Profile>(input)),
+  )
 }
 
 /** @internal Generate and guard a call after the owner has run pre-model guards. */
@@ -374,7 +377,8 @@ export const planToolCallAfterGuards = <
 
       return requestParsedCall(input.instructions, 1).pipe(
         Effect.catchIf(
-          error => input.maximumAttempts !== 1 && isRepairableModelOutput(error),
+          (error) =>
+            input.maximumAttempts !== 1 && isRepairableModelOutput(error),
           (error) => {
             const annotations =
               error._tag === "InvalidToolCall" && error.path !== null

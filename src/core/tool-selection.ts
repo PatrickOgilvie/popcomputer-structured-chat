@@ -1,16 +1,20 @@
 import { Effect, Function as Fn, Schema } from "effect"
+
+import type { AcceptedAnswerEvidence } from "./collect-stage.js"
 import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
-import type { ToolTuple } from "./tool-set.js"
-import type { UntrustedMessage, TrustedInstruction } from "./model.js"
 import type { JsonValue } from "./json-value.js"
-import type { AcceptedAnswerEvidence } from "./collect-stage.js"
+import type { UntrustedMessage, TrustedInstruction } from "./model.js"
+import type { ToolTuple } from "./tool-set.js"
 
 /** Why the runtime is planning this tool step. */
 export type ToolStageTrigger =
-  "direct" | "stage_entered" | "user_reply" | "after_repair"
+  | "direct"
+  | "stage_entered"
+  | "user_reply"
+  | "after_repair"
 
 /** Accepted values encoded by their owning answer codecs. */
 export interface SelectionAcceptedAnswer {

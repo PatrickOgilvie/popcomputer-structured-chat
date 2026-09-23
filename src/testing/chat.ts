@@ -1,10 +1,6 @@
 import type { Effect, Schema } from "effect"
+
 import type { Definition } from "../Chat.js"
-import type { AnyComposedDefinition } from "../core/composition.js"
-import type {
-  ConversationState,
-  InvalidConversation,
-} from "../core/conversation-state.js"
 import type {
   ChatError,
   ChatExplorationTuple,
@@ -13,7 +9,12 @@ import type {
   ChatState,
   ChatTurn,
 } from "../core/chat.js"
+import type { AnyComposedDefinition } from "../core/composition.js"
 import type { ConversationMessage } from "../core/conversation-message.js"
+import type {
+  ConversationState,
+  InvalidConversation,
+} from "../core/conversation-state.js"
 import { readConversation } from "../internal/chat/composition-definition.js"
 import { read } from "../internal/chat/definition.js"
 

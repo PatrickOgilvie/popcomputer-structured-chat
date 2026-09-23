@@ -1,6 +1,8 @@
-import { Answer, Model, Question, Session, Stage } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
+
 import { Context, Effect, Layer, Ref, Result, Schema } from "effect"
+
+import { Answer, Model, Question, Session, Stage } from "../src/index.js"
 
 const accepted = <Value>(
   value: Value,
@@ -366,7 +368,11 @@ describe("Stage.collect", () => {
     expect(turn.state.accepted).toEqual(state.accepted)
     expect(turn.state.asked.localOnly).toMatchObject({
       ...state.asked.localOnly,
-      latest: { messageIndex: 3, text: "Could you clarify your answer? Only show local firms?", options: ["Yes", "No"] },
+      latest: {
+        messageIndex: 3,
+        text: "Could you clarify your answer? Only show local firms?",
+        options: ["Yes", "No"],
+      },
     })
     expect(turn.question).toMatchObject({
       field: "localOnly",
@@ -778,7 +784,11 @@ describe("Stage.collect", () => {
       location: accepted("Leeds", 0, "Leeds"),
     })
     expect(turn.state.asked).toEqual({
-      localOnly: { messageIndex: 1, text: "Only show local firms?", options: ["Yes", "No"] },
+      localOnly: {
+        messageIndex: 1,
+        text: "Only show local firms?",
+        options: ["Yes", "No"],
+      },
     })
     expect(turn.question).toEqual({
       field: "localOnly",
@@ -1000,7 +1010,9 @@ describe("Stage.collect", () => {
     const model = Layer.succeed(Model.Service, {
       requestTool: (request) => {
         instructions = request.instructions.join(" ")
-        context = request.untrustedMessages.map(message => message.content).join(" ")
+        context = request.untrustedMessages
+          .map((message) => message.content)
+          .join(" ")
 
         return Effect.succeed({
           name: "submit_answers",

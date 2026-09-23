@@ -1,6 +1,8 @@
-import { Tool } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
+
 import { Effect, Result, Schema } from "effect"
+
+import { Tool } from "../src/index.js"
 
 const Search = Tool.define({
   name: "search",

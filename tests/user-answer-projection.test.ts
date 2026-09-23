@@ -1,3 +1,19 @@
+import { describe, expect, test } from "bun:test"
+
+import {
+  cast,
+  Effect,
+  Layer,
+  Result,
+  Schema,
+  SchemaTransformation,
+} from "effect"
+
+import {
+  InvalidChatUserAnswerProjection,
+  projectUserAnswers,
+} from "../src/core/user-answer-projection.js"
+import * as Debug from "../src/debug.js"
 import {
   Answer,
   Chat,
@@ -7,21 +23,7 @@ import {
   Stage,
   Tool,
 } from "../src/index.js"
-import {
-  InvalidChatUserAnswerProjection,
-  projectUserAnswers,
-} from "../src/core/user-answer-projection.js"
-import * as Debug from "../src/debug.js"
 import { Chat as ChatTest } from "../src/testing.js"
-import { describe, expect, test } from "bun:test"
-import {
-  cast,
-  Effect,
-  Layer,
-  Result,
-  Schema,
-  SchemaTransformation,
-} from "effect"
 
 const accepted = <Value>(value: Value) => ({
   value,

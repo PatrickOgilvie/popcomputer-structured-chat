@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
+
 import { Predicate, Effect, Layer, Ref, Result, Schema } from "effect"
+
 import {
   Answer,
   Chat,

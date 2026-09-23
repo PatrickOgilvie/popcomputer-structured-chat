@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
+
 import { Predicate, Effect, Option, Result, Schema } from "effect"
 import { FastCheck } from "effect/testing"
+
 import { deriveCommandId } from "../src/core/command.js"
-import * as State from "../src/live/state.js"
 import type { Binding, Event } from "../src/live/contracts.js"
+import * as State from "../src/live/state.js"
 
 const binding: Binding = {
   namespace: "tenant",

@@ -1,13 +1,14 @@
 import { Effect, Function as Fn, Schema } from "effect"
+
 import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
-import type { ToolTuple, ToolSetCall } from "./tool-set.js"
-import type { ToolSelectionContext } from "./tool-selection.js"
-import type { ToolCall, ToolSchema } from "./tool.js"
-import { compileToolRegistry } from "./tool-registry.js"
 import { JsonValueSchema } from "./json-value.js"
+import { compileToolRegistry } from "./tool-registry.js"
+import type { ToolSelectionContext } from "./tool-selection.js"
+import type { ToolTuple, ToolSetCall } from "./tool-set.js"
+import type { ToolCall, ToolSchema } from "./tool.js"
 
 /** Application input could not be encoded through its selected tool's codec. */
 export class InvalidToolInput extends Schema.TaggedError<InvalidToolInput>()(

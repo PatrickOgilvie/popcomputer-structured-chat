@@ -1,3 +1,7 @@
+import { describe, expect, test } from "bun:test"
+
+import { Predicate, Effect, Layer, Ref, Result, Schema } from "effect"
+
 import {
   Answer,
   Chat,
@@ -9,8 +13,6 @@ import {
   View,
 } from "../src/index.js"
 import { Chat as ChatTest } from "../src/testing.js"
-import { describe, expect, test } from "bun:test"
-import { Predicate, Effect, Layer, Ref, Result, Schema } from "effect"
 import { inMemoryChatSessionStore, Scenario } from "../src/testing.js"
 
 const accepted = <Value>(

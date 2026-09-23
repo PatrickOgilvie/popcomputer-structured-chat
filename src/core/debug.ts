@@ -1,5 +1,5 @@
-import { readInteractionStageRuntime } from "./interaction-stage.js"
 import { Predicate, cast, Effect, Schema } from "effect"
+
 import { AnswerModeSchema } from "./answer.js"
 import {
   inspectChatAnswers,
@@ -13,14 +13,15 @@ import {
   type ChatStageTuple,
   type ChatState,
 } from "./chat.js"
+import { readInteractionStageRuntime } from "./interaction-stage.js"
 import { JsonValueSchema } from "./json-value.js"
 import type { QuestionDefinitionContract } from "./question.js"
+import { StageNameSchema } from "./stage-name.js"
 import {
   readCommandStageRuntime,
   readToolStageRuntime,
   ToolStageAfterExecutionSchema,
 } from "./stage.js"
-import { StageNameSchema } from "./stage-name.js"
 import { ToolNameSchema } from "./tool.js"
 
 const DebugIndexSchema = Schema.Natural
@@ -141,7 +142,9 @@ const DebugStageSchema = Schema.Union([
     ...DebugStageBaseFields,
     tools: Schema.Array(ToolNameSchema),
     afterExecution: ToolStageAfterExecutionSchema,
-    selection: Schema.optionalKey(Schema.Struct({ boundInputs: Schema.Array(ToolNameSchema) })),
+    selection: Schema.optionalKey(
+      Schema.Struct({ boundInputs: Schema.Array(ToolNameSchema) }),
+    ),
   }),
   Schema.Struct({
     _tag: Schema.Literal("CommandStage"),
@@ -161,7 +164,13 @@ export const StructuredChatDebugSnapshotSchema = Schema.Struct({
   currentStage: Schema.Struct({
     index: DebugIndexSchema,
     name: StageNameSchema,
-    kind: Schema.Literals(["collect", "interview", "tool", "command", "interaction"]),
+    kind: Schema.Literals([
+      "collect",
+      "interview",
+      "tool",
+      "command",
+      "interaction",
+    ]),
   }),
   stages: Schema.Array(DebugStageSchema),
 })
@@ -242,7 +251,9 @@ const projectQuestion = (
         text: question.text,
         options: question.options.map(({ label }) => ({ label })),
       }
-      return question.goal === undefined ? projected : { ...projected, goal: question.goal }
+      return question.goal === undefined
+        ? projected
+        : { ...projected, goal: question.goal }
     }
   }
 }
@@ -357,7 +368,11 @@ export const inspectChatState = <
           tools: runtime.toolNames,
           afterExecution: runtime.afterExecution,
         }
-        stages.push(runtime.selectionEnabled ? { ...summary, selection: { boundInputs: runtime.boundInputs } } : summary)
+        stages.push(
+          runtime.selectionEnabled
+            ? { ...summary, selection: { boundInputs: runtime.boundInputs } }
+            : summary,
+        )
         continue
       }
 
@@ -392,8 +407,11 @@ export const inspectChatState = <
           description: field.description,
           question: projectQuestion(field.question),
         }
-        const fieldBase = runtimeState.stages[stage.name]?.clarifying?.includes(field.field) === true
-          ? { ...definitionField, clarificationPending: true } : definitionField
+        const fieldBase =
+          runtimeState.stages[stage.name]?.clarifying?.includes(field.field) ===
+          true
+            ? { ...definitionField, clarificationPending: true }
+            : definitionField
 
         if (
           !Predicate.isTagged(field.state, "Asked") &&
@@ -430,16 +448,36 @@ export const inspectChatState = <
       }
 
       if (stage._tag === "InterviewStage") {
-        const details = yield* Schema.decodeUnknownEffect(Schema.Struct({
-          phase: Schema.TaggedUnion({ Ready: {}, Complete: {}, AwaitingReply: { field: Schema.String, issuedMessageIndex: Schema.Natural } }),
-          declined: Schema.Record(Schema.String, Schema.Unknown),
-        }))(runtimeState.stages[stage.name]).pipe(Effect.mapError(() => invalidProjection("invalid_state")))
+        const details = yield* Schema.decodeUnknownEffect(
+          Schema.Struct({
+            phase: Schema.TaggedUnion({
+              Ready: {},
+              Complete: {},
+              AwaitingReply: {
+                field: Schema.String,
+                issuedMessageIndex: Schema.Natural,
+              },
+            }),
+            declined: Schema.Record(Schema.String, Schema.Unknown),
+          }),
+        )(runtimeState.stages[stage.name]).pipe(
+          Effect.mapError(() => invalidProjection("invalid_state")),
+        )
         stages.push({
-          _tag: "InterviewStage", index, name: stage.name, tools: stage.tools.map(tool => tool.name),
-          status: stageStatus(runtimeState, index), repairPending, satisfiedFields,
-          totalFields: inspectedSection.fields.length, fields,
-          requiredFields: Object.keys(stage.required), optionalFields: Object.keys(stage.optional),
-          phase: details.phase._tag, focus: details.phase._tag === "AwaitingReply" ? details.phase.field : null,
+          _tag: "InterviewStage",
+          index,
+          name: stage.name,
+          tools: stage.tools.map((tool) => tool.name),
+          status: stageStatus(runtimeState, index),
+          repairPending,
+          satisfiedFields,
+          totalFields: inspectedSection.fields.length,
+          fields,
+          requiredFields: Object.keys(stage.required),
+          optionalFields: Object.keys(stage.optional),
+          phase: details.phase._tag,
+          focus:
+            details.phase._tag === "AwaitingReply" ? details.phase.field : null,
           declinedFields: Object.keys(details.declined),
         })
         continue

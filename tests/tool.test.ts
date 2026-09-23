@@ -1,7 +1,9 @@
-import { Tool, View } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
+
 import { Context, Effect, Layer, Result, Schema } from "effect"
+
 import { captureDebugEvents } from "../src/core/debug-trace.js"
+import { Tool, View } from "../src/index.js"
 
 interface AgencyMatch {
   readonly id: string

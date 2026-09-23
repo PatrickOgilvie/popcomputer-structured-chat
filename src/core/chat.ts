@@ -1,14 +1,14 @@
-import type { InterviewStage, InterviewStageDefinitionContract, InterviewToolExecution, InterviewState } from "./interview-stage.js"
-import type { InterviewFields } from "./question-selection.js"
-import { isAnswerStage, type AnswerStageDefinitionContract } from "./answer-collection.js"
-import type { ToolSelectorContract } from "./tool-selection.js"
-import { ToolContext } from "./tool-context.js"
-import {
-  readInteractionStageRuntime,
-  type InteractionStage,
-  type InteractionStageDefinitionContract,
-} from "./interaction-stage.js"
 import { Predicate, cast, Effect, Schema } from "effect"
+
+import {
+  make as makeChatProcess,
+  type RuntimeChatState,
+} from "../internal/chat/process.js"
+import {
+  isAnswerStage,
+  type AnswerStageDefinitionContract,
+} from "./answer-collection.js"
+import { ChatNameSchema, ChatVersionSchema } from "./chat-identity.js"
 import type {
   AcceptedAnswer,
   CollectAnswers,
@@ -19,27 +19,25 @@ import type {
   CollectStageState,
 } from "./collect-stage.js"
 import { readCollectStageRuntime } from "./collect-stage.js"
+import { deriveCommandId } from "./command.js"
+import { authored, type ConversationMessage } from "./conversation-message.js"
+import { recordDebugEvent } from "./debug-trace.js"
+import {
+  readInteractionStageRuntime,
+  type InteractionStage,
+  type InteractionStageDefinitionContract,
+} from "./interaction-stage.js"
+import type {
+  InterviewStage,
+  InterviewStageDefinitionContract,
+  InterviewToolExecution,
+  InterviewState,
+} from "./interview-stage.js"
+import { JsonValueSchema, type JsonValue } from "./json-value.js"
 import {
   countUntrustedMessageCharacters,
   UntrustedMessageSchema,
 } from "./model.js"
-import {
-  readToolStageRuntime,
-  type CommandStage,
-  type CommandStageDefinitionContract,
-  type ToolStage,
-  type ToolStageDefinitionContract,
-} from "./stage.js"
-import type {
-  ToolSetError,
-  ToolSetExecution,
-  ToolSetRequirements,
-  ToolSetRun,
-  ToolTuple,
-} from "./tool-set.js"
-import { defineToolSet } from "./tool-set.js"
-import { readToolExecutionModelContext } from "./tool.js"
-import { deriveCommandId } from "./command.js"
 import {
   isAppliedTurn,
   parseControlledTurn,
@@ -49,22 +47,7 @@ import {
   type ControlledTurnInput,
   type InvalidObservedTurn,
 } from "./observed-turn.js"
-import {
-  uncontrolledTurn,
-  type TurnControlService,
-  type TurnControlFailure,
-} from "./turn-control.js"
-import type { CommandContextSource } from "./tool-registry.js"
-import { authored, type ConversationMessage } from "./conversation-message.js"
-import { defineTool } from "./tool.js"
-import { JsonValueSchema, type JsonValue } from "./json-value.js"
-import { recordDebugEvent } from "./debug-trace.js"
-import { ChatNameSchema, ChatVersionSchema } from "./chat-identity.js"
-import type { InvalidChatUserAnswerProjection } from "./user-answer-projection.js"
-import {
-  projectUserAnswers,
-  type StructuredChatUserAnswerSnapshot,
-} from "./user-answer-projection.js"
+import type { InterviewFields } from "./question-selection.js"
 import type { StandardRepair, RepairCorrection, RepairTool } from "./repair.js"
 import {
   ChatSessionConflict,
@@ -81,9 +64,35 @@ import {
   type ChatSessionStoreUnavailable,
 } from "./session.js"
 import {
-  make as makeChatProcess,
-  type RuntimeChatState,
-} from "../internal/chat/process.js"
+  readToolStageRuntime,
+  type CommandStage,
+  type CommandStageDefinitionContract,
+  type ToolStage,
+  type ToolStageDefinitionContract,
+} from "./stage.js"
+import { ToolContext } from "./tool-context.js"
+import type { CommandContextSource } from "./tool-registry.js"
+import type { ToolSelectorContract } from "./tool-selection.js"
+import type {
+  ToolSetError,
+  ToolSetExecution,
+  ToolSetRequirements,
+  ToolSetRun,
+  ToolTuple,
+} from "./tool-set.js"
+import { defineToolSet } from "./tool-set.js"
+import { readToolExecutionModelContext } from "./tool.js"
+import { defineTool } from "./tool.js"
+import {
+  uncontrolledTurn,
+  type TurnControlService,
+  type TurnControlFailure,
+} from "./turn-control.js"
+import type { InvalidChatUserAnswerProjection } from "./user-answer-projection.js"
+import {
+  projectUserAnswers,
+  type StructuredChatUserAnswerSnapshot,
+} from "./user-answer-projection.js"
 
 export { ChatNameSchema, ChatVersionSchema } from "./chat-identity.js"
 
@@ -126,18 +135,27 @@ type UnionToIntersection<Union> = (
   : never
 
 type AnswerStateEntry<Stage> =
-  Stage extends InterviewStage<infer IName, infer Bank, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II>
-    ? { readonly [Key in IName]: InterviewState<Bank> }
-    :   Stage extends CollectStage<
-    infer Name,
-    infer Fields,
-    infer _Guards,
-    infer _Profile,
-    infer _Detector,
-    infer _Enrichment
+  Stage extends InterviewStage<
+    infer IName,
+    infer Bank,
+    infer _IG,
+    infer _IP,
+    infer _ID,
+    infer _IC,
+    infer _IS,
+    infer _II
   >
-    ? { readonly [Key in Name]: CollectStageState<Fields> }
-    : never
+    ? { readonly [Key in IName]: InterviewState<Bank> }
+    : Stage extends CollectStage<
+          infer Name,
+          infer Fields,
+          infer _Guards,
+          infer _Profile,
+          infer _Detector,
+          infer _Enrichment
+        >
+      ? { readonly [Key in Name]: CollectStageState<Fields> }
+      : never
 
 type ChatAnswerStage<Stages extends ChatStageTuple> = Extract<
   Stages[number],
@@ -145,16 +163,27 @@ type ChatAnswerStage<Stages extends ChatStageTuple> = Extract<
 >
 
 type AnswerFieldsOf<Stage> =
-  Stage extends InterviewStage<infer _IN, infer Bank, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II> ? InterviewFields<Bank> :   Stage extends CollectStage<
-    infer _Name,
-    infer Fields,
-    infer _Guards,
-    infer _Profile,
-    infer _Detector,
-    infer _Enrichment
+  Stage extends InterviewStage<
+    infer _IN,
+    infer Bank,
+    infer _IG,
+    infer _IP,
+    infer _ID,
+    infer _IC,
+    infer _IS,
+    infer _II
   >
-    ? Fields
-    : never
+    ? InterviewFields<Bank>
+    : Stage extends CollectStage<
+          infer _Name,
+          infer Fields,
+          infer _Guards,
+          infer _Profile,
+          infer _Detector,
+          infer _Enrichment
+        >
+      ? Fields
+      : never
 
 /** Persisted state entries derived from every collect stage. */
 export type ChatStageStates<Stages extends ChatStageTuple> = [
@@ -180,82 +209,115 @@ export interface ChatState<
 }
 
 type ChatQuestion<Stage> =
-  Stage extends InterviewStage<infer _IN, infer Bank, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II> ? CollectStagePrompt<InterviewFields<Bank>> :   Stage extends CollectStage<
-    infer _Name,
-    infer Fields,
-    infer _Guards,
-    infer _Profile,
-    infer _Detector,
-    infer _Enrichment
+  Stage extends InterviewStage<
+    infer _IN,
+    infer Bank,
+    infer _IG,
+    infer _IP,
+    infer _ID,
+    infer _IC,
+    infer _IS,
+    infer _II
   >
-    ? CollectStagePrompt<Fields>
-    : never
-
-type ChatToolExecution<Stage> =
-  Stage extends InterviewStage<infer _IN, infer Bank, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II> ? InterviewToolExecution<Bank> :
-  Stage extends InteractionStage<
-    infer _IName,
-    infer ITools,
-    infer _IGuards,
-    infer _IProfile
-  >
-    ? ToolSetExecution<ITools>
-    : Stage extends ToolStage<
+    ? CollectStagePrompt<InterviewFields<Bank>>
+    : Stage extends CollectStage<
           infer _Name,
-          infer Tools,
+          infer Fields,
           infer _Guards,
           infer _Profile,
-          infer _Selection,
-          infer _Inputs
-        >
-      ? ToolSetExecution<Tools>
-      : Stage extends CommandStage<
-            infer _Name,
-            infer _Command,
-            infer _Guards,
-            infer _Profile
-          >
-        ? Extract<Effect.Success<ReturnType<Stage["run"]>>, object>
-        : never
-
-type StageEffect<Stage> =
-  Stage extends InterviewStage<infer _IN, infer _IB, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II> ? ReturnType<Stage["run"]> :   Stage extends InteractionStage<
-    infer _IName,
-    infer _ITools,
-    infer _IGuards,
-    infer _IProfile
-  >
-    ? ReturnType<Stage["run"]>
-    : Stage extends CollectStage<
-          infer _CollectName,
-          infer _Fields,
-          infer _CollectGuards,
-          infer _CollectProfile,
           infer _Detector,
           infer _Enrichment
         >
-      ? ReturnType<Stage["run"]>
+      ? CollectStagePrompt<Fields>
+      : never
+
+type ChatToolExecution<Stage> =
+  Stage extends InterviewStage<
+    infer _IN,
+    infer Bank,
+    infer _IG,
+    infer _IP,
+    infer _ID,
+    infer _IC,
+    infer _IS,
+    infer _II
+  >
+    ? InterviewToolExecution<Bank>
+    : Stage extends InteractionStage<
+          infer _IName,
+          infer ITools,
+          infer _IGuards,
+          infer _IProfile
+        >
+      ? ToolSetExecution<ITools>
       : Stage extends ToolStage<
-            infer _ToolName,
-            infer _Tools,
-            infer _ToolGuards,
-            infer _ToolProfile,
+            infer _Name,
+            infer Tools,
+            infer _Guards,
+            infer _Profile,
             infer _Selection,
             infer _Inputs
           >
-        ? ReturnType<Stage["run"]>
+        ? ToolSetExecution<Tools>
         : Stage extends CommandStage<
-              infer _CommandName,
+              infer _Name,
               infer _Command,
-              infer _CommandGuards,
-              infer _CommandProfile
+              infer _Guards,
+              infer _Profile
+            >
+          ? Extract<Effect.Success<ReturnType<Stage["run"]>>, object>
+          : never
+
+type StageEffect<Stage> =
+  Stage extends InterviewStage<
+    infer _IN,
+    infer _IB,
+    infer _IG,
+    infer _IP,
+    infer _ID,
+    infer _IC,
+    infer _IS,
+    infer _II
+  >
+    ? ReturnType<Stage["run"]>
+    : Stage extends InteractionStage<
+          infer _IName,
+          infer _ITools,
+          infer _IGuards,
+          infer _IProfile
+        >
+      ? ReturnType<Stage["run"]>
+      : Stage extends CollectStage<
+            infer _CollectName,
+            infer _Fields,
+            infer _CollectGuards,
+            infer _CollectProfile,
+            infer _Detector,
+            infer _Enrichment
+          >
+        ? ReturnType<Stage["run"]>
+        : Stage extends ToolStage<
+              infer _ToolName,
+              infer _Tools,
+              infer _ToolGuards,
+              infer _ToolProfile,
+              infer _Selection,
+              infer _Inputs
             >
           ? ReturnType<Stage["run"]>
-          : never
+          : Stage extends CommandStage<
+                infer _CommandName,
+                infer _Command,
+                infer _CommandGuards,
+                infer _CommandProfile
+              >
+            ? ReturnType<Stage["run"]>
+            : never
 
 /** Failure union produced by any stage in one chat. */
 export type ChatError<Stages extends ChatStageTuple> =
-  InvalidChatTransition | Effect.Error<StageEffect<Stages[number]>>
+  | InvalidChatTransition
+  | Effect.Error<StageEffect<Stages[number]>>
 
 /** Effect service union required by any stage in one chat. */
 export type ChatRequirements<Stages extends ChatStageTuple> = Exclude<
@@ -269,12 +331,18 @@ export type ChatTurn<
   Version extends number,
   Stages extends ChatStageTuple,
 > =
-  | (Extract<Stages[number], { readonly selection: ToolSelectorContract } | { readonly _tag: "InterviewStage"; readonly tools: ToolTuple }> extends never ? never : {
-      readonly _tag: "Clarification"
-      readonly stage: string
-      readonly state: ChatState<Name, Version, Stages>
-      readonly clarification: { readonly text: string }
-    })
+  | (Extract<
+      Stages[number],
+      | { readonly selection: ToolSelectorContract }
+      | { readonly _tag: "InterviewStage"; readonly tools: ToolTuple }
+    > extends never
+      ? never
+      : {
+          readonly _tag: "Clarification"
+          readonly stage: string
+          readonly state: ChatState<Name, Version, Stages>
+          readonly clarification: { readonly text: string }
+        })
   | {
       readonly _tag: "Question"
       readonly stage: string
@@ -502,11 +570,7 @@ export const defineChat = <
     throw new Error("Structured chats require one final tool or command stage")
   }
 
-  if (
-    definition.stages
-      .slice(0, -1)
-      .some((stage) => !isAnswerStage(stage))
-  ) {
+  if (definition.stages.slice(0, -1).some((stage) => !isAnswerStage(stage))) {
     throw new Error(
       "Only collect stages may precede the final executable stage",
     )
@@ -617,7 +681,8 @@ export const defineChat = <
     if (
       pendingStages.some(
         (index, position) =>
-          (definition.stages[index] === undefined || !isAnswerStage(definition.stages[index])) ||
+          definition.stages[index] === undefined ||
+          !isAnswerStage(definition.stages[index]) ||
           (position > 0 && index <= (pendingStages[position - 1] ?? -1)),
       )
     ) {
@@ -1035,18 +1100,20 @@ export const defineChat = <
 
       yield* recordTurnAnnotations(runtimeState, nextRuntimeState)
 
-      const toolModelContext = Predicate.isTagged(turn, "Question") || Predicate.isTagged(turn, "Clarification")
-        ? undefined
-        : readToolExecutionModelContext(turn.result)
+      const toolModelContext =
+        Predicate.isTagged(turn, "Question") ||
+        Predicate.isTagged(turn, "Clarification")
+          ? undefined
+          : readToolExecutionModelContext(turn.result)
 
       const persistedMessages: ReadonlyArray<ConversationMessage> =
         Predicate.isTagged(turn, "Question")
           ? [...messages, authored(turn.question.text)]
           : Predicate.isTagged(turn, "Clarification")
             ? [...messages, authored(turn.clarification.text)]
-          : toolModelContext === undefined
-            ? messages
-            : [...messages, authored(toolModelContext)]
+            : toolModelContext === undefined
+              ? messages
+              : [...messages, authored(toolModelContext)]
 
       if (persistedMessages.length > maximumPersistedMessages) {
         return yield* invalidSession("history_limit")

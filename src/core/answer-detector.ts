@@ -1,11 +1,15 @@
 import { Effect, Function as Fn, Schema } from "effect"
+
 import type { AnswerMode } from "./answer.js"
-import { canGroundAnswer, type ConversationMessage } from "./conversation-message.js"
+import type { AnswerFields, IssuedCollectQuestion } from "./collect-stage.js"
+import {
+  canGroundAnswer,
+  type ConversationMessage,
+} from "./conversation-message.js"
 import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
-import type { AnswerFields, IssuedCollectQuestion } from "./collect-stage.js"
 
 /** Evidence prepared by the core; a detector judges it but never authors values. */
 export interface EligibleEvidence {
@@ -44,7 +48,11 @@ export type DetectionSelection = typeof DetectionSelectionSchema.Type
 export const DetectionResolutionSchema = Schema.TaggedUnion({
   Resolved: { selections: Schema.Array(DetectionSelectionSchema) },
   NotApplicable: {
-    reason: Schema.Literals(["evidence_too_long", "question_budget_exceeded", "provider_unavailable"]),
+    reason: Schema.Literals([
+      "evidence_too_long",
+      "question_budget_exceeded",
+      "provider_unavailable",
+    ]),
   },
 })
 /** The result of attempting a detection strategy. */
@@ -65,8 +73,7 @@ interface DetectorRuntime {
 }
 const detectorRuntime = Symbol("AnswerDetectorRuntime")
 /** Authentic optional detection strategy with its bound field definitions. */
-export interface AnswerDetectorContract
-  extends StructuredDefinition<"answer_detector"> {
+export interface AnswerDetectorContract extends StructuredDefinition<"answer_detector"> {
   readonly fields: AnswerFields
   readonly [detectorRuntime]: DetectorRuntime
 }
@@ -132,25 +139,31 @@ export const prepareAnswerDetection = (
   }
   const fields: Array<DetectionFieldDecision> = []
   for (const [name, field] of Object.entries(detector.fields)) {
-    const issued = Object.hasOwn(input.asked, name) ? input.asked[name] : undefined
+    const issued = Object.hasOwn(input.asked, name)
+      ? input.asked[name]
+      : undefined
     if (
       !canGroundAnswer(latest, field.mode) ||
       (field.mode === "confirmed" &&
         (issued === undefined || issued.messageIndex >= index))
     )
       continue
-    const decision: DetectionFieldDecision = issued === undefined
-      ? { field: name, mode: field.mode, description: field.description }
-      : {
-          field: name,
-          mode: field.mode,
-          description: field.description,
-          issuedQuestion: (issued.latest ?? issued).text,
-          issuedOptions: (issued.latest ?? issued).options ?? [],
-        }
+    const decision: DetectionFieldDecision =
+      issued === undefined
+        ? { field: name, mode: field.mode, description: field.description }
+        : {
+            field: name,
+            mode: field.mode,
+            description: field.description,
+            issuedQuestion: (issued.latest ?? issued).text,
+            issuedOptions: (issued.latest ?? issued).options ?? [],
+          }
     fields.push(decision)
   }
-  return { context: { fields, evidence: [evidence] }, tooLong: quote.length > 2_000 }
+  return {
+    context: { fields, evidence: [evidence] },
+    tooLong: quote.length > 2_000,
+  }
 }
 /** @internal Invoke the sealed detector while retaining its conditional Effect types. */
 export const runAnswerDetector = <D extends AnswerDetectorContract>(

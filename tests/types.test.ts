@@ -1,3 +1,6 @@
+import { Context, Effect, Schema } from "effect"
+
+import * as Debug from "../src/debug.js"
 import {
   Answer,
   Chat,
@@ -9,10 +12,8 @@ import {
   Tool,
   View,
 } from "../src/index.js"
-import * as Debug from "../src/debug.js"
 import * as OpenAI from "../src/model/openai-compatible.js"
 import { Chat as ChatTest } from "../src/testing.js"
-import { Context, Effect, Schema } from "effect"
 import { Scenario } from "../src/testing.js"
 
 class Dependency extends Context.Service<
@@ -708,7 +709,9 @@ type _NamedModelLayerSatisfiesNamedRequirement = Expect<
 >
 
 type ExpectedToolSetError =
-  DomainError | Tool.InvalidCall | Tool.InvalidProjection
+  | DomainError
+  | Tool.InvalidCall
+  | Tool.InvalidProjection
 
 type _ToolSetErrorIsExact = Expect<
   Equal<Effect.Error<typeof setExecution>, ExpectedToolSetError>

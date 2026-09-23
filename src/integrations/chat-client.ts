@@ -1,4 +1,6 @@
 import { Result, Schema } from "effect"
+
+import type { StructuredChatDebugTurnResponse } from "../core/debug-protocol.js"
 import {
   StructuredChatTurnRequestSchema,
   StructuredChatTurnResponseSchema,
@@ -9,7 +11,6 @@ import {
   type StructuredChatExplorationRequest,
   type StructuredChatExplorationResponse,
 } from "../core/protocol.js"
-import type { StructuredChatDebugTurnResponse } from "../core/debug-protocol.js"
 
 /** Endpoint contract selected by a client factory. */
 export const ChatClientOperationSchema = Schema.Literals([

@@ -1,6 +1,6 @@
-import { Predicate, Context, Effect, Schema } from "effect"
 import { Chat, Stage, Tool } from "@popcomputer/structured-chat"
 import * as Live from "@popcomputer/structured-chat/live"
+import { Predicate, Context, Effect, Schema } from "effect"
 
 export class CatalogueFailure extends Schema.TaggedError<CatalogueFailure>()(
   "CatalogueFailure",

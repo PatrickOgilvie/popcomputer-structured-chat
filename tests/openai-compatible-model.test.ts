@@ -1,3 +1,10 @@
+import { describe, expect, test } from "bun:test"
+
+import type { JsonSchema } from "effect"
+import { Cause, Effect, Exit, Fiber, Layer, Result, Schema } from "effect"
+import { TestClock, TestConsole } from "effect/testing"
+
+import { captureDebugEvents } from "../src/core/debug-trace.js"
 import {
   Answer,
   Chat,
@@ -8,11 +15,6 @@ import {
   Tool,
 } from "../src/index.js"
 import * as OpenAI from "../src/model/openai-compatible.js"
-import { describe, expect, test } from "bun:test"
-import type { JsonSchema } from "effect"
-import { Cause, Effect, Exit, Fiber, Layer, Result, Schema } from "effect"
-import { TestClock, TestConsole } from "effect/testing"
-import { captureDebugEvents } from "../src/core/debug-trace.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"
 
 type OpenAICompatibleInput = OpenAI.ProviderRequest["input"]
@@ -312,7 +314,11 @@ describe("OpenAI.layer", () => {
 
           expect(result).toEqual(
             Result.fail(
-              new Model.UnsupportedToolSchema({ tool: tool.name, path, reason }),
+              new Model.UnsupportedToolSchema({
+                tool: tool.name,
+                path,
+                reason,
+              }),
             ),
           )
           expect(requests).toEqual([])

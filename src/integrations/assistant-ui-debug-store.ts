@@ -1,6 +1,7 @@
 import { Predicate, Schema } from "effect"
-import type { StructuredChatDebugSnapshot } from "../core/debug.js"
+
 import type { StructuredChatDebugTurn } from "../core/debug-protocol.js"
+import type { StructuredChatDebugSnapshot } from "../core/debug.js"
 
 /** Explicit in-memory source consumed by one structured-chat debug panel. */
 export interface StructuredChatDebugStore {

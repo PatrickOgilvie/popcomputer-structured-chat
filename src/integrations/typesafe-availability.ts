@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect"
-import type { EvaluationError } from "../core/evaluation.js"
+
 import { recordDebugEvent } from "../core/debug-trace.js"
+import type { EvaluationError } from "../core/evaluation.js"
 
 /** Recovery after the evaluator's bounded retries and deadline are exhausted. */
 export const UnavailablePolicySchema = Schema.Literals(["fail", "fallback"])

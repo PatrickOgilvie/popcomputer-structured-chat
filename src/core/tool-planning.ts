@@ -1,4 +1,11 @@
 import { Effect, Function as Fn, Predicate, Schema } from "effect"
+
+import { recordDebugEvent } from "./debug-trace.js"
+import {
+  runModelGuards,
+  runModelCallGuards,
+  type ModelGuardTuple,
+} from "./model-guard.js"
 import {
   Instruction,
   planToolCallAfterGuards,
@@ -8,27 +15,21 @@ import {
   type UntrustedMessage,
 } from "./model.js"
 import {
-  runModelGuards,
-  runModelCallGuards,
-  type ModelGuardTuple,
-} from "./model-guard.js"
-import { defineTool, type ToolCall, type ToolSchema } from "./tool.js"
-import { compileToolRegistry } from "./tool-registry.js"
-import type { ToolTuple, ToolSetCall } from "./tool-set.js"
+  Question,
+  type FixedQuestion,
+  type AdaptiveQuestion,
+} from "./question.js"
 import type { RepairTool } from "./repair.js"
+import { toolInputResolver, type ToolInputsContract } from "./tool-inputs.js"
+import { compileToolRegistry } from "./tool-registry.js"
 import {
   selectTool,
   type ToolSelectorContract,
   type ToolPlanningFrame,
   type ToolSelectionContext,
 } from "./tool-selection.js"
-import { toolInputResolver, type ToolInputsContract } from "./tool-inputs.js"
-import {
-  Question,
-  type FixedQuestion,
-  type AdaptiveQuestion,
-} from "./question.js"
-import { recordDebugEvent } from "./debug-trace.js"
+import type { ToolTuple, ToolSetCall } from "./tool-set.js"
+import { defineTool, type ToolCall, type ToolSchema } from "./tool.js"
 
 /** A non-executing request for more information. */
 export interface ToolClarification {

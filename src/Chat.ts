@@ -1,15 +1,7 @@
-import type { InterviewStage } from "./core/interview-stage.js"
-import type { InterviewFields } from "./core/question-selection.js"
-import type { AnswerStageDefinitionContract } from "./core/answer-collection.js"
 import { Effect, Function as Fn } from "effect"
-import type { ChatSessionStore } from "./core/session.js"
+
+import type { AnswerStageDefinitionContract } from "./core/answer-collection.js"
 import type { ChatContext } from "./core/chat-context.js"
-import type {
-  AcceptedAnswer,
-  CollectAnswers,
-  CollectStage,
-} from "./core/collect-stage.js"
-import type { StructuredDefinition } from "./core/definition.js"
 import type {
   ChatError,
   ChatExploreError,
@@ -32,6 +24,33 @@ import {
   InvalidChatTransition,
   InvalidChatTransitionReasonSchema,
 } from "./core/chat.js"
+import type {
+  AcceptedAnswer,
+  CollectAnswers,
+  CollectStage,
+} from "./core/collect-stage.js"
+import type {
+  AnyComposedDefinition,
+  ConversationReply,
+  ConversationError,
+  ErrorsOf,
+  RequirementsOf,
+  StartConversationInput,
+  StartedConversation,
+  MessagesOf,
+  PostMessageInput,
+  PostedMessage,
+  TurnsOf,
+} from "./core/composition.js"
+import type { ConversationState } from "./core/conversation-state.js"
+import type { StructuredDefinition } from "./core/definition.js"
+import type { InterviewStage } from "./core/interview-stage.js"
+import type {
+  AdvanceResult as ControlledResult,
+  ControlledTurnInput,
+  InvalidObservedTurn,
+} from "./core/observed-turn.js"
+import type { OutboundMessageContract } from "./core/outbound-message.js"
 import type {
   PresentChatReplyOptions,
   PresentChatExplorationOptions,
@@ -63,6 +82,11 @@ import {
   StructuredChatTurnResponseSchema,
   Text,
 } from "./core/protocol.js"
+import type { InterviewFields } from "./core/question-selection.js"
+import type { ChatSessionStore } from "./core/session.js"
+import type { ToolTuple } from "./core/tool-set.js"
+import { TurnControl } from "./core/turn-control.js"
+import type { TurnControlFailure } from "./core/turn-control.js"
 import {
   InvalidChatUserAnswerProjection,
   InvalidChatUserAnswerProjectionReasonSchema,
@@ -72,34 +96,11 @@ import {
   type StructuredChatUserAnswerSnapshot,
   type StructuredChatUserAnswerState,
 } from "./core/user-answer-projection.js"
-import { read } from "./internal/chat/definition.js"
 import {
   hasComposition,
   readConversation,
 } from "./internal/chat/composition-definition.js"
-import type {
-  AnyComposedDefinition,
-  ConversationReply,
-  ConversationError,
-  ErrorsOf,
-  RequirementsOf,
-  StartConversationInput,
-  StartedConversation,
-  MessagesOf,
-  PostMessageInput,
-  PostedMessage,
-  TurnsOf,
-} from "./core/composition.js"
-import type { ConversationState } from "./core/conversation-state.js"
-import type { OutboundMessageContract } from "./core/outbound-message.js"
-import type { ToolTuple } from "./core/tool-set.js"
-import { TurnControl } from "./core/turn-control.js"
-import type { TurnControlFailure } from "./core/turn-control.js"
-import type {
-  AdvanceResult as ControlledResult,
-  ControlledTurnInput,
-  InvalidObservedTurn,
-} from "./core/observed-turn.js"
+import { read } from "./internal/chat/definition.js"
 
 /** Declarative definition of one sequential structured chat. */
 export interface Definition<
@@ -206,16 +207,27 @@ export type Requirements<Chat extends AnyDefinition> =
       : never
 
 type AnswerFieldsOf<Stage> =
-  Stage extends InterviewStage<infer _IN, infer Bank, infer _IG, infer _IP, infer _ID, infer _IC, infer _IS, infer _II> ? InterviewFields<Bank> :   Stage extends CollectStage<
-    infer _Name,
-    infer Fields,
-    infer _Guards,
-    infer _Profile,
-    infer _Resolver,
-    infer _Enrichment
+  Stage extends InterviewStage<
+    infer _IN,
+    infer Bank,
+    infer _IG,
+    infer _IP,
+    infer _ID,
+    infer _IC,
+    infer _IS,
+    infer _II
   >
-    ? Fields
-    : never
+    ? InterviewFields<Bank>
+    : Stage extends CollectStage<
+          infer _Name,
+          infer Fields,
+          infer _Guards,
+          infer _Profile,
+          infer _Resolver,
+          infer _Enrichment
+        >
+      ? Fields
+      : never
 
 type PresentableTurn = Parameters<typeof presentChatReply>[0]["turn"]
 
@@ -284,7 +296,9 @@ export type AdvanceResult<C extends AnyDefinition> = ControlledResult<Reply<C>>
 
 /** Expected failures of controlled input, execution, and persisted chat transitions. */
 export type AdvanceError<C extends AnyDefinition> =
-  TurnError<C> | InvalidObservedTurn | TurnControlFailure
+  | TurnError<C>
+  | InvalidObservedTurn
+  | TurnControlFailure
 
 export {
   TurnControl,

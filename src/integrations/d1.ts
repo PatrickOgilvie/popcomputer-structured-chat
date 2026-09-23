@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect"
+
 import { ChatSessionStoreUnavailable } from "../core/session.js"
 import {
   makeSqlChatSessionStore,
@@ -40,20 +41,41 @@ export interface D1ChatSessionStatement {
 }
 
 const RunResultSchema = Schema.Struct({
-  meta: Schema.Struct({ changes: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)) }),
+  meta: Schema.Struct({
+    changes: Schema.Number.check(
+      Schema.isInt(),
+      Schema.isGreaterThanOrEqualTo(0),
+    ),
+  }),
 })
 
 const makeSessionSql = (database: D1ChatSessionDatabase): ChatSessionSql => ({
-  read: (query, values) => Effect.tryPromise({
-    try: () => database.prepare(query).bind(...values).first(),
-    catch: () => new ChatSessionStoreUnavailable({ reason: "load_failed" }),
-  }),
-  write: (query, values) => Effect.tryPromise({
-    try: () => database.prepare(query).bind(...values).run(),
-    catch: () => new ChatSessionStoreUnavailable({ reason: "write_failed" }),
-  }).pipe(Effect.flatMap(result => Schema.decodeUnknownEffect(RunResultSchema)(result)),
-    Effect.mapError(() => new ChatSessionStoreUnavailable({ reason: "write_failed" })),
-    Effect.map(result => result.meta.changes)),
+  read: (query, values) =>
+    Effect.tryPromise({
+      try: () =>
+        database
+          .prepare(query)
+          .bind(...values)
+          .first(),
+      catch: () => new ChatSessionStoreUnavailable({ reason: "load_failed" }),
+    }),
+  write: (query, values) =>
+    Effect.tryPromise({
+      try: () =>
+        database
+          .prepare(query)
+          .bind(...values)
+          .run(),
+      catch: () => new ChatSessionStoreUnavailable({ reason: "write_failed" }),
+    }).pipe(
+      Effect.flatMap((result) =>
+        Schema.decodeUnknownEffect(RunResultSchema)(result),
+      ),
+      Effect.mapError(
+        () => new ChatSessionStoreUnavailable({ reason: "write_failed" }),
+      ),
+      Effect.map((result) => result.meta.changes),
+    ),
 })
 
 /** Build a D1 session store using the shared SQLite codecs, revisions and retention policy. */

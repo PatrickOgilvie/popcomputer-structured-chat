@@ -1,6 +1,8 @@
-import { Session } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
+
 import { Effect, Result, Schema } from "effect"
+
+import { Session } from "../src/index.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"
 
 const scope = {

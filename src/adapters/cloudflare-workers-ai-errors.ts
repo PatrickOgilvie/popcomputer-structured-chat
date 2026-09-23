@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+
 import type { ChatModelUnavailableReasonSchema } from "../core/model.js"
 
 /** Safe reason that a configured chat model could not complete a step. */

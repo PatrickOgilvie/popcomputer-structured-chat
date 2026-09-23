@@ -1,5 +1,6 @@
-import { Predicate } from "effect"
 import { describe, expect, test } from "bun:test"
+
+import { Predicate } from "effect"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import {
@@ -8,9 +9,10 @@ import {
   type ReactTestInstance,
   type ReactTestRenderer,
 } from "react-test-renderer"
-import type { StructuredChatDebugSnapshot } from "../src/core/debug.js"
+
 import type { StructuredChatDebugTurn } from "../src/core/debug-protocol.js"
 import type { StructuredChatDebugTrace } from "../src/core/debug-trace.js"
+import type { StructuredChatDebugSnapshot } from "../src/core/debug.js"
 import {
   createStructuredChatDebugStore,
   StructuredChatDebugPanel,
@@ -446,50 +448,58 @@ describe("StructuredChatDebugPanel", () => {
     expect(html).toContain('aria-label="Collapse debug panel"')
   })
 
-  test.each([false, true])("opens the most recently issued unresolved field (reissued: %s)", reissued => {
-    const store = createStructuredChatDebugStore()
-    const currentQuestion = { messageIndex: 4, text: "When do you need this?" }
-    const issuedQuestion = reissued ? { ...currentQuestion, messageIndex: 1, latest: currentQuestion } : currentQuestion
+  test.each([false, true])(
+    "opens the most recently issued unresolved field (reissued: %s)",
+    (reissued) => {
+      const store = createStructuredChatDebugStore()
+      const currentQuestion = {
+        messageIndex: 4,
+        text: "When do you need this?",
+      }
+      const issuedQuestion = reissued
+        ? { ...currentQuestion, messageIndex: 1, latest: currentQuestion }
+        : currentQuestion
 
-    const multipleAskedSnapshot: StructuredChatDebugSnapshot = {
-      ...snapshot,
-      stages: snapshot.stages.map((stage) =>
-        Predicate.isTagged(stage, "CollectStage")
-          ? {
-              ...stage,
-              satisfiedFields: 3,
-              fields: stage.fields.map((field) =>
-                field.field === "deadline"
-                  ? {
-                      ...field,
-                      state: {
-                        _tag: "Asked" as const,
-                        issuedQuestion,
-                      },
-                    }
-                  : field,
-              ),
-            }
-          : stage,
-      ),
-    }
+      const multipleAskedSnapshot: StructuredChatDebugSnapshot = {
+        ...snapshot,
+        stages: snapshot.stages.map((stage) =>
+          Predicate.isTagged(stage, "CollectStage")
+            ? {
+                ...stage,
+                satisfiedFields: 3,
+                fields: stage.fields.map((field) =>
+                  field.field === "deadline"
+                    ? {
+                        ...field,
+                        state: {
+                          _tag: "Asked" as const,
+                          issuedQuestion,
+                        },
+                      }
+                    : field,
+                ),
+              }
+            : stage,
+        ),
+      }
 
-    store.receive(multipleAskedSnapshot)
+      store.receive(multipleAskedSnapshot)
 
-    const html = renderToStaticMarkup(
-      createElement(StructuredChatDebugPanel, { store }),
-    )
+      const html = renderToStaticMarkup(
+        createElement(StructuredChatDebugPanel, { store }),
+      )
 
-    expect(
-      html.match(/<details[^>]*data-focused-answer="true"/gu),
-    ).toHaveLength(1)
-    expect(html).toMatch(
-      /data-focused-answer="true"[^>]*><summary[^>]*>.*?class="pcsc-debug__answer-title">Deadline/u,
-    )
-    expect(html).toContain(
-      'class="pcsc-debug__sr-only">, Awaiting Answer</span>',
-    )
-  })
+      expect(
+        html.match(/<details[^>]*data-focused-answer="true"/gu),
+      ).toHaveLength(1)
+      expect(html).toMatch(
+        /data-focused-answer="true"[^>]*><summary[^>]*>.*?class="pcsc-debug__answer-title">Deadline/u,
+      )
+      expect(html).toContain(
+        'class="pcsc-debug__sr-only">, Awaiting Answer</span>',
+      )
+    },
+  )
 
   test("renders an accessible collapsed waiting state", () => {
     const store = createStructuredChatDebugStore()

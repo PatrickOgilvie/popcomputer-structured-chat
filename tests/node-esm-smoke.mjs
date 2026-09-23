@@ -1,9 +1,6 @@
 import { readFileSync } from "node:fs"
+
 import { Model, Session, Stage, Tool, View } from "@popcomputer/structured-chat"
-import {
-  inMemoryChatSessionStore,
-  Scenario,
-} from "@popcomputer/structured-chat/testing"
 import {
   createStructuredChatUserAnswerStore,
   makeAssistantExplorationClient,
@@ -19,9 +16,13 @@ import {
   cleanupExpiredD1ChatSessions,
   makeD1ChatSessionStore,
 } from "@popcomputer/structured-chat/d1"
-import { Effect, Result, Schema } from "effect"
 import * as Live from "@popcomputer/structured-chat/live"
 import * as OpenAILive from "@popcomputer/structured-chat/live/openai"
+import {
+  inMemoryChatSessionStore,
+  Scenario,
+} from "@popcomputer/structured-chat/testing"
+import { Effect, Result, Schema } from "effect"
 
 if (
   !Live.run ||

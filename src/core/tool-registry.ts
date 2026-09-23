@@ -1,13 +1,7 @@
 import { Data, Effect, Function as Fn, Schema } from "effect"
-import {
-  InvalidToolCall,
-  ToolNameSchema,
-  type CommandExecutionContext,
-  type ToolCall,
-  type ToolDefinitionContract,
-  type ToolSchema,
-} from "./tool.js"
+
 import { JsonValueSchema, type JsonValue } from "./json-value.js"
+import type { RepairProposal, RepairTool } from "./repair.js"
 import type {
   ModelToolTuple,
   ToolCallPlanner,
@@ -18,7 +12,14 @@ import type {
   ToolSetRun,
   ToolTuple,
 } from "./tool-set.js"
-import type { RepairProposal, RepairTool } from "./repair.js"
+import {
+  InvalidToolCall,
+  ToolNameSchema,
+  type CommandExecutionContext,
+  type ToolCall,
+  type ToolDefinitionContract,
+  type ToolSchema,
+} from "./tool.js"
 
 /** @internal Resolve the persisted turn identity only for command execution. */
 export type CommandContextSource<E = never> = () => Effect.Effect<

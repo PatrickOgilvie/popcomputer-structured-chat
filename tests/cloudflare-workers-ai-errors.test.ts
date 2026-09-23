@@ -1,5 +1,6 @@
-import * as CloudflareAI from "../src/model/cloudflare-workers-ai.js"
 import { describe, expect, test } from "bun:test"
+
+import * as CloudflareAI from "../src/model/cloudflare-workers-ai.js"
 
 describe("CloudflareAI.classifyError", () => {
   test.each([2017, "2017"])(

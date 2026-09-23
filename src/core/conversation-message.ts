@@ -1,4 +1,5 @@
 import { Predicate, Schema } from "effect"
+
 import type { AnswerMode } from "./answer.js"
 import { UntrustedMessageSchema } from "./model.js"
 

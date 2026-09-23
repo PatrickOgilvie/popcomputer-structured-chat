@@ -1,4 +1,5 @@
 import { Predicate, Context, Effect, Layer, Option, Schema } from "effect"
+
 import {
   ChatSessionReplacementSchema,
   ChatSessionRevisionSchema,
@@ -6,7 +7,6 @@ import {
   type ChatSessionScope,
 } from "../core/session.js"
 import { Binding, Id, RecoveryRequired } from "./contracts.js"
-
 import { State } from "./state.js"
 
 /** Journal storage was unavailable, malformed, or concurrently replaced. */

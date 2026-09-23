@@ -1,8 +1,10 @@
+import { describe, expect, test } from "bun:test"
+
+import { cast, Effect, Result, Schema } from "effect"
+
+import * as Debug from "../src/debug.js"
 import { Answer, Chat, Question, Repair, Stage, Tool } from "../src/index.js"
 import { Chat as ChatTest } from "../src/testing.js"
-import * as Debug from "../src/debug.js"
-import { describe, expect, test } from "bun:test"
-import { cast, Effect, Result, Schema } from "effect"
 
 const LaunchDetails = Stage.collect({
   name: "launch_details",
@@ -122,14 +124,25 @@ const completeState: DebugChatState = {
 
 describe("Debug.inspect", () => {
   test("shows an unresolved clarification while retaining the accepted value", async () => {
-    const snapshot = await Effect.runPromise(Debug.inspect(DebugChat, {
-      ...dateAcceptedState,
-      stages: { ...dateAcceptedState.stages, launch_details: { ...dateAcceptedState.stages.launch_details, clarifying: ["launchDate"] } },
-    }))
+    const snapshot = await Effect.runPromise(
+      Debug.inspect(DebugChat, {
+        ...dateAcceptedState,
+        stages: {
+          ...dateAcceptedState.stages,
+          launch_details: {
+            ...dateAcceptedState.stages.launch_details,
+            clarifying: ["launchDate"],
+          },
+        },
+      }),
+    )
     const stage = snapshot.stages[0]
     if (stage?._tag !== "CollectStage") throw new Error("Expected collection")
-    expect(stage.fields.find(field => field.field === "launchDate")).toMatchObject({
-      clarificationPending: true, state: { _tag: "Accepted", value: launchDate.toISOString() },
+    expect(
+      stage.fields.find((field) => field.field === "launchDate"),
+    ).toMatchObject({
+      clarificationPending: true,
+      state: { _tag: "Accepted", value: launchDate.toISOString() },
     })
     expect(stage.status).toBe("current")
   })
@@ -163,8 +176,9 @@ describe("Debug.inspect", () => {
     if (collect?._tag !== "CollectStage") {
       throw new Error("Expected a collect-stage debug projection")
     }
-    expect(collect.fields.find((field) => field.field === "responseStyle")?.state)
-      .toEqual({ _tag: "Asked", issuedQuestion })
+    expect(
+      collect.fields.find((field) => field.field === "responseStyle")?.state,
+    ).toEqual({ _tag: "Asked", issuedQuestion })
   })
 
   test("projects initial stage, missing fields, labels, and tool metadata", async () => {

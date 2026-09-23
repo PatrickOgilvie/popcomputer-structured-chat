@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test"
+
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect"
 import { TestClock } from "effect/testing"
+
+import { captureDebugEvents } from "../src/core/debug-trace.js"
 import { Answer, Model, Question, Session, Stage, Tool } from "../src/index.js"
 import * as TypeSafe from "../src/typesafe.js"
-import { captureDebugEvents } from "../src/core/debug-trace.js"
 import { runtimeConfig } from "./typesafe-runtime.js"
 
 const fields = {

@@ -1,7 +1,9 @@
+import { expect, test } from "bun:test"
+
+import { Effect, Layer, Result, Schema } from "effect"
+
 import { Chat, Model, Session, Stage, Tool } from "../src/index.js"
 import { inMemoryChatSessionStore, Scenario } from "../src/testing.js"
-import { expect, test } from "bun:test"
-import { Effect, Layer, Result, Schema } from "effect"
 
 test("a mixed stage parses query inputs once without resolving command context", async () => {
   const Inspect = Tool.define({

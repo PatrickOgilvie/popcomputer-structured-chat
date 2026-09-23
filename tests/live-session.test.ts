@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+
 import {
   Predicate,
   Deferred,
@@ -11,6 +12,7 @@ import {
   Schema,
   Stream,
 } from "effect"
+
 import { Chat, Model, Session, Stage, Tool } from "../src/index.js"
 import * as Live from "../src/integrations/live.js"
 import { inMemoryChatSessionStore, Scenario } from "../src/testing.js"

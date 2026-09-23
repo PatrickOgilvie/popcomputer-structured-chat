@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
+
 import { createElement } from "react"
 import { act, create, type ReactTestRenderer } from "react-test-renderer"
+
 import {
   createStructuredChatUserAnswerStore,
   useStructuredChatUserAnswers,

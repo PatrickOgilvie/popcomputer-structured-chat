@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
+
 import { Predicate, Result, Schema } from "effect"
 import { FastCheck } from "effect/testing"
+
 import { Session } from "../src/index.js"
 
 const Message = Session.Message

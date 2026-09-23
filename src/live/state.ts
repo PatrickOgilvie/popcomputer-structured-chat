@@ -1,11 +1,12 @@
 import { Predicate, Effect, Option, Schema } from "effect"
-import { ChatSessionRevisionSchema } from "../core/session.js"
+
+import type { CommandId } from "../core/command.js"
 import {
   ControlledTurnInputSchema,
   type ControlledTurnInput,
 } from "../core/observed-turn.js"
+import { ChatSessionRevisionSchema } from "../core/session.js"
 import { TurnSuperseded } from "../core/turn-control.js"
-import type { CommandId } from "../core/command.js"
 import {
   Binding,
   ConnectionFailure,

@@ -1,7 +1,8 @@
 import { Predicate, Context, Effect, Schema } from "effect"
+
 import * as Chat from "../Chat.js"
-import type { ChatSessionStore } from "../core/session.js"
 import { presentChatReply, Text } from "../core/protocol.js"
+import type { ChatSessionStore } from "../core/session.js"
 import type { Binding } from "./contracts.js"
 import {
   InvalidAction,
@@ -79,7 +80,7 @@ export const present = (
           ? reply.turn.question.text
           : Predicate.isTagged(reply.turn, "Clarification")
             ? reply.turn.clarification.text
-          : undefined
+            : undefined
         : options.speech
 
     if (speech === undefined)

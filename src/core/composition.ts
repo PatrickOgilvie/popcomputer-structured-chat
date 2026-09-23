@@ -1,4 +1,5 @@
 import type { Schema } from "effect"
+
 import type { AnyDefinition, Definition } from "../Chat.js"
 import type { Branch, Branches, InputOf, OutputOf } from "./branch.js"
 import type { ChatContext, ChatOutcome } from "./chat-context.js"

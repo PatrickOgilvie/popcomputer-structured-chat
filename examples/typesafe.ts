@@ -1,6 +1,6 @@
-import { Effect, Redacted, Schema } from "effect"
 import { Answer, Question, Stage } from "@popcomputer/structured-chat"
 import * as TypeSafe from "@popcomputer/structured-chat/typesafe"
+import { Effect, Redacted, Schema } from "effect"
 
 const fields = {
   need: Answer.semantic(Schema.Trimmed.check(Schema.isNonEmpty()), {
@@ -27,13 +27,25 @@ export const Brief = Stage.collect({
   name: "brief",
   fields,
   context: Stage.extractionContext(fields, ({ accepted, extracting }) =>
-    Effect.succeed({ currency: "GBP", extracting, previousBudget: accepted.budget?.value ?? null }),
+    Effect.succeed({
+      currency: "GBP",
+      extracting,
+      previousBudget: accepted.budget?.value ?? null,
+    }),
   ),
   detector: TypeSafe.detection(fields, {
     // Illustrative thresholds: calibrate against representative application data.
-    policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
+    policy: TypeSafe.detectionPolicy({
+      detectedAtOrAbove: 0.9,
+      undetectedAtOrBelow: 0.1,
+    }),
     overrides: {
-      need: { policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.8, undetectedAtOrBelow: 0.2 }) },
+      need: {
+        policy: TypeSafe.detectionPolicy({
+          detectedAtOrAbove: 0.8,
+          undetectedAtOrBelow: 0.2,
+        }),
+      },
     },
   }),
 })

@@ -1,8 +1,14 @@
 import { Effect, Function as Fn } from "effect"
+
 import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
+import type {
+  ModelGuardTuple,
+  ModelGuardError,
+  ModelGuardRequirements,
+} from "./model-guard.js"
 import {
   Instruction,
   planToolCall,
@@ -13,13 +19,11 @@ import {
   type ChatModelUnavailable,
   type UnsupportedModelToolSchema,
 } from "./model.js"
-import type {
-  ModelGuardTuple,
-  ModelGuardError,
-  ModelGuardRequirements,
-} from "./model-guard.js"
 import { StageNameSchema } from "./stage-name.js"
-import type { InvalidToolCall } from "./tool.js"
+import {
+  compileToolRegistry,
+  type CommandContextSource,
+} from "./tool-registry.js"
 import type {
   ModelToolTuple,
   ToolSetCall,
@@ -27,10 +31,7 @@ import type {
   ToolSetError,
   ToolSetRequirements,
 } from "./tool-set.js"
-import {
-  compileToolRegistry,
-  type CommandContextSource,
-} from "./tool-registry.js"
+import type { InvalidToolCall } from "./tool.js"
 
 /** Resolves the shared turn identity after planning selects a command. */
 export type InteractionCommandContext<E = never> = CommandContextSource<E>

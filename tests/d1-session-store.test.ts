@@ -1,10 +1,12 @@
-import { Chat, Model, Session, Stage, Tool } from "../src/index.js"
-import { TestClock } from "effect/testing"
-import { describe, expect, test } from "bun:test"
 import { Database, type SQLQueryBindings } from "bun:sqlite"
+import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+
 import { Effect, Layer, Result, Schema } from "effect"
+import { TestClock } from "effect/testing"
+
+import { Chat, Model, Session, Stage, Tool } from "../src/index.js"
 import {
   cleanupExpiredD1ChatSessions,
   makeD1ChatSessionStore,

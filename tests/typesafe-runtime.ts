@@ -1,5 +1,6 @@
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Redacted } from "effect"
 import { TestClock } from "effect/testing"
+
 import * as TypeSafe from "../src/typesafe.js"
 
 /** Configuration shared by Node and workerd adapter tests. */

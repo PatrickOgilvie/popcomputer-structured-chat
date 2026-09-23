@@ -1,5 +1,6 @@
-import { isAnswerStage } from "./answer-collection.js"
 import { Effect, Schema } from "effect"
+
+import { isAnswerStage } from "./answer-collection.js"
 import type { AnswerMode } from "./answer.js"
 import {
   readCollectStageInspection,

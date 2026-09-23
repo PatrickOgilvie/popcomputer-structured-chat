@@ -1,9 +1,10 @@
 import { makeAssistantDataUI } from "@assistant-ui/core/react"
 import { Predicate, Exit, Result, Schema } from "effect"
 import { createElement, type ComponentType, type FC } from "react"
-import type { StructuredChatDebugSnapshot } from "../core/debug.js"
+
 import type { StructuredChatDebugTurn } from "../core/debug-protocol.js"
-import type { ViewData, ViewDefinitionContract } from "../core/view.js"
+import type { StructuredChatDebugSnapshot } from "../core/debug.js"
+import { JsonValueSchema } from "../core/json-value.js"
 import type { StructuredChatTurnRequestSchema } from "../core/protocol.js"
 import {
   type StructuredChatSessionReference,
@@ -12,14 +13,14 @@ import {
   type StructuredChatExplorationResponse,
   StructuredChatSessionReferenceSchema,
 } from "../core/protocol.js"
+import type { ViewData, ViewDefinitionContract } from "../core/view.js"
+import type { StructuredChatUserAnswerUpdate as UserAnswerUpdate } from "./assistant-ui-user-answers.js"
 import {
   makeChatTurnClient,
   makeChatDebugTurnClient,
   makeChatExplorationClient,
   type ChatClientFetch,
 } from "./chat-client.js"
-import { JsonValueSchema } from "../core/json-value.js"
-import type { StructuredChatUserAnswerUpdate as UserAnswerUpdate } from "./assistant-ui-user-answers.js"
 
 export {
   createStructuredChatUserAnswerStore,
@@ -38,7 +39,11 @@ export type AssistantViewPartStatus =
   | {
       readonly type: "incomplete"
       readonly reason:
-        "cancelled" | "length" | "content-filter" | "other" | "error"
+        | "cancelled"
+        | "length"
+        | "content-filter"
+        | "other"
+        | "error"
       readonly error?: unknown
     }
   | {

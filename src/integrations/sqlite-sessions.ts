@@ -1,4 +1,5 @@
 import { Clock, Effect, Schema } from "effect"
+
 import { ConversationMessageSchema } from "../core/conversation-message.js"
 import {
   ChatSessionConflict,
@@ -13,9 +14,15 @@ import {
 /** Effect-native SQLite execution supplied by a driver or application repository. */
 export interface ChatSessionSql {
   /** Return an untrusted row, or null when no row matches. */
-  readonly read: (query: string, values: ReadonlyArray<unknown>) => Effect.Effect<unknown, ChatSessionStoreUnavailable>
+  readonly read: (
+    query: string,
+    values: ReadonlyArray<unknown>,
+  ) => Effect.Effect<unknown, ChatSessionStoreUnavailable>
   /** Return the number of rows changed by this statement, within its execution scope. */
-  readonly write: (query: string, values: ReadonlyArray<unknown>) => Effect.Effect<number, ChatSessionStoreUnavailable>
+  readonly write: (
+    query: string,
+    values: ReadonlyArray<unknown>,
+  ) => Effect.Effect<number, ChatSessionStoreUnavailable>
 }
 
 /** Time-based expiry policy applied to selected session namespaces. */

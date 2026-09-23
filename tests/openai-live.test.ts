@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+
 import {
   Predicate,
   Deferred,
@@ -14,6 +15,7 @@ import {
 } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { Socket } from "effect/unstable/socket"
+
 import * as Live from "../src/integrations/live.js"
 import * as OpenAI from "../src/integrations/openai-live.js"
 

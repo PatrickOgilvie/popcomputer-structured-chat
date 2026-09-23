@@ -1,5 +1,6 @@
 import type { Result } from "effect"
 import { Effect, Function as Fn, Schema } from "effect"
+
 import type { JsonValue } from "./json-value.js"
 
 /** Stable machine-facing name for one structured chat view. */

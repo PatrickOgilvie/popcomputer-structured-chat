@@ -1,4 +1,5 @@
 import { Context, Effect, Schema } from "effect"
+
 import type { CommandId } from "./command.js"
 
 /** A newer intent superseded work before command admission or query commit. */

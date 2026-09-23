@@ -1,4 +1,17 @@
 import { Effect, Function as Fn, Schema } from "effect"
+
+import { defineCollectStage } from "./collect-stage.js"
+import {
+  structuredDefinition,
+  type StructuredDefinition,
+} from "./definition.js"
+import { defineInteractionStage } from "./interaction-stage.js"
+import { defineInterviewStage } from "./interview-stage.js"
+import type {
+  ModelGuardError,
+  ModelGuardRequirements,
+  ModelGuardTuple,
+} from "./model-guard.js"
 import {
   Instruction,
   planToolCall,
@@ -9,11 +22,33 @@ import {
   type UnsupportedModelToolSchema,
   type UntrustedMessage,
 } from "./model.js"
+import type { FixedQuestion, AdaptiveQuestion } from "./question.js"
+import type { RepairTool } from "./repair.js"
+import { StageNameSchema } from "./stage-name.js"
+import {
+  toolInputResolver,
+  type ToolInputsContract,
+  type ToolInputsError,
+  type ToolInputsRequirements,
+} from "./tool-inputs.js"
+import {
+  makeToolPlanner,
+  type ToolStagePlan,
+  type SelectedToolRun,
+  type ToolClarification,
+} from "./tool-planning.js"
+import {
+  compileToolRegistry,
+  compileRepairToolRegistry,
+  type RepairDecision,
+  type CommandContextSource,
+} from "./tool-registry.js"
 import type {
-  ModelGuardError,
-  ModelGuardRequirements,
-  ModelGuardTuple,
-} from "./model-guard.js"
+  ToolSelectorContract,
+  SelectorError,
+  SelectorRequirements,
+  ToolPlanningFrame,
+} from "./tool-selection.js"
 import {
   defineToolSet,
   type ToolSet,
@@ -32,41 +67,6 @@ import type {
   ToolCall,
   ToolExecution,
 } from "./tool.js"
-import {
-  compileToolRegistry,
-  compileRepairToolRegistry,
-  type RepairDecision,
-  type CommandContextSource,
-} from "./tool-registry.js"
-import type { RepairTool } from "./repair.js"
-import { defineInteractionStage } from "./interaction-stage.js"
-import { defineCollectStage } from "./collect-stage.js"
-import { defineInterviewStage } from "./interview-stage.js"
-import { StageNameSchema } from "./stage-name.js"
-import {
-  structuredDefinition,
-  type StructuredDefinition,
-} from "./definition.js"
-
-import {
-  makeToolPlanner,
-  type ToolStagePlan,
-  type SelectedToolRun,
-  type ToolClarification,
-} from "./tool-planning.js"
-import type { FixedQuestion, AdaptiveQuestion } from "./question.js"
-import type {
-  ToolSelectorContract,
-  SelectorError,
-  SelectorRequirements,
-  ToolPlanningFrame,
-} from "./tool-selection.js"
-import {
-  toolInputResolver,
-  type ToolInputsContract,
-  type ToolInputsError,
-  type ToolInputsRequirements,
-} from "./tool-inputs.js"
 
 export { StageNameSchema } from "./stage-name.js"
 
@@ -431,14 +431,12 @@ const defineToolStage = <
           const call = Fn.cast<typeof result.call, ToolSetCall<Tools>>(
             result.call,
           )
-          return toolSet
-            .execute(call)
-            .pipe(
-              Effect.map((execution) => ({
-                _tag: "Executed" as const,
-                execution,
-              })),
-            )
+          return toolSet.execute(call).pipe(
+            Effect.map((execution) => ({
+              _tag: "Executed" as const,
+              execution,
+            })),
+          )
         },
       ),
     )

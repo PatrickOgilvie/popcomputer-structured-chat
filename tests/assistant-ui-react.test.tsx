@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
+
 import { useAui, type AssistantClient } from "@assistant-ui/react"
 import { act, create, type ReactTestRenderer } from "react-test-renderer"
+
 import {
   StructuredChatAssistantProvider,
   type StructuredChatAssistantProviderProps,

@@ -1,6 +1,5 @@
-import { Chat } from "../src/index.js"
-import type * as Debug from "../src/debug.js"
 import { describe, expect, test } from "bun:test"
+
 import type {
   ChatModelAdapter,
   ChatModelRunOptions,
@@ -8,6 +7,9 @@ import type {
   ThreadMessage,
 } from "@assistant-ui/react"
 import { Result, Schema } from "effect"
+
+import type * as Debug from "../src/debug.js"
+import { Chat } from "../src/index.js"
 import {
   assistantChatSessionMetadataKey,
   AssistantExplorationClientError,

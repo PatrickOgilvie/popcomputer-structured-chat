@@ -1,7 +1,8 @@
 import type { Effect } from "effect"
 import { Context, Data, Schema, type Stream } from "effect"
-import { StructuredChatPersistedTurnResponseSchema } from "../core/protocol.js"
+
 import { ChatNameSchema, ChatVersionSchema } from "../core/chat-identity.js"
+import { StructuredChatPersistedTurnResponseSchema } from "../core/protocol.js"
 import {
   ChatSessionIdSchema,
   ChatSessionNamespaceSchema,

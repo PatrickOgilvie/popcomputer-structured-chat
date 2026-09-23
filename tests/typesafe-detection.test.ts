@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
+
 import { Effect, Layer, Schema } from "effect"
+
 import { Answer, Model, Question, Session, Stage } from "../src/index.js"
 import * as TypeSafe from "../src/typesafe.js"
 import { runtimeConfig } from "./typesafe-runtime.js"
@@ -25,8 +27,18 @@ const fields = {
   ),
 } as const
 const detector = TypeSafe.detection(fields, {
-  policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
-  overrides: { need: { policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.8, undetectedAtOrBelow: 0.1 }) } },
+  policy: TypeSafe.detectionPolicy({
+    detectedAtOrAbove: 0.9,
+    undetectedAtOrBelow: 0.1,
+  }),
+  overrides: {
+    need: {
+      policy: TypeSafe.detectionPolicy({
+        detectedAtOrAbove: 0.8,
+        undetectedAtOrBelow: 0.1,
+      }),
+    },
+  },
 })
 const noGenerativeModel = Layer.succeed(
   Model.Service,
@@ -55,9 +67,9 @@ const provider = (
 ) =>
   TypeSafe.layer(
     runtimeConfig(async (_url, init) => {
-      const request = Schema.decodeUnknownSync(
-        Schema.fromJsonString(Request),
-      )(init?.body)
+      const request = Schema.decodeUnknownSync(Schema.fromJsonString(Request))(
+        init?.body,
+      )
       requests?.push(request)
       return Response.json({
         model: "jev-test",
@@ -73,8 +85,13 @@ const provider = (
   )
 
 const generative = (proposal: {
-  readonly answers: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>
-  readonly evidence: ReadonlyArray<{ readonly field: string; readonly quote: string }>
+  readonly answers: Readonly<
+    Record<string, Schema.Schema.Type<typeof Schema.Json>>
+  >
+  readonly evidence: ReadonlyArray<{
+    readonly field: string
+    readonly quote: string
+  }>
 }) =>
   Layer.succeed(
     Model.Service,
@@ -160,10 +177,7 @@ describe("TypeSafe detection", () => {
           state: stage.initialState,
           messages: [Session.Message.submitted("Hello there")],
         })
-        .pipe(
-          Effect.provide(provider({})),
-          Effect.provide(noGenerativeModel),
-        ),
+        .pipe(Effect.provide(provider({})), Effect.provide(noGenerativeModel)),
     )
     expect(result.state.accepted).toEqual({})
     expect(result.question?.field).toBe("need")
@@ -189,9 +203,7 @@ describe("TypeSafe detection", () => {
                 need: "Brand strategy",
                 timeline: null,
               },
-              evidence: [
-                { field: "need", quote: "Brand strategy" },
-              ],
+              evidence: [{ field: "need", quote: "Brand strategy" }],
             }),
           ),
         ),
@@ -279,7 +291,10 @@ describe("TypeSafe detection", () => {
       fields: escapeFields,
       questions: { escape: "Not sure yet" },
       detector: TypeSafe.detection(escapeFields, {
-        policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
+        policy: TypeSafe.detectionPolicy({
+          detectedAtOrAbove: 0.9,
+          undetectedAtOrBelow: 0.1,
+        }),
       }),
     })
     const modelCalls: Array<unknown> = []
@@ -353,9 +368,7 @@ describe("TypeSafe detection", () => {
         ),
     )
     const question = requests[0]?.questions.need
-    expect(question?.instructions.question).toBe(
-      "What do you need help with?",
-    )
+    expect(question?.instructions.question).toBe("What do you need help with?")
     expect(question?.criteria?.true).toBe(
       "The evidence states or clearly answers this question.",
     )
@@ -400,12 +413,17 @@ describe("TypeSafe detection invariants", () => {
   })
 
   test("rejects overrides for unregistered fields", () => {
-    expect(() => TypeSafe.detection(fields, {
-      policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
-      overrides: {
-        // @ts-expect-error Only registered fields may have an override.
-        unknown: {},
-      },
-    })).toThrow("registered fields")
+    expect(() =>
+      TypeSafe.detection(fields, {
+        policy: TypeSafe.detectionPolicy({
+          detectedAtOrAbove: 0.9,
+          undetectedAtOrBelow: 0.1,
+        }),
+        overrides: {
+          // @ts-expect-error Only registered fields may have an override.
+          unknown: {},
+        },
+      }),
+    ).toThrow("registered fields")
   })
 })

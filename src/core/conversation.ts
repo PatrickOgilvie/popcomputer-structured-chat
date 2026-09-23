@@ -1,6 +1,8 @@
-import { isAnswerStage } from "./answer-collection.js"
 import { Predicate, Data, Effect, Function as Fn, Schema } from "effect"
+
 import type { AnyDefinition } from "../Chat.js"
+import type { RuntimeChatState } from "../internal/chat/process.js"
+import { isAnswerStage } from "./answer-collection.js"
 import { readBranch, type BranchContract, type Branches } from "./branch.js"
 import { ChatContext, type ChatOutcome } from "./chat-context.js"
 import type {
@@ -11,6 +13,7 @@ import type {
   ChatStageTuple,
 } from "./chat.js"
 import { InvalidChatTransition } from "./chat.js"
+import { readCollectStageRuntime } from "./collect-stage.js"
 import { deriveCommandId } from "./command.js"
 import type {
   ConversationReply,
@@ -18,19 +21,21 @@ import type {
   StartedConversation,
 } from "./composition.js"
 import {
+  authored,
+  isAuthored,
+  type ConversationMessage,
+} from "./conversation-message.js"
+import {
   ConversationStateSchema,
   InvocationStatusSchema,
   InvalidConversation,
   type ConversationState,
   type Invocation,
 } from "./conversation-state.js"
+import { readInteractionStageRuntime } from "./interaction-stage.js"
 import { JsonValueSchema, type JsonValue } from "./json-value.js"
+import { runModelCallGuards } from "./model-guard.js"
 import { Instruction, planToolCall, UntrustedMessageSchema } from "./model.js"
-import {
-  authored,
-  isAuthored,
-  type ConversationMessage,
-} from "./conversation-message.js"
 import {
   isAppliedTurn,
   parseControlledTurn,
@@ -39,12 +44,6 @@ import {
   ControlledTurnInputSchema,
   type ControlledTurnInput,
 } from "./observed-turn.js"
-import {
-  uncontrolledTurn,
-  type TurnControlService,
-  type TurnControlFailure,
-} from "./turn-control.js"
-import { runModelCallGuards } from "./model-guard.js"
 import {
   InvalidOutboundMessage,
   MessageCollector,
@@ -67,16 +66,7 @@ import {
   type ChatSessionScope,
   type ChatSessionSnapshot,
 } from "./session.js"
-import { readInteractionStageRuntime } from "./interaction-stage.js"
-import { readCollectStageRuntime } from "./collect-stage.js"
 import { readToolStageRuntime } from "./stage.js"
-import {
-  defineTool,
-  readToolExecutionModelContext,
-  type ToolDefinitionContract,
-  type ToolSchema,
-  type RuntimeToolExecutionContext,
-} from "./tool.js"
 import { ToolContext } from "./tool-context.js"
 import {
   compileToolRegistry,
@@ -84,8 +74,19 @@ import {
 } from "./tool-registry.js"
 import { defineToolSet, type ToolTuple } from "./tool-set.js"
 import type { ModelToolTuple } from "./tool-set.js"
+import {
+  defineTool,
+  readToolExecutionModelContext,
+  type ToolDefinitionContract,
+  type ToolSchema,
+  type RuntimeToolExecutionContext,
+} from "./tool.js"
+import {
+  uncontrolledTurn,
+  type TurnControlService,
+  type TurnControlFailure,
+} from "./turn-control.js"
 import { projectUserAnswers } from "./user-answer-projection.js"
-import type { RuntimeChatState } from "../internal/chat/process.js"
 
 /** @internal One compiled chat and its directly declared child calls. */
 export interface ConversationNode {
@@ -1180,7 +1181,8 @@ export const makeConversation = (input: {
     let allowParentControl = true
 
     let executed:
-      { readonly frame: ParsedInvocation; readonly turn: LeafTurn } | undefined
+      | { readonly frame: ParsedInvocation; readonly turn: LeafTurn }
+      | undefined
 
     for (
       let transition = 0;

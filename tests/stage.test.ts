@@ -1,6 +1,8 @@
-import { Model, Stage, Tool } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
+
 import { Effect, Layer, Ref, Result, Schema } from "effect"
+
+import { Model, Stage, Tool } from "../src/index.js"
 
 class PlannedCallRejected extends Schema.TaggedError<PlannedCallRejected>()(
   "PlannedCallRejected",

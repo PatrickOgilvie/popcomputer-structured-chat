@@ -1,8 +1,8 @@
-import type { JsonValue } from "./json-value.js"
-import type { UntrustedMessage } from "./model.js"
 import type { AnswerMode } from "./answer.js"
 import type { AcceptedAnswerEvidence } from "./collect-stage.js"
 import type { ConversationMessage } from "./conversation-message.js"
+import type { JsonValue } from "./json-value.js"
+import type { UntrustedMessage } from "./model.js"
 
 /** @internal A selected field and the evidence context needed to interpret it. */
 export interface ExtractionField {
@@ -17,17 +17,31 @@ export interface ExtractionField {
     readonly text: string
     readonly options: ReadonlyArray<string>
   } | null
-  readonly choices: ReadonlyArray<{ readonly label: string; readonly value: JsonValue }>
+  readonly choices: ReadonlyArray<{
+    readonly label: string
+    readonly value: JsonValue
+  }>
 }
 
 /** @internal Server-owned, JSON-compatible handoff; all textual content remains data. */
 export interface ExtractionPlan {
   readonly stage: string
   readonly extracting: ReadonlyArray<ExtractionField>
-  readonly accepted: Readonly<Record<string, { readonly value: JsonValue; readonly evidence: AcceptedAnswerEvidence }>>
+  readonly accepted: Readonly<
+    Record<
+      string,
+      { readonly value: JsonValue; readonly evidence: AcceptedAnswerEvidence }
+    >
+  >
   readonly clarifying: ReadonlyArray<string>
-  readonly pendingQuestions: ReadonlyArray<{ readonly field: string; readonly prompt: string }>
-  readonly uncertaintyEscape: { readonly label: string; readonly resolvesPendingField: boolean } | null
+  readonly pendingQuestions: ReadonlyArray<{
+    readonly field: string
+    readonly prompt: string
+  }>
+  readonly uncertaintyEscape: {
+    readonly label: string
+    readonly resolvesPendingField: boolean
+  } | null
   readonly conversation: ReadonlyArray<{
     readonly messageIndex: number
     readonly source: ConversationMessage["_tag"]
@@ -38,9 +52,12 @@ export interface ExtractionPlan {
 }
 
 /** @internal Serialize labelled context as data, respecting the model message size limit. */
-export const extractionPlanMessages = (plan: ExtractionPlan): ReadonlyArray<UntrustedMessage> => {
+export const extractionPlanMessages = (
+  plan: ExtractionPlan,
+): ReadonlyArray<UntrustedMessage> => {
   const serialized = JSON.stringify(plan)
-  if (serialized.length <= 40_000) return [{ role: "user", content: serialized }]
+  if (serialized.length <= 40_000)
+    return [{ role: "user", content: serialized }]
   const parts = Math.ceil(serialized.length / 40_000)
   const messages: Array<UntrustedMessage> = []
   for (let part = 0; part < parts; part += 1) {

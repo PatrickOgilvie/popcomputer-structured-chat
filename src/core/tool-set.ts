@@ -1,5 +1,8 @@
 import type { Schema } from "effect"
 import { Effect } from "effect"
+
+import type { JsonValue } from "./json-value.js"
+import { compileToolRegistry } from "./tool-registry.js"
 import type {
   InvalidToolCall,
   InvalidToolProjection,
@@ -11,8 +14,6 @@ import type {
   ToolCall,
   EncodedToolCallOf,
 } from "./tool.js"
-import type { JsonValue } from "./json-value.js"
-import { compileToolRegistry } from "./tool-registry.js"
 
 /** Non-empty tuple of model-callable query or command definitions. */
 export type ModelToolTuple = readonly [
@@ -119,7 +120,9 @@ export type ToolSetRun<Tools extends ModelToolTuple> = ToolRunOf<Tools[number]>
 
 /** Application failure union produced by any member of a tool set. */
 export type ToolSetError<Tools extends ModelToolTuple> =
-  InvalidToolCall | InvalidToolProjection | ToolErrorOf<Tools[number]>
+  | InvalidToolCall
+  | InvalidToolProjection
+  | ToolErrorOf<Tools[number]>
 
 /** Effect services required by any member of a tool set. */
 export type ToolSetRequirements<Tools extends ModelToolTuple> =

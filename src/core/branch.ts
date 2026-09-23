@@ -1,4 +1,5 @@
 import { Predicate, Effect, Function as Fn, Schema } from "effect"
+
 import type { AnyDefinition } from "../Chat.js"
 import {
   ChatContext,

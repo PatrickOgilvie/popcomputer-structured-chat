@@ -1,27 +1,22 @@
-import { isAnswerStage } from "../../core/answer-collection.js"
 import { Schema } from "effect"
-import { JsonValueSchema } from "../../core/json-value.js"
-import {
-  InvalidToolPlanningContext,
-  type ToolPlanningFrame,
-  type ToolStageTrigger,
-  type SelectionAcceptedAnswer,
-} from "../../core/tool-selection.js"
-import type { ToolClarification } from "../../core/tool-planning.js"
-import { ToolContext } from "../../core/tool-context.js"
-import {
-  readInteractionStageRuntime,
-  type InteractionStageDefinitionContract,
-  type InteractionCommandContext,
-} from "../../core/interaction-stage.js"
 import { Data, Effect, Result } from "effect"
+
+import { isAnswerStage } from "../../core/answer-collection.js"
+import type { InvalidChatTransition } from "../../core/chat.js"
 import type { AnswerStageDefinitionContract } from "../../core/collect-stage.js"
 import {
   readCollectStageInspection,
   readCollectStageRuntime,
 } from "../../core/collect-stage.js"
-import type { InvalidChatTransition } from "../../core/chat.js"
 import type { ConversationMessage } from "../../core/conversation-message.js"
+import { recordDebugEvent } from "../../core/debug-trace.js"
+import {
+  readInteractionStageRuntime,
+  type InteractionStageDefinitionContract,
+  type InteractionCommandContext,
+} from "../../core/interaction-stage.js"
+import { JsonValueSchema } from "../../core/json-value.js"
+import type { RepairCorrection } from "../../core/repair.js"
 import type {
   CommandStageDefinitionContract,
   ToolStageDefinitionContract,
@@ -30,9 +25,15 @@ import {
   readCommandStageRuntime,
   readToolStageRuntime,
 } from "../../core/stage.js"
-import type { RepairCorrection } from "../../core/repair.js"
+import { ToolContext } from "../../core/tool-context.js"
+import type { ToolClarification } from "../../core/tool-planning.js"
 import type { RepairDecision } from "../../core/tool-registry.js"
-import { recordDebugEvent } from "../../core/debug-trace.js"
+import {
+  InvalidToolPlanningContext,
+  type ToolPlanningFrame,
+  type ToolStageTrigger,
+  type SelectionAcceptedAnswer,
+} from "../../core/tool-selection.js"
 
 /** Runtime-erased persisted state used only after definition-owned decoding. */
 export interface RuntimeChatState {
@@ -294,9 +295,19 @@ export const make = (input: ProcessInput): Process => {
             return Effect.fail(input.invalidTransition("invalid_state"))
           }
 
-          const execution = node.stage._tag === "InterviewStage"
-            ? planningFrame(state, state.repair?.pendingStages.includes(state.stage) === true ? "after_repair" : trigger).pipe(Effect.flatMap(frame => runtime.run({ state: collectState, messages, frame })))
-            : runtime.run({ state: collectState, messages })
+          const execution =
+            node.stage._tag === "InterviewStage"
+              ? planningFrame(
+                  state,
+                  state.repair?.pendingStages.includes(state.stage) === true
+                    ? "after_repair"
+                    : trigger,
+                ).pipe(
+                  Effect.flatMap((frame) =>
+                    runtime.run({ state: collectState, messages, frame }),
+                  ),
+                )
+              : runtime.run({ state: collectState, messages })
           return execution.pipe(
             Effect.flatMap((turn) => {
               const nextState: RuntimeChatState = {
@@ -307,9 +318,21 @@ export const make = (input: ProcessInput): Process => {
                 },
               }
 
-              if ("action" in turn) return Effect.succeed(turn.action._tag === "Clarification"
-                ? { _tag: "Clarification" as const, clarification: { text: turn.action.text }, stage: node.stage.name, state: nextState }
-                : { ...turn.action, stage: node.stage.name, state: nextState })
+              if ("action" in turn)
+                return Effect.succeed(
+                  turn.action._tag === "Clarification"
+                    ? {
+                        _tag: "Clarification" as const,
+                        clarification: { text: turn.action.text },
+                        stage: node.stage.name,
+                        state: nextState,
+                      }
+                    : {
+                        ...turn.action,
+                        stage: node.stage.name,
+                        state: nextState,
+                      },
+                )
               if (!turn.complete) {
                 return Effect.succeed({
                   _tag: "Question" as const,

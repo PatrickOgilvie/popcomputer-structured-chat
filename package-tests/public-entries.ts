@@ -1,12 +1,4 @@
 import {
-  makeChatTurnClient,
-  makeChatDebugTurnClient,
-  makeChatExplorationClient,
-  type ChatTurnClient,
-  type ChatDebugTurnClient,
-  type ChatExplorationClient,
-} from "@popcomputer/structured-chat/client"
-import {
   Answer,
   Chat,
   Question,
@@ -15,16 +7,6 @@ import {
   View,
 } from "@popcomputer/structured-chat"
 import * as Root from "@popcomputer/structured-chat"
-import * as TypeSafe from "@popcomputer/structured-chat/typesafe"
-import * as Debug from "@popcomputer/structured-chat/debug"
-import * as CloudflareAI from "@popcomputer/structured-chat/model/cloudflare-workers-ai"
-import * as OpenAI from "@popcomputer/structured-chat/model/openai-compatible"
-import * as Live from "@popcomputer/structured-chat/live"
-import * as OpenAILive from "@popcomputer/structured-chat/live/openai"
-import {
-  inMemoryChatSessionStore,
-  Scenario,
-} from "@popcomputer/structured-chat/testing"
 import {
   createStructuredChatUserAnswerStore,
   makeAssistantExplorationClient,
@@ -44,6 +26,24 @@ import {
   StructuredChatAssistantProvider,
   type StructuredChatAssistantProviderProps,
 } from "@popcomputer/structured-chat/assistant-ui/react"
+import {
+  makeChatTurnClient,
+  makeChatDebugTurnClient,
+  makeChatExplorationClient,
+  type ChatTurnClient,
+  type ChatDebugTurnClient,
+  type ChatExplorationClient,
+} from "@popcomputer/structured-chat/client"
+import * as Debug from "@popcomputer/structured-chat/debug"
+import * as Live from "@popcomputer/structured-chat/live"
+import * as OpenAILive from "@popcomputer/structured-chat/live/openai"
+import * as CloudflareAI from "@popcomputer/structured-chat/model/cloudflare-workers-ai"
+import * as OpenAI from "@popcomputer/structured-chat/model/openai-compatible"
+import {
+  inMemoryChatSessionStore,
+  Scenario,
+} from "@popcomputer/structured-chat/testing"
+import * as TypeSafe from "@popcomputer/structured-chat/typesafe"
 import { Effect, Layer, Schema } from "effect"
 import { Socket } from "effect/unstable/socket"
 
@@ -304,7 +304,10 @@ const detectedStage = Stage.collect({
   name: "package_detection",
   fields: detectedFields,
   detector: TypeSafe.detection(detectedFields, {
-    policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
+    policy: TypeSafe.detectionPolicy({
+      detectedAtOrAbove: 0.9,
+      undetectedAtOrBelow: 0.1,
+    }),
   }),
   context: Stage.extractionContext(detectedFields, ({ accepted, extracting }) =>
     Effect.succeed({ previousTeam: accepted.team?.value ?? null, extracting }),
@@ -315,13 +318,22 @@ void detectedStage
 // SQLite adapters consume the caller's SQL capability and keep failures in Session.Store.
 const sqliteApi = await import("@popcomputer/structured-chat/effect-sqlite")
 const sqlApi = await import("@popcomputer/structured-chat/sqlite")
-const sqliteStore: Effect.Effect<Root.Session.StoreService, never, import("effect/unstable/sql/SqlClient").SqlClient> = sqliteApi.makeSqliteChatSessionStore()
-const sqliteLayer: Layer.Layer<Root.Session.Store, never, import("effect/unstable/sql/SqlClient").SqlClient> = sqliteApi.layer()
+const sqliteStore: Effect.Effect<
+  Root.Session.StoreService,
+  never,
+  import("effect/unstable/sql/SqlClient").SqlClient
+> = sqliteApi.makeSqliteChatSessionStore()
+const sqliteLayer: Layer.Layer<
+  Root.Session.Store,
+  never,
+  import("effect/unstable/sql/SqlClient").SqlClient
+> = sqliteApi.layer()
 const sqlPort: import("@popcomputer/structured-chat/sqlite").ChatSessionSql = {
   read: () => Effect.succeed(null),
   write: () => Effect.succeed(0),
 }
-const sqlStore: Root.Session.StoreService = sqlApi.makeSqlChatSessionStore(sqlPort)
+const sqlStore: Root.Session.StoreService =
+  sqlApi.makeSqlChatSessionStore(sqlPort)
 void sqliteStore
 void sqliteLayer
 void sqlStore

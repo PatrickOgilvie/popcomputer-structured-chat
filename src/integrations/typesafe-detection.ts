@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect"
+
 import {
   defineAnswerDetector,
   DetectionResolutionSchema,
@@ -7,7 +8,6 @@ import {
   type DetectionFieldDecision,
 } from "../core/answer-detector.js"
 import type { AnswerFields } from "../core/collect-stage.js"
-import { UnavailablePolicySchema, withUnavailableFallback, type UnavailablePolicy } from "./typesafe-availability.js"
 import {
   batch,
   DescriptionSchema,
@@ -18,20 +18,33 @@ import {
   type EvaluationError,
   type NoulQuestion,
 } from "../core/evaluation.js"
+import {
+  UnavailablePolicySchema,
+  withUnavailableFallback,
+  type UnavailablePolicy,
+} from "./typesafe-availability.js"
 
 const PolicySchema = Schema.Struct({
   detectedAtOrAbove: ProbabilitySchema,
   undetectedAtOrBelow: ProbabilitySchema,
-}).check(Schema.makeFilter(policy => policy.undetectedAtOrBelow < policy.detectedAtOrAbove))
+}).check(
+  Schema.makeFilter(
+    (policy) => policy.undetectedAtOrBelow < policy.detectedAtOrAbove,
+  ),
+)
 /** Inclusive yes/no probability boundaries with an uncertainty interval between them. */
-export interface DetectionPolicy extends Schema.Schema.Type<typeof PolicySchema> {}
+export interface DetectionPolicy extends Schema.Schema.Type<
+  typeof PolicySchema
+> {}
 /** Parse and snapshot a reusable detection policy at definition time. */
 export const detectionPolicy = (policy: DetectionPolicy): DetectionPolicy =>
   Schema.decodeUnknownSync(PolicySchema)(policy, { onExcessProperty: "error" })
 
 const OverrideSchema = Schema.Struct({
   policy: Schema.optionalKey(PolicySchema),
-  criteria: Schema.optionalKey(Schema.Struct({ true: DescriptionSchema, false: DescriptionSchema })),
+  criteria: Schema.optionalKey(
+    Schema.Struct({ true: DescriptionSchema, false: DescriptionSchema }),
+  ),
 })
 /** One default policy and field-specific policy or rubric overrides. */
 export interface TypeSafeDetectionOptions<Fields extends AnswerFields> {
@@ -63,11 +76,13 @@ export const detection = <const Fields extends AnswerFields>(
   options: TypeSafeDetectionOptions<Fields>,
 ): AnswerDetector<Fields, EvaluationError, TypeSafeService> => {
   const policy = detectionPolicy(options.policy)
-  const onUnavailable = Schema.decodeUnknownSync(UnavailablePolicySchema)(options.onUnavailable ?? "fail")
-  const overrides = Schema.decodeUnknownSync(Schema.Record(Schema.String, OverrideSchema))(
-    structuredClone(options.overrides ?? {}), { onExcessProperty: "error" },
+  const onUnavailable = Schema.decodeUnknownSync(UnavailablePolicySchema)(
+    options.onUnavailable ?? "fail",
   )
-  if (Object.keys(overrides).some(field => !Object.hasOwn(fields, field)))
+  const overrides = Schema.decodeUnknownSync(
+    Schema.Record(Schema.String, OverrideSchema),
+  )(structuredClone(options.overrides ?? {}), { onExcessProperty: "error" })
+  if (Object.keys(overrides).some((field) => !Object.hasOwn(fields, field)))
     throw new Error("Detection overrides must name registered fields")
   return defineAnswerDetector(fields, (context) =>
     Effect.gen(function* () {
@@ -97,16 +112,22 @@ export const detection = <const Fields extends AnswerFields>(
           field: field.description,
           grounding: grounding(field),
         }
-        const instructions = field.issuedQuestion === undefined
-          ? base
-          : { ...base, question: field.issuedQuestion, options: [...(field.issuedOptions ?? [])] }
+        const instructions =
+          field.issuedQuestion === undefined
+            ? base
+            : {
+                ...base,
+                question: field.issuedQuestion,
+                options: [...(field.issuedOptions ?? [])],
+              }
         questions.set(
           field.field,
           noul(
             instructions,
             overrides[field.field]?.criteria ?? {
               true: "The evidence states or clearly answers this question.",
-              false: "The evidence does not answer this question, only repeats earlier context, or is unrelated.",
+              false:
+                "The evidence does not answer this question, only repeats earlier context, or is unrelated.",
             },
           ),
         )
@@ -125,10 +146,12 @@ export const detection = <const Fields extends AnswerFields>(
               field: field.field,
             })
           : answer.probability <= selectedPolicy.undetectedAtOrBelow
-          ? DetectionSelectionSchema.cases.Undetected.make({
-              field: field.field,
-            })
-          : DetectionSelectionSchema.cases.Uncertain.make({ field: field.field })
+            ? DetectionSelectionSchema.cases.Undetected.make({
+                field: field.field,
+              })
+            : DetectionSelectionSchema.cases.Uncertain.make({
+                field: field.field,
+              })
       })
       yield* Effect.annotateCurrentSpan({
         detectedCount: selections.filter(
@@ -137,7 +160,9 @@ export const detection = <const Fields extends AnswerFields>(
         undetectedCount: selections.filter(
           (selection) => selection._tag === "Undetected",
         ).length,
-        uncertainCount: selections.filter(selection => selection._tag === "Uncertain").length,
+        uncertainCount: selections.filter(
+          (selection) => selection._tag === "Uncertain",
+        ).length,
       })
       return DetectionResolutionSchema.cases.Resolved.make({ selections })
     }).pipe(

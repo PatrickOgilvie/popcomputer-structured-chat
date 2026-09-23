@@ -13,16 +13,17 @@ import {
   type FC,
   type ReactNode,
 } from "react"
-import {
-  makeAssistantChatModelAdapter,
-  type AssistantChatFetch,
-  type AssistantChatModelAdapterOptions,
-} from "./assistant-ui.js"
+
 import {
   createStructuredChatDebugStore,
   type StructuredChatDebugStoreOptions,
 } from "./assistant-ui-debug-store.js"
 import type { StructuredChatDebugPanelProps } from "./assistant-ui-debug.js"
+import {
+  makeAssistantChatModelAdapter,
+  type AssistantChatFetch,
+  type AssistantChatModelAdapterOptions,
+} from "./assistant-ui.js"
 
 const LazyStructuredChatDebugPanel = lazy(() =>
   import("./assistant-ui-debug.js").then(({ StructuredChatDebugPanel }) => ({

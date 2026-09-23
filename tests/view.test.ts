@@ -1,6 +1,8 @@
-import { View } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
+
 import { Effect, Result, Schema } from "effect"
+
+import { View } from "../src/index.js"
 
 const AgencyCards = View.define({
   name: "agency_cards",

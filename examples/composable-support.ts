@@ -1,4 +1,3 @@
-import { Predicate, Context, Effect, Schema } from "effect"
 import {
   Answer,
   Chat,
@@ -8,6 +7,7 @@ import {
   Tool,
   View,
 } from "@popcomputer/structured-chat"
+import { Predicate, Context, Effect, Schema } from "effect"
 
 const SupportText = View.define({
   name: "support_text",

@@ -1,12 +1,13 @@
 import { env } from "cloudflare:workers"
 import { Deferred, Effect, Fiber, Result, Schema } from "effect"
 import { describe, expect, test } from "vitest"
+
 import { Session } from "../../src/index.js"
-import * as Live from "../../src/integrations/live.js"
 import {
   cleanupExpiredD1ChatSessions,
   makeD1ChatSessionStore,
 } from "../../src/integrations/d1.js"
+import * as Live from "../../src/integrations/live.js"
 
 const scope = {
   namespace: "runtime:account",

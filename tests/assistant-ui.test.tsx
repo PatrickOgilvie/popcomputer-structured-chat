@@ -1,9 +1,11 @@
-import { View } from "../src/index.js"
 import { describe, expect, test } from "bun:test"
+
 import type { DataMessagePartProps } from "@assistant-ui/react"
 import { Schema } from "effect"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+
+import { View } from "../src/index.js"
 import { makeAssistantView } from "../src/integrations/assistant-ui.js"
 
 const AgencyCards = View.define({

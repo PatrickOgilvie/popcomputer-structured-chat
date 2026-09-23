@@ -1,3 +1,7 @@
+import { expect, test } from "bun:test"
+
+import { Predicate, Effect, Layer, Result, Schema } from "effect"
+
 import {
   Answer,
   Chat,
@@ -8,8 +12,6 @@ import {
   Tool,
 } from "../src/index.js"
 import { inMemoryChatSessionStore, Scenario } from "../src/testing.js"
-import { expect, test } from "bun:test"
-import { Predicate, Effect, Layer, Result, Schema } from "effect"
 
 test("queries receive the accepted value from collection in the same turn", async () => {
   const Budget = Stage.collect({

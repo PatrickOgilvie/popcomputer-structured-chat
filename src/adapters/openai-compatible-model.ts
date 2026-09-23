@@ -1,5 +1,8 @@
 import type { Context, JsonSchema } from "effect"
 import { cast, Effect, Exit, Layer, Result, Schema } from "effect"
+
+import { nextDebugModelCall, recordDebugEvent } from "../core/debug-trace.js"
+import { JsonValueSchema, type JsonValue } from "../core/json-value.js"
 import {
   ChatModelUnavailable,
   StructuredChatModel,
@@ -10,9 +13,7 @@ import {
   type StructuredChatModelService,
   type ToolModelRequest,
 } from "../core/model.js"
-import { nextDebugModelCall, recordDebugEvent } from "../core/debug-trace.js"
 import type { ModelToolDefinition } from "../core/tool.js"
-import { JsonValueSchema, type JsonValue } from "../core/json-value.js"
 
 /** Bounded timeout for one provider tool-call request. */
 export const StructuredChatRequestTimeoutSchema = Schema.Number.check(
@@ -280,7 +281,9 @@ type JsonSchemaObject = Schema.Schema.Type<typeof JsonSchemaObjectSchema>
 interface StrictSchemaIssue {
   readonly path: string
   readonly reason:
-    "root_not_object" | "additional_properties_allowed" | "optional_property"
+    | "root_not_object"
+    | "additional_properties_allowed"
+    | "optional_property"
 }
 
 const isJsonSchemaObject = (

@@ -1,3 +1,10 @@
+import { describe, expect, test } from "bun:test"
+
+import { Predicate, Effect, Layer, Schema } from "effect"
+
+import { recordDebugEvent } from "../src/core/debug-trace.js"
+import { JsonValueSchema } from "../src/core/json-value.js"
+import * as Debug from "../src/debug.js"
 import {
   Answer,
   Chat,
@@ -7,14 +14,9 @@ import {
   Stage,
   Tool,
 } from "../src/index.js"
-import * as Debug from "../src/debug.js"
 import * as OpenAI from "../src/model/openai-compatible.js"
-import { recordDebugEvent } from "../src/core/debug-trace.js"
-import { JsonValueSchema } from "../src/core/json-value.js"
 import { Chat as ChatTest } from "../src/testing.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"
-import { describe, expect, test } from "bun:test"
-import { Predicate, Effect, Layer, Schema } from "effect"
 
 const DebugBrief = Stage.collect({
   name: "debug_brief",

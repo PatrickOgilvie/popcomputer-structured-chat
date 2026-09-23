@@ -87,6 +87,8 @@
   ],
   "scripts": {
     "clean": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\"",
+    "fmt": "oxfmt src tests examples package-tests scripts",
+    "fmt:check": "oxfmt --check src tests examples package-tests scripts",
     "build": "bun run clean && tsc",
     "check": "bun run check:architecture && tsc --noEmit && tsc -p tsconfig.type-tests.json && tsc -p tsconfig.examples.json && tsc -p tsconfig.cloudflare-tests.json",
     "check:architecture": "node scripts/check-architecture.mjs",
@@ -97,7 +99,7 @@
     "test:package:types": "tsc -p tsconfig.package-tests.json",
     "test:package": "bun run build && bun run test:package:types && node tests/node-esm-smoke.mjs && node tests/client-esm-smoke.mjs && node tests/typesafe-esm-smoke.mjs && node tests/sqlite-esm-smoke.mjs && npm pack --dry-run --ignore-scripts --offline --cache node_modules/.cache/npm",
     "test:types": "tsc -p tsconfig.type-tests.json",
-    "verify": "bun run lint && bun run check && bun test && bun run test:cloudflare && bun run test:package",
+    "verify": "bun run fmt:check && bun run lint && bun run check && bun test && bun run test:cloudflare && bun run test:package",
     "prepack": "bun run build",
     "prepublishOnly": "bun run verify"
   },
@@ -159,6 +161,7 @@
     "@types/react-test-renderer": "^19.1.0",
     "@typesafe-ai/sdk": "0.6.0",
     "effect": "4.0.0-rc.109",
+    "oxfmt": "0.70.0",
     "oxlint": "1.78.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

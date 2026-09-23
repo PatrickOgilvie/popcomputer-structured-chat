@@ -1,4 +1,5 @@
 import { Predicate, Context, Effect, Schema } from "effect"
+
 import type { BranchContract } from "./branch.js"
 import {
   structuredDefinition,

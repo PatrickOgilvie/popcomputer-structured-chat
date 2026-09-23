@@ -1,17 +1,18 @@
 import type { Effect } from "effect"
 import { Function as Fn, Schema } from "effect"
+
 import type { AnyDefinition, Definition } from "../../Chat.js"
-import type {
-  ChatExplorationTuple,
-  ChatStageTuple,
-  DefineChatInput,
-} from "../../core/chat.js"
 import {
   defineBranch,
   type Branch,
   type Branches,
   type InputOf,
 } from "../../core/branch.js"
+import type {
+  ChatExplorationTuple,
+  ChatStageTuple,
+  DefineChatInput,
+} from "../../core/chat.js"
 import type {
   ComposedDefinition,
   CompositionOptions,

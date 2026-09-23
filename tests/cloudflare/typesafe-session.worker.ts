@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers"
 import { Deferred, Effect, Fiber, Layer, Schema } from "effect"
 import { describe, expect, test } from "vitest"
+
 import {
   Answer,
   Chat,
@@ -28,7 +29,10 @@ const details = Stage.collect({
   name: "details",
   fields,
   detector: TypeSafe.detection(fields, {
-    policy: TypeSafe.detectionPolicy({ detectedAtOrAbove: 0.9, undetectedAtOrBelow: 0.1 }),
+    policy: TypeSafe.detectionPolicy({
+      detectedAtOrAbove: 0.9,
+      undetectedAtOrBelow: 0.1,
+    }),
   }),
 })
 const finish = Tool.define({
@@ -70,7 +74,10 @@ const response = () =>
       invoice: { type: "noul", noul: 0.1 },
     },
   })
-const identity = (sessionId: string) => ({ namespace: "typesafe-runtime", sessionId })
+const identity = (sessionId: string) => ({
+  namespace: "typesafe-runtime",
+  sessionId,
+})
 const scope = (sessionId: string) => ({
   namespace: "typesafe-runtime",
   sessionId,
@@ -218,7 +225,10 @@ describe("TypeSafe detection persisted in D1", () => {
     expect(
       result.results.find((entry) => entry._tag === "Failure"),
     ).toMatchObject({ failure: { _tag: "ChatSessionConflict" } })
-    expect(Schema.decodeUnknownSync(Session.SnapshotSchema)(result.snapshot).revision).toBe("2")
+    expect(
+      Schema.decodeUnknownSync(Session.SnapshotSchema)(result.snapshot)
+        .revision,
+    ).toBe("2")
     expect(result.stale).toMatchObject({
       _tag: "Failure",
       failure: { _tag: "ChatSessionConflict" },

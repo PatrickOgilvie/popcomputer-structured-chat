@@ -1,5 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
+
 import ts from "typescript"
 
 const sourceRoot = path.resolve("src")
@@ -100,7 +101,9 @@ for (const file of sourceFiles) {
         statement.moduleSpecifier.text === "@typesafe-ai/sdk" &&
         file !== "adapters/typesafe.ts"
       ) {
-        errors.push(`${file} imports the optional TypeSafe SDK outside its adapter`)
+        errors.push(
+          `${file} imports the optional TypeSafe SDK outside its adapter`,
+        )
       }
       const target = resolveRelative(file, statement.moduleSpecifier.text)
 

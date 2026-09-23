@@ -7,14 +7,15 @@ import {
   Schema,
   SchemaIssue,
 } from "effect"
-import type { ViewDefinitionContract, ViewInput, ViewPart } from "./view.js"
+
+import type { CommandId } from "./command.js"
+import { recordDebugEvent } from "./debug-trace.js"
 import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
-import type { CommandId } from "./command.js"
 import { JsonValueSchema, type JsonValue } from "./json-value.js"
-import { recordDebugEvent } from "./debug-trace.js"
+import type { ViewDefinitionContract, ViewInput, ViewPart } from "./view.js"
 
 /** Stable machine-facing name for one structured chat tool. */
 export const ToolNameSchema = Schema.Trimmed.check(

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
+
 import { Predicate, Deferred, Effect, Layer, Queue, Ref, Stream } from "effect"
 import { Socket } from "effect/unstable/socket"
+
 import * as Live from "../src/integrations/live.js"
 import * as OpenAI from "../src/integrations/openai-live.js"
 import { inMemoryChatSessionStore } from "../src/testing.js"

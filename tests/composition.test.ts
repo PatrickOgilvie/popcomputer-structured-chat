@@ -1,6 +1,8 @@
-import * as Debug from "../src/debug.js"
 import { expect, test } from "bun:test"
+
 import { Predicate, Effect, Layer, Result, Schema } from "effect"
+
+import * as Debug from "../src/debug.js"
 import {
   Answer,
   Chat,
@@ -1046,12 +1048,23 @@ test("parent and child answers with the same field names stay invocation-local",
     requestTool: (request) =>
       Effect.sync(() => {
         if (step === 4) {
-          const plan = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({
-            accepted: Schema.Record(Schema.String, Schema.Unknown),
-            conversation: Schema.Array(Schema.Struct({ role: Schema.String, content: Schema.String })),
-          })))(request.untrustedMessages[0]?.content)
+          const plan = Schema.decodeUnknownSync(
+            Schema.fromJsonString(
+              Schema.Struct({
+                accepted: Schema.Record(Schema.String, Schema.Unknown),
+                conversation: Schema.Array(
+                  Schema.Struct({
+                    role: Schema.String,
+                    content: Schema.String,
+                  }),
+                ),
+              }),
+            ),
+          )(request.untrustedMessages[0]?.content)
           expect(plan.accepted).toEqual({})
-          expect(plan.conversation).toEqual([{ role: "user", content: "Start the child with 200" }])
+          expect(plan.conversation).toEqual([
+            { role: "user", content: "Start the child with 200" },
+          ])
         }
         const next = actions[step++]
 

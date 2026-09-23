@@ -9,9 +9,10 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react"
-import type { StructuredChatDebugSnapshot } from "../core/debug.js"
+
 import type { StructuredChatDebugTurn } from "../core/debug-protocol.js"
 import type { StructuredChatDebugEvent } from "../core/debug-trace.js"
+import type { StructuredChatDebugSnapshot } from "../core/debug.js"
 import type { StructuredChatDebugStore } from "./assistant-ui-debug-store.js"
 
 export {
@@ -23,7 +24,10 @@ export {
 
 /** Viewport corner used by the structured-chat debug panel. */
 export type StructuredChatDebugPanelPosition =
-  "top-left" | "top-right" | "bottom-left" | "bottom-right"
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right"
 
 /** Color treatment used by the structured-chat debug panel. */
 export type StructuredChatDebugPanelTheme = "system" | "light" | "dark"
@@ -39,7 +43,10 @@ export interface StructuredChatDebugPanelProps {
 
 type DebugStage = StructuredChatDebugSnapshot["stages"][number]
 
-type DebugAnswerStage = Extract<DebugStage, { readonly _tag: "CollectStage" | "InterviewStage" }>
+type DebugAnswerStage = Extract<
+  DebugStage,
+  { readonly _tag: "CollectStage" | "InterviewStage" }
+>
 
 type DebugField = DebugAnswerStage["fields"][number]
 
@@ -1600,15 +1607,26 @@ const AnswerDetails = ({
 /** Completion progress excludes optional interview answers. */
 const requiredAnswerProgress = (stage: DebugAnswerStage) => {
   if (stage._tag === "CollectStage") {
-    return { fields: stage.fields, satisfied: stage.satisfiedFields, total: stage.totalFields }
+    return {
+      fields: stage.fields,
+      satisfied: stage.satisfiedFields,
+      total: stage.totalFields,
+    }
   }
-  const fields = stage.fields.filter(field => stage.requiredFields.includes(field.field))
-  return { fields, satisfied: fields.filter(field => field.state._tag === "Accepted").length, total: fields.length }
+  const fields = stage.fields.filter((field) =>
+    stage.requiredFields.includes(field.field),
+  )
+  return {
+    fields,
+    satisfied: fields.filter((field) => field.state._tag === "Accepted").length,
+    total: fields.length,
+  }
 }
 
 /** Right-aligned stage metric: progress where it exists, otherwise the kind. */
 const stageMetaLabel = (stage: DebugStage): string => {
-  if (stage._tag !== "CollectStage" && stage._tag !== "InterviewStage") return stageKindLabel(stage)
+  if (stage._tag !== "CollectStage" && stage._tag !== "InterviewStage")
+    return stageKindLabel(stage)
   const progress = requiredAnswerProgress(stage)
   return `${progress.satisfied}/${progress.total}`
 }
@@ -1647,7 +1665,8 @@ const mostRecentlyAskedField = (
 
   for (const field of fields) {
     if (!Predicate.isTagged(field.state, "Asked")) continue
-    const issued = field.state.issuedQuestion.latest ?? field.state.issuedQuestion
+    const issued =
+      field.state.issuedQuestion.latest ?? field.state.issuedQuestion
     if (issued.messageIndex > mostRecentMessageIndex) {
       mostRecent = field
       mostRecentMessageIndex = issued.messageIndex
@@ -1666,7 +1685,7 @@ const AnswerStageDetails = ({
   const focusedAnswer =
     stage.status === "current"
       ? stage._tag === "InterviewStage"
-        ? stage.fields.find(field => field.field === stage.focus) ?? null
+        ? (stage.fields.find((field) => field.field === stage.focus) ?? null)
         : mostRecentlyAskedField(stage.fields)
       : null
 
@@ -1679,8 +1698,16 @@ const AnswerStageDetails = ({
     >
       <StageSummary stage={stage} />
       <div className="pcsc-debug__stage-body">
-        {stage._tag === "InterviewStage" && stage.tools.length > 0 && <p className="pcsc-debug__question-copy">Available tools: {stage.tools.map(humanizeIdentifier).join(", ")}</p>}
-        <h3 className="pcsc-debug__sr-only">{stage._tag === "InterviewStage" ? "Interview Answers" : "Required Answers"}</h3>
+        {stage._tag === "InterviewStage" && stage.tools.length > 0 && (
+          <p className="pcsc-debug__question-copy">
+            Available tools: {stage.tools.map(humanizeIdentifier).join(", ")}
+          </p>
+        )}
+        <h3 className="pcsc-debug__sr-only">
+          {stage._tag === "InterviewStage"
+            ? "Interview Answers"
+            : "Required Answers"}
+        </h3>
         <div
           className="pcsc-debug__meter"
           role="progressbar"
@@ -1849,19 +1876,57 @@ const annotationContent = (
 ): ReactNode => {
   switch (event._tag) {
     case "TypeSafeFallback":
-      return <><span className="pcsc-debug__annotation-tag">Fallback</span><strong>LLM {event.operation}</strong><span>Jev unavailable: {humanizeIdentifier(event.reason)}</span></>
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Fallback</span>
+          <strong>LLM {event.operation}</strong>
+          <span>Jev unavailable: {humanizeIdentifier(event.reason)}</span>
+        </>
+      )
     case "ToolClarificationAsked":
-      return <><span className="pcsc-debug__annotation-tag">Clarification</span><strong>More information needed</strong><span>{humanizeIdentifier(event.stage)}</span></>
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Clarification</span>
+          <strong>More information needed</strong>
+          <span>{humanizeIdentifier(event.stage)}</span>
+        </>
+      )
     case "ToolSelectionAssessed":
-      return <><span className="pcsc-debug__annotation-tag">Selection</span><strong>{humanizeIdentifier(event.decision._tag)}</strong><span>{event.decision._tag === "Selected" ? event.decision.target._tag === "Tool" ? humanizeIdentifier(event.decision.target.name) : "Conversation repair" : humanizeIdentifier(event.stage)}</span></>
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Selection</span>
+          <strong>{humanizeIdentifier(event.decision._tag)}</strong>
+          <span>
+            {event.decision._tag === "Selected"
+              ? event.decision.target._tag === "Tool"
+                ? humanizeIdentifier(event.decision.target.name)
+                : "Conversation repair"
+              : humanizeIdentifier(event.stage)}
+          </span>
+        </>
+      )
     case "ToolArgumentsResolved":
-      return <><span className="pcsc-debug__annotation-tag">Arguments</span><strong>{humanizeIdentifier(event.tool)}</strong><span>{humanizeIdentifier(event.source)}</span></>
+      return (
+        <>
+          <span className="pcsc-debug__annotation-tag">Arguments</span>
+          <strong>{humanizeIdentifier(event.tool)}</strong>
+          <span>{humanizeIdentifier(event.source)}</span>
+        </>
+      )
     case "AnswerProposalAssessed":
       return (
         <>
           <span className="pcsc-debug__annotation-tag">Answer</span>
-          <strong>{humanizeIdentifier(event.field)}: {humanizeIdentifier(event.decision)}</strong>
-          <span>Attempt {event.attempt}{event.reason === null ? "" : ` · ${humanizeIdentifier(event.reason)}`}</span>
+          <strong>
+            {humanizeIdentifier(event.field)}:{" "}
+            {humanizeIdentifier(event.decision)}
+          </strong>
+          <span>
+            Attempt {event.attempt}
+            {event.reason === null
+              ? ""
+              : ` · ${humanizeIdentifier(event.reason)}`}
+          </span>
         </>
       )
     case "ModelCallFailed":

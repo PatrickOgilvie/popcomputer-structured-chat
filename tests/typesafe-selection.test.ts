@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test"
+
 import { Effect, Schema } from "effect"
+
 import { Tool } from "../src/index.js"
 import * as TypeSafe from "../src/typesafe.js"
 import { runtimeConfig } from "./typesafe-runtime.js"

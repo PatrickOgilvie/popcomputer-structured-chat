@@ -1,4 +1,5 @@
 import { Predicate, cast, Effect, Schema } from "effect"
+
 import type {
   ChatDefinition,
   ChatExplorationTuple,
@@ -7,17 +8,17 @@ import type {
   ChatStageTuple,
 } from "./chat.js"
 import {
+  StructuredChatDebugTraceSchema,
+  type StructuredChatDebugEvent,
+  type StructuredChatDebugTrace,
+} from "./debug-trace.js"
+import {
   inspectChatState,
   InvalidChatDebugProjection,
   type InspectChatStateOptions,
   type StructuredChatDebugSnapshot,
   StructuredChatDebugSnapshotSchema,
 } from "./debug.js"
-import {
-  StructuredChatDebugTraceSchema,
-  type StructuredChatDebugEvent,
-  type StructuredChatDebugTrace,
-} from "./debug-trace.js"
 import type { StructuredChatSessionReferenceSchema } from "./protocol.js"
 import {
   presentChatReply,

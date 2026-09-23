@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test"
+
 import { Deferred, Effect, Fiber, Redacted, Schema } from "effect"
 import { TestClock } from "effect/testing"
-import { cancellationCase, timeoutCase } from "./typesafe-runtime.js"
+
 import * as TypeSafe from "../src/typesafe.js"
+import { cancellationCase, timeoutCase } from "./typesafe-runtime.js"
 
 const questions = () =>
   TypeSafe.batch({
@@ -104,30 +106,50 @@ describe("TypeSafe", () => {
   })
 
   test("preserves structured yes/no criteria through the SDK transport", async () => {
-    const instructions = { question: "Is dataset attachment needed?", focus: "Remaining work only" }
+    const instructions = {
+      question: "Is dataset attachment needed?",
+      focus: "Remaining work only",
+    }
     const criteria = {
-      true: { what: "Attach an existing dataset", examples: ["Attach the published invoices dataset"] },
+      true: {
+        what: "Attach an existing dataset",
+        examples: ["Attach the published invoices dataset"],
+      },
       false: { what: "Importing a new file", examples: ["Import this CSV"] },
     }
     const requests: unknown[] = []
-    const result = await Effect.runPromise(Effect.gen(function* () {
-      const client = yield* TypeSafe.Service
-      return yield* client.evaluate({
-        state: "Attach the published invoices dataset",
-        questions: TypeSafe.batch({ attach: TypeSafe.noul(instructions, criteria) }),
-      })
-    }).pipe(Effect.provide(TypeSafe.layer(config(async (_url, init) => {
-      if (!Schema.is(Schema.String)(init?.body)) throw new Error("Expected JSON body")
-      requests.push(JSON.parse(init.body))
-      return Response.json({
-        model: "jev-test", answers: { attach: { type: "noul", noul: 0.93 } },
-        usage: { input_tokens: 50, output_tokens: 5 },
-      })
-    })))))
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* TypeSafe.Service
+        return yield* client.evaluate({
+          state: "Attach the published invoices dataset",
+          questions: TypeSafe.batch({
+            attach: TypeSafe.noul(instructions, criteria),
+          }),
+        })
+      }).pipe(
+        Effect.provide(
+          TypeSafe.layer(
+            config(async (_url, init) => {
+              if (!Schema.is(Schema.String)(init?.body))
+                throw new Error("Expected JSON body")
+              requests.push(JSON.parse(init.body))
+              return Response.json({
+                model: "jev-test",
+                answers: { attach: { type: "noul", noul: 0.93 } },
+                usage: { input_tokens: 50, output_tokens: 5 },
+              })
+            }),
+          ),
+        ),
+      ),
+    )
     expect(result.answers.attach.probability).toBe(0.93)
-    expect(requests).toEqual([expect.objectContaining({
-      questions: { attach: { type: "noul", instructions, criteria } },
-    })])
+    expect(requests).toEqual([
+      expect.objectContaining({
+        questions: { attach: { type: "noul", instructions, criteria } },
+      }),
+    ])
   })
 
   test("rejects missing answers and out-of-set selections", async () => {
@@ -189,25 +211,54 @@ describe("TypeSafe boundaries", () => {
     for (const support of [0.09, 0.11]) {
       const response = validResponse()
       response.answers.department.probabilities.support = support
-      const result = await Effect.runPromise(evaluate().pipe(Effect.provide(
-        TypeSafe.layer(config(async () => Response.json(response))),
-      )))
-      expect(result.answers.department.probabilities).toEqual({ billing: 0.9, support })
+      const result = await Effect.runPromise(
+        evaluate().pipe(
+          Effect.provide(
+            TypeSafe.layer(config(async () => Response.json(response))),
+          ),
+        ),
+      )
+      expect(result.answers.department.probabilities).toEqual({
+        billing: 0.9,
+        support,
+      })
       expect(result.answers.department.confidence).toBe(0.8)
     }
   })
 
   test("caps rounding tolerance for large candidate sets", async () => {
-    const criteria = Object.fromEntries(Array.from({ length: 106 }, (_, i) => [`tool_${i}`, `Tool ${i}`]))
+    const criteria = Object.fromEntries(
+      Array.from({ length: 106 }, (_, i) => [`tool_${i}`, `Tool ${i}`]),
+    )
     for (const selected of [0.99, 0.94]) {
-      const response = { model: "jev-test", usage: { input_tokens: 1, output_tokens: 1 }, answers: { next: {
-        type: "choice", choice: "tool_0", confidence: 0.9,
-        probabilities: Object.fromEntries(Object.keys(criteria).map(key => [key, key === "tool_0" ? selected : 0])),
-      } } }
+      const response = {
+        model: "jev-test",
+        usage: { input_tokens: 1, output_tokens: 1 },
+        answers: {
+          next: {
+            type: "choice",
+            choice: "tool_0",
+            confidence: 0.9,
+            probabilities: Object.fromEntries(
+              Object.keys(criteria).map((key) => [
+                key,
+                key === "tool_0" ? selected : 0,
+              ]),
+            ),
+          },
+        },
+      }
       const configuration = config(async () => Response.json(response))
-      const result = await Effect.runPromise(Effect.gen(function* () {
-        return yield* (yield* TypeSafe.Service).evaluate({ state: "Choose next tool", questions: TypeSafe.batch({ next: TypeSafe.choice("Next?", criteria) }) })
-      }).pipe(Effect.provide(TypeSafe.layer(configuration)), Effect.result))
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* TypeSafe.Service).evaluate({
+            state: "Choose next tool",
+            questions: TypeSafe.batch({
+              next: TypeSafe.choice("Next?", criteria),
+            }),
+          })
+        }).pipe(Effect.provide(TypeSafe.layer(configuration)), Effect.result),
+      )
       expect(result._tag).toBe(selected === 0.99 ? "Success" : "Failure")
     }
   })
@@ -377,7 +428,6 @@ describe("TypeSafe boundaries", () => {
   })
 })
 
-
 describe("TypeSafe configuration and retry waits", () => {
   test("rejects invalid server configuration before transport", async () => {
     let requests = 0
@@ -389,13 +439,19 @@ describe("TypeSafe configuration and retry waits", () => {
       { ...settings, apiKey: Redacted.make("") },
       { ...settings, model: "" },
       { ...settings, totalTimeoutMilliseconds: 0 },
-      { ...settings, retry: { maximumAttempts: 2 as const, delayMilliseconds: -1 } },
+      {
+        ...settings,
+        retry: { maximumAttempts: 2 as const, delayMilliseconds: -1 },
+      },
       { ...settings, limits: { ...settings.limits, maximumQuestions: 0 } },
     ]) {
-      const result = await Effect.runPromise(evaluate().pipe(
-        Effect.provide(TypeSafe.layer(invalid)), Effect.result,
-      ))
-      expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "TypeSafeConfigurationInvalid" } })
+      const result = await Effect.runPromise(
+        evaluate().pipe(Effect.provide(TypeSafe.layer(invalid)), Effect.result),
+      )
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "TypeSafeConfigurationInvalid" },
+      })
     }
     expect(requests).toBe(0)
   })
@@ -403,34 +459,42 @@ describe("TypeSafe configuration and retry waits", () => {
   test("cancels retry waits and includes them in the total deadline", async () => {
     for (const interrupt of [true, false]) {
       let requests = 0
-      const result = await Effect.runPromise(Effect.gen(function* () {
-        const started = yield* Deferred.make<void>()
-        const settings = config(async () => {
-          requests += 1
-          await Effect.runPromise(Deferred.succeed(started, undefined))
-          return Response.json({}, { status: 503 })
-        })
-        const fiber = yield* evaluate().pipe(
-          Effect.provide(TypeSafe.layer({
-            ...settings,
-            totalTimeoutMilliseconds: 500,
-            retry: { maximumAttempts: 3, delayMilliseconds: 1_000 },
-          })),
-          Effect.result,
-          Effect.forkChild,
-        )
-        yield* Deferred.await(started)
-        yield* TestClock.adjust(100)
-        if (interrupt) {
-          yield* Fiber.interrupt(fiber)
-          yield* TestClock.adjust(2_000)
-          return undefined
-        }
-        yield* TestClock.adjust(1_000)
-        return yield* Fiber.join(fiber)
-      }).pipe(Effect.provide(TestClock.layer())))
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const settings = config(async () => {
+            requests += 1
+            await Effect.runPromise(Deferred.succeed(started, undefined))
+            return Response.json({}, { status: 503 })
+          })
+          const fiber = yield* evaluate().pipe(
+            Effect.provide(
+              TypeSafe.layer({
+                ...settings,
+                totalTimeoutMilliseconds: 500,
+                retry: { maximumAttempts: 3, delayMilliseconds: 1_000 },
+              }),
+            ),
+            Effect.result,
+            Effect.forkChild,
+          )
+          yield* Deferred.await(started)
+          yield* TestClock.adjust(100)
+          if (interrupt) {
+            yield* Fiber.interrupt(fiber)
+            yield* TestClock.adjust(2_000)
+            return undefined
+          }
+          yield* TestClock.adjust(1_000)
+          return yield* Fiber.join(fiber)
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
       expect(requests).toBe(1)
-      if (!interrupt) expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "TypeSafeUnavailable", reason: "timeout" } })
+      if (!interrupt)
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "TypeSafeUnavailable", reason: "timeout" },
+        })
     }
   })
 })
