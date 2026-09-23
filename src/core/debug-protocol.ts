@@ -1,4 +1,4 @@
-import { Predicate, cast, Effect, Schema } from "effect"
+import { Effect, Function as Fn, Predicate, Schema } from "effect"
 
 import type {
   ChatDefinition,
@@ -19,22 +19,21 @@ import {
   type StructuredChatDebugSnapshot,
   StructuredChatDebugSnapshotSchema,
 } from "./debug.js"
-import type { StructuredChatSessionReferenceSchema } from "./protocol.js"
 import {
-  presentChatReply,
-  StructuredChatPersistedTurnResponseSchema,
   type InvalidChatPresentation,
+  presentChatReply,
   type PresentChatReplyOptions,
+  StructuredChatPersistedTurnResponseSchema,
+  type StructuredChatSessionReferenceSchema,
+  type PresentableTurn,
 } from "./protocol.js"
 import { ChatSessionIdSchema } from "./session.js"
-
-type BrowserPresentableTurn = Parameters<typeof presentChatReply>[0]["turn"]
 
 type DebugChatTurn<
   Name extends string,
   Version extends number,
   Stages extends ChatStageTuple,
-> = ChatReply<Name, Version, Stages>["turn"] & BrowserPresentableTurn
+> = ChatReply<Name, Version, Stages>["turn"] & PresentableTurn
 
 type DebugChatReply<
   Name extends string,
@@ -143,6 +142,11 @@ export interface PresentChatDebugReplyOptions<
   readonly inspection?: InspectChatStateOptions
 }
 
+/** @internal Wrap captured events in the trace envelope version this package emits. */
+export const debugTrace = (
+  events: ReadonlyArray<StructuredChatDebugEvent>,
+): StructuredChatDebugTrace => ({ schemaVersion: 2, events })
+
 const invalidTrace = (): InvalidChatDebugProjection =>
   new InvalidChatDebugProjection({ reason: "invalid_trace" })
 
@@ -176,10 +180,7 @@ export const presentChatDebugReply = <
   const outcome: CapturedChatDebugOutcome<Name, Version, Stages> =
     "_tag" in input ? input : { _tag: "Succeeded", reply: input, events: [] }
 
-  const trace = {
-    schemaVersion: 2 as const,
-    events: outcome.events,
-  }
+  const trace = debugTrace(outcome.events)
 
   if (Predicate.isTagged(outcome, "Failed")) {
     return parseDebugResponse({
@@ -193,7 +194,7 @@ export const presentChatDebugReply = <
   return Effect.gen(function* () {
     // SAFETY: Debug.turn obtains replies from this definition's sealed runtime;
     // every public stage result carries the views required by presentation.
-    const reply = cast<
+    const reply = Fn.cast<
       typeof outcome.reply,
       DebugChatReply<Name, Version, Stages>
     >(outcome.reply)

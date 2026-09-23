@@ -1,4 +1,4 @@
-import { Predicate, Context, Effect, Function as Fn, Schema } from "effect"
+import { Context, Effect, Function as Fn, Predicate, Schema } from "effect"
 
 import { recordLatestDebugModelOutputRejected } from "./debug-trace.js"
 import type { JsonValue } from "./json-value.js"
@@ -315,113 +315,111 @@ export const planToolCall = <
 }
 
 /** @internal Generate and guard a call after the owner has run pre-model guards. */
-export const planToolCallAfterGuards = <
+export const planToolCallAfterGuards = Effect.fn(
+  "popcomputer.structured_chat.tool_step.plan",
+)(function* <
   const Tools extends ModelToolTuple,
   const Guards extends ModelGuardTuple = readonly [],
   const Profile extends AnyModelProfile | undefined = undefined,
 >(
   input: PlanToolCallInput<Tools, Guards, Profile>,
-): Effect.Effect<
+): Effect.fn.Return<
   ToolSetCall<Tools>,
   | ChatModelUnavailable
   | UnsupportedModelToolSchema
   | InvalidToolCall
   | ModelGuardError<Guards>,
   ModelRequirement<Profile> | ModelGuardRequirements<Guards>
-> => {
+> {
+  yield* Effect.annotateCurrentSpan({
+    messageCount: input.messages.length,
+    toolCount: input.tools.models.length,
+  })
+
   // SAFETY: ModelProfileInput requires a concrete model whenever Profile is
   // defined; when Profile is undefined, undefined is the only legal value.
   const selected = Fn.cast<typeof input.model, Profile>(input.model)
+  const model = yield* resolveModel(selected)
 
-  return resolveModel(selected).pipe(
-    Effect.flatMap((model) => {
-      const requestParsedCall = (
-        instructions: ReadonlyArray<TrustedInstruction>,
-        attempt: 1 | 2,
-      ) =>
-        model
-          .requestTool({
-            instructions,
-            untrustedMessages: input.messages.map(({ role, content }) => ({
-              role,
-              content,
-            })),
-            tools: input.tools.models,
-            toolChoice: "required",
-            maximumToolCalls: 1,
-            parallelToolCalls: false,
-          })
-          .pipe(
-            Effect.withSpan("popcomputer.structured_chat.model.request", {
-              attributes: {
-                attempt,
-                messageCount: input.messages.length,
-                messageCharacterCount: countUntrustedMessageCharacters(
-                  input.messages,
-                ),
-                instructionCount: instructions.length,
-                modelProfile: selected?.profile ?? "default",
-                toolCount: input.tools.models.length,
-              },
-            }),
-            Effect.flatMap((call) =>
-              input.tools
-                .parseCall(call)
-                .pipe(
-                  Effect.tapError(() =>
-                    recordLatestDebugModelOutputRejected("invalid_tool_call"),
-                  ),
-                ),
+  const requestParsedCall = (
+    instructions: ReadonlyArray<TrustedInstruction>,
+    attempt: 1 | 2,
+  ) =>
+    model
+      .requestTool({
+        instructions,
+        untrustedMessages: input.messages.map(({ role, content }) => ({
+          role,
+          content,
+        })),
+        tools: input.tools.models,
+        toolChoice: "required",
+        maximumToolCalls: 1,
+        parallelToolCalls: false,
+      })
+      .pipe(
+        Effect.withSpan("popcomputer.structured_chat.model.request", {
+          attributes: {
+            attempt,
+            messageCount: input.messages.length,
+            messageCharacterCount: countUntrustedMessageCharacters(
+              input.messages,
             ),
-          )
-
-      return requestParsedCall(input.instructions, 1).pipe(
-        Effect.catchIf(
-          (error) =>
-            input.maximumAttempts !== 1 && isRepairableModelOutput(error),
-          (error) => {
-            const annotations =
-              error._tag === "InvalidToolCall" && error.path !== null
-                ? {
-                    attempt: 2,
-                    errorTag: error._tag,
-                    errorReason: error.reason,
-                    errorPath: error.path,
-                  }
-                : {
-                    attempt: 2,
-                    errorTag: error._tag,
-                    errorReason: error.reason,
-                  }
-
-            return Effect.logWarning("Retrying structured model output").pipe(
-              Effect.annotateLogs(annotations),
-              Effect.andThen(
-                requestParsedCall(
-                  [...input.instructions, invalidOutputRepairInstruction],
-                  2,
-                ),
-              ),
-            )
+            instructionCount: instructions.length,
+            modelProfile: selected?.profile ?? "default",
+            toolCount: input.tools.models.length,
           },
+        }),
+        Effect.flatMap((call) =>
+          input.tools
+            .parseCall(call)
+            .pipe(
+              Effect.tapError(() =>
+                recordLatestDebugModelOutputRejected("invalid_tool_call"),
+              ),
+            ),
         ),
       )
-    }),
-    Effect.tap((call) =>
-      runModelCallGuards(input.guards ?? [], {
-        messages: input.messages,
-        toolNames: input.tools.models.map(({ name }) => name),
-        call,
-      }),
-    ),
-    Effect.withSpan("popcomputer.structured_chat.tool_step.plan", {
-      attributes: {
-        messageCount: input.messages.length,
-        toolCount: input.tools.models.length,
+
+  const call = yield* requestParsedCall(input.instructions, 1).pipe(
+    Effect.catchIf(
+      (error) => input.maximumAttempts !== 1 && isRepairableModelOutput(error),
+      (error) => {
+        const annotations =
+          error._tag === "InvalidToolCall" && error.path !== null
+            ? {
+                attempt: 2,
+                errorTag: error._tag,
+                errorReason: error.reason,
+                errorPath: error.path,
+              }
+            : {
+                attempt: 2,
+                errorTag: error._tag,
+                errorReason: error.reason,
+              }
+
+        return Effect.logWarning("Retrying structured model output").pipe(
+          Effect.annotateLogs(annotations),
+          Effect.andThen(
+            requestParsedCall(
+              [...input.instructions, invalidOutputRepairInstruction],
+              2,
+            ),
+          ),
+        )
       },
-    }),
+    ),
   )
-}
+
+  yield* runModelCallGuards(input.guards ?? [], {
+    messages: input.messages,
+    toolNames: input.tools.models.map(({ name }) => name),
+    call,
+  })
+
+  return call
+})
 
 /**
  * Ask the configured model for one call to a closed tool set, then execute it.
@@ -430,13 +428,15 @@ export const planToolCallAfterGuards = <
  * before any application tool executes. Model-visible results are returned to
  * the application and are never sent through another model request.
  */
-export const runToolStep = <
+export const runToolStep = Effect.fn(
+  "popcomputer.structured_chat.tool_step.run",
+)(function* <
   const Tools extends ToolTuple,
   const Guards extends ModelGuardTuple = readonly [],
   const Profile extends AnyModelProfile | undefined = undefined,
 >(
   input: RunToolStepInput<Tools, Guards, Profile>,
-): Effect.Effect<
+): Effect.fn.Return<
   ToolSetExecution<Tools>,
   | ChatModelUnavailable
   | UnsupportedModelToolSchema
@@ -445,16 +445,16 @@ export const runToolStep = <
   | ModelRequirement<Profile>
   | ToolSetRequirements<Tools>
   | ModelGuardRequirements<Guards>
-> =>
-  planToolCall<Tools, Guards, Profile>(input).pipe(
-    Effect.flatMap(input.tools.execute),
-    Effect.withSpan("popcomputer.structured_chat.tool_step.run", {
-      attributes: {
-        messageCount: input.messages.length,
-        toolCount: input.tools.models.length,
-      },
-    }),
-  )
+> {
+  yield* Effect.annotateCurrentSpan({
+    messageCount: input.messages.length,
+    toolCount: input.tools.models.length,
+  })
+
+  const call = yield* planToolCall<Tools, Guards, Profile>(input)
+
+  return yield* input.tools.execute(call)
+})
 
 const makeInstruction = (value: string): TrustedInstruction =>
   TrustedInstructionSchema.make(value)

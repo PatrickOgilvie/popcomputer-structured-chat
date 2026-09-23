@@ -1,5 +1,4 @@
-import { Context, Function as Fn, Schema } from "effect"
-import type { Effect } from "effect"
+import { Context, type Effect, Function as Fn, Schema } from "effect"
 
 import {
   JsonValueSchema,
@@ -75,7 +74,7 @@ const QuestionsSchema = Schema.Record(
   EvaluationNameSchema,
   QuestionSchema,
 ).check(Schema.makeFilter((value) => Object.keys(value).length > 0))
-const batchIdentity = Symbol("EvaluationBatch")
+const batchIdentity = Symbol("@popcomputer/structured-chat/EvaluationBatch")
 
 /** Validated definition retaining exact question keys and choices. */
 export interface Batch<Q extends QuestionMap> {

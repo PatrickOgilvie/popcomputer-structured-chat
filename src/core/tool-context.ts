@@ -1,5 +1,6 @@
 import { Context, Effect, Schema } from "effect"
 
+import { getOwn } from "./record.js"
 /** Trusted accepted values available during chat stages and explorations. */
 export interface ToolContextService {
   readonly stages: Readonly<
@@ -41,14 +42,10 @@ export const acceptedAnswer = <A>(input: {
   Effect.gen(function* () {
     const context = yield* ToolContext
 
-    const stage = Object.hasOwn(context.stages, input.stage)
-      ? context.stages[input.stage]
-      : undefined
+    const stage = getOwn(context.stages, input.stage)
 
     const answer =
-      stage !== undefined && Object.hasOwn(stage.accepted, input.field)
-        ? stage.accepted[input.field]
-        : undefined
+      stage === undefined ? undefined : getOwn(stage.accepted, input.field)
 
     if (answer === undefined)
       return yield* new AcceptedAnswerUnavailable({

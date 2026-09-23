@@ -1,5 +1,4 @@
-import type { Schema } from "effect"
-import { Effect } from "effect"
+import { Effect, type Schema } from "effect"
 
 import type { JsonValue } from "./json-value.js"
 import { compileToolRegistry } from "./tool-registry.js"
@@ -191,33 +190,33 @@ export const defineToolSet = <const Tools extends ToolTuple>(
 
   const registry = compileToolRegistry(tools)
 
-  const parseCall: ToolSet<Tools>["parseCall"] = (input) =>
-    registry.parseCall(input).pipe(
-      Effect.withSpan("popcomputer.structured_chat.tool_set.parse", {
-        attributes: { toolCount: tools.length },
-      }),
-    )
+  const span = { attributes: { toolCount: tools.length } }
 
-  const execute: ToolSet<Tools>["execute"] = (call) =>
-    registry.execute(call).pipe(
-      Effect.withSpan("popcomputer.structured_chat.tool_set.execute", {
-        attributes: { toolCount: tools.length },
-      }),
-    )
+  const parseCall: ToolSet<Tools>["parseCall"] = Effect.fn(
+    "popcomputer.structured_chat.tool_set.parse",
+    span,
+  )(function* (input: JsonValue) {
+    return yield* registry.parseCall(input)
+  })
+
+  const execute: ToolSet<Tools>["execute"] = Effect.fn(
+    "popcomputer.structured_chat.tool_set.execute",
+    span,
+  )(function* (call: ToolSetCall<Tools>) {
+    return yield* registry.execute(call)
+  })
 
   const executeCall: ToolSet<Tools>["executeCall"] = (input) =>
     parseCall(input).pipe(Effect.flatMap(execute))
 
-  const runCall: ToolSet<Tools>["runCall"] = (input) =>
-    parseCall(input).pipe(
-      Effect.flatMap((call) =>
-        registry.run(call).pipe(
-          Effect.withSpan("popcomputer.structured_chat.tool_set.run", {
-            attributes: { toolCount: tools.length },
-          }),
-        ),
-      ),
-    )
+  const runCall: ToolSet<Tools>["runCall"] = Effect.fn(
+    "popcomputer.structured_chat.tool_set.run",
+    span,
+  )(function* (input: JsonValue) {
+    const call = yield* parseCall(input)
+
+    return yield* registry.run(call)
+  })
 
   return {
     tools,

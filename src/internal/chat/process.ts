@@ -1,13 +1,13 @@
-import { Schema } from "effect"
 import { Data, Effect, Result } from "effect"
 
-import { isAnswerStage } from "../../core/answer-collection.js"
-import type { InvalidChatTransition } from "../../core/chat.js"
-import type { AnswerStageDefinitionContract } from "../../core/collect-stage.js"
 import {
-  readCollectStageInspection,
-  readCollectStageRuntime,
-} from "../../core/collect-stage.js"
+  type AnswerStageDefinitionContract,
+  isAnswerStage,
+  readAnswerStageInspection,
+  readAnswerStageRuntime,
+} from "../../core/answer-collection.js"
+import type { RuntimeChatState } from "../../core/chat-state.js"
+import type { InvalidChatTransition } from "../../core/chat.js"
 import type { ConversationMessage } from "../../core/conversation-message.js"
 import { recordDebugEvent } from "../../core/debug-trace.js"
 import {
@@ -15,15 +15,12 @@ import {
   type InteractionStageDefinitionContract,
   type InteractionCommandContext,
 } from "../../core/interaction-stage.js"
-import { JsonValueSchema } from "../../core/json-value.js"
 import type { RepairCorrection } from "../../core/repair.js"
-import type {
-  CommandStageDefinitionContract,
-  ToolStageDefinitionContract,
-} from "../../core/stage.js"
 import {
+  type CommandStageDefinitionContract,
   readCommandStageRuntime,
   readToolStageRuntime,
+  type ToolStageDefinitionContract,
 } from "../../core/stage.js"
 import { ToolContext } from "../../core/tool-context.js"
 import type { ToolClarification } from "../../core/tool-planning.js"
@@ -34,22 +31,6 @@ import {
   type ToolStageTrigger,
   type SelectionAcceptedAnswer,
 } from "../../core/tool-selection.js"
-
-/** Runtime-erased persisted state used only after definition-owned decoding. */
-export interface RuntimeChatState {
-  readonly schemaVersion: number
-  readonly chat: string
-  readonly stage: number
-  readonly status: "active" | "complete"
-  readonly stages: Readonly<
-    Partial<
-      Record<string, ReturnType<typeof readCollectStageRuntime>["initialState"]>
-    >
-  >
-  readonly repair?: {
-    readonly pendingStages: ReadonlyArray<number>
-  }
-}
 
 type ActiveNode = Data.TaggedEnum<{
   Collect: { readonly stage: AnswerStageDefinitionContract }
@@ -140,13 +121,10 @@ export const make = (input: ProcessInput): Process => {
         if (!isAnswerStage(stage)) continue
         const saved = state.stages[stage.name]
         if (saved === undefined) continue
-        for (const field of readCollectStageInspection(stage).fields) {
+        for (const field of readAnswerStageInspection(stage).fields) {
           const answer = saved.accepted[field.field]
           if (answer === undefined) continue
           const value = yield* field.encodeValue(answer.value).pipe(
-            Effect.flatMap((encoded) =>
-              Schema.decodeUnknownEffect(JsonValueSchema)(encoded),
-            ),
             Effect.mapError(
               () =>
                 new InvalidToolPlanningContext({
@@ -288,7 +266,7 @@ export const make = (input: ProcessInput): Process => {
         }
 
         case "Collect": {
-          const runtime = readCollectStageRuntime(node.stage)
+          const runtime = readAnswerStageRuntime(node.stage)
           const collectState = state.stages[node.stage.name]
 
           if (collectState === undefined) {

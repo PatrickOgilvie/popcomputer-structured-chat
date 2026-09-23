@@ -1,10 +1,10 @@
 import {
   Data,
-  Predicate,
   Effect,
   Exit,
   Layer,
   Option,
+  Predicate,
   Queue,
   Ref,
   Schema,
@@ -22,18 +22,17 @@ import { ActionScope } from "./action.js"
 import {
   Binding,
   Connection,
-  ConnectionFailure,
+  LiveConnectionFailure,
   Event,
-  InvalidAction,
-  InvalidPresentation,
+  InvalidLiveAction,
+  InvalidLivePresentation,
   Presentation,
   Publisher,
-  RecoveryRequired,
+  LiveRecoveryRequired,
   Publication,
-  type PublicationFailure,
+  type LivePublicationFailure,
 } from "./contracts.js"
-import type { JournalFailure } from "./journal.js"
-import { Journal, identity } from "./journal.js"
+import { identity, Journal, type LiveJournalFailure } from "./journal.js"
 import * as SessionState from "./state.js"
 import type { State, Delegation, Delivery } from "./state.js"
 import { Decision, DecisionScope } from "./transcript.js"
@@ -57,17 +56,17 @@ export interface Summary {
 
 /** Expected runtime, journal, provider, or application-channel failure. */
 export type Failure =
-  | ConnectionFailure
-  | InvalidAction
-  | InvalidPresentation
-  | JournalFailure
-  | RecoveryRequired
-  | PublicationFailure
+  | LiveConnectionFailure
+  | InvalidLiveAction
+  | InvalidLivePresentation
+  | LiveJournalFailure
+  | LiveRecoveryRequired
+  | LivePublicationFailure
 
 type Mail<E, D> = Data.TaggedEnum<{
   Provider: { readonly event: Event }
   TransportEnded: {
-    readonly exit: Exit.Exit<void, ConnectionFailure>
+    readonly exit: Exit.Exit<void, LiveConnectionFailure>
   }
   Resolved: {
     readonly id: string
@@ -80,10 +79,10 @@ type Mail<E, D> = Data.TaggedEnum<{
   }
   Delivered: { readonly exit: Exit.Exit<void, Failure> }
   CloseSent: {
-    readonly exit: Exit.Exit<void, ConnectionFailure>
+    readonly exit: Exit.Exit<void, LiveConnectionFailure>
   }
   Notified: {
-    readonly exit: Exit.Exit<void, PublicationFailure>
+    readonly exit: Exit.Exit<void, LivePublicationFailure>
   }
   Stop: {}
 }>
@@ -120,25 +119,27 @@ export const withoutPublisher: Layer.Layer<Publisher> = Layer.succeed(
  * @template D The readiness policy's expected failures.
  * @template DR The readiness policy's required services.
  */
-export const run = <E, R, D, DR>(
-  bindingInput: Binding,
-  program: {
-    readonly resolve: Effect.Effect<Decision, D, DR>
-    readonly action: Effect.Effect<Presentation, E, R>
-    readonly stop?: Effect.Effect<void>
-  },
-) =>
-  Effect.gen(function* () {
+export const run = Effect.fn("popcomputer.structured_chat.live.session")(
+  function* <E, R, D, DR>(
+    bindingInput: Binding,
+    program: {
+      readonly resolve: Effect.Effect<Decision, D, DR>
+      readonly action: Effect.Effect<Presentation, E, R>
+      readonly stop?: Effect.Effect<void>
+    },
+  ) {
     const binding = yield* Schema.decodeEffect(Binding)(bindingInput, {
       onExcessProperty: "error",
     }).pipe(
-      Effect.mapError(() => new InvalidAction({ reason: "invalid_binding" })),
+      Effect.mapError(
+        () => new InvalidLiveAction({ reason: "invalid_binding" }),
+      ),
     )
 
     const connection = yield* Connection
 
     if (connection.sessionId !== binding.liveSessionId)
-      return yield* new ConnectionFailure({ reason: "session_mismatch" })
+      return yield* new LiveConnectionFailure({ reason: "session_mismatch" })
     const journal = yield* Journal
     const publisher = yield* Publisher
     const store = yield* ChatSessionStore
@@ -146,7 +147,7 @@ export const run = <E, R, D, DR>(
     // Reject a known prior run before claiming ownership. The second check under
     // ownership protects against a concurrent owner completing between checks.
     if (Option.isSome(yield* journal.load(binding)))
-      return yield* new RecoveryRequired({ reason: "session_interrupted" })
+      return yield* new LiveRecoveryRequired({ reason: "session_interrupted" })
 
     const owned = yield* journal.own(
       binding,
@@ -167,7 +168,7 @@ export const run = <E, R, D, DR>(
                   { onExcessProperty: "error" },
                 ).pipe(
                   Effect.mapError(
-                    () => new InvalidAction({ reason: "invalid_state" }),
+                    () => new InvalidLiveAction({ reason: "invalid_state" }),
                   ),
                 )
 
@@ -329,7 +330,7 @@ export const run = <E, R, D, DR>(
                 .pipe(Effect.result)
 
               if (Predicate.isTagged(sent, "Failure")) {
-                const outcome = Schema.is(InvalidPresentation)(sent.failure)
+                const outcome = Schema.is(InvalidLivePresentation)(sent.failure)
                   ? "Rejected"
                   : "Unknown"
 
@@ -408,7 +409,7 @@ export const run = <E, R, D, DR>(
                 if (Exit.isFailure(message.exit))
                   return yield* Effect.failCause(message.exit.cause)
 
-                return yield* new ConnectionFailure({
+                return yield* new LiveConnectionFailure({
                   reason: "unexpected_end",
                 })
               case "CloseSent":
@@ -432,7 +433,7 @@ export const run = <E, R, D, DR>(
                   { onExcessProperty: "error" },
                 ).pipe(
                   Effect.mapError(
-                    () => new InvalidAction({ reason: "invalid_decision" }),
+                    () => new InvalidLiveAction({ reason: "invalid_decision" }),
                   ),
                 )
 
@@ -444,7 +445,7 @@ export const run = <E, R, D, DR>(
 
                 if (Decision.guards.Supersede(decision)) {
                   if (decision.delegationId !== activeId)
-                    return yield* new InvalidAction({
+                    return yield* new InvalidLiveAction({
                       reason: "invalid_decision",
                     })
 
@@ -491,7 +492,9 @@ export const run = <E, R, D, DR>(
                       Effect.flatMap((used) =>
                         used
                           ? Effect.fail(
-                              new InvalidAction({ reason: "multiple_turns" }),
+                              new InvalidLiveAction({
+                                reason: "multiple_turns",
+                              }),
                             )
                           : Effect.void,
                       ),
@@ -542,7 +545,8 @@ export const run = <E, R, D, DR>(
                   { onExcessProperty: "error" },
                 ).pipe(
                   Effect.mapError(
-                    () => new InvalidPresentation({ reason: "invalid_output" }),
+                    () =>
+                      new InvalidLivePresentation({ reason: "invalid_output" }),
                   ),
                 )
 
@@ -569,7 +573,8 @@ export const run = <E, R, D, DR>(
                   onExcessProperty: "error",
                 }).pipe(
                   Effect.mapError(
-                    () => new ConnectionFailure({ reason: "invalid_event" }),
+                    () =>
+                      new LiveConnectionFailure({ reason: "invalid_event" }),
                   ),
                 )
 
@@ -590,7 +595,8 @@ export const run = <E, R, D, DR>(
     )
 
     if (Option.isNone(owned))
-      return yield* new RecoveryRequired({ reason: "session_interrupted" })
+      return yield* new LiveRecoveryRequired({ reason: "session_interrupted" })
 
     return owned.value
-  }).pipe(Effect.withSpan("popcomputer.structured_chat.live.session"))
+  },
+)

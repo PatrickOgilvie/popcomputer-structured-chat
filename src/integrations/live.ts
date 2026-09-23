@@ -17,15 +17,15 @@ export type { Candidate, DecisionContext } from "../live/transcript.js"
 export {
   Binding,
   Connection,
-  ConnectionFailure,
+  LiveConnectionFailure as ConnectionFailure,
   Event,
   Fragment,
-  InvalidAction,
-  InvalidPresentation,
+  InvalidLiveAction as InvalidAction,
+  InvalidLivePresentation as InvalidPresentation,
   Presentation,
   Publisher,
-  PublicationFailure,
-  RecoveryRequired,
+  LivePublicationFailure as PublicationFailure,
+  LiveRecoveryRequired as RecoveryRequired,
 } from "../live/contracts.js"
 
 export type {
@@ -34,4 +34,8 @@ export type {
   Publication,
 } from "../live/contracts.js"
 
-export { Journal, JournalFailure, journal } from "../live/journal.js"
+export {
+  Journal,
+  LiveJournalFailure as JournalFailure,
+  journal,
+} from "../live/journal.js"

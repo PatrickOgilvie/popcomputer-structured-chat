@@ -78,7 +78,7 @@ export {
   AnswerValidationRejected,
   InvalidCollectStageResponse as InvalidResponse,
   InvalidCollectStageResponseReasonSchema as InvalidResponseReasonSchema,
-} from "./core/collect-stage.js"
+} from "./core/answer-errors.js"
 
 export type {
   AcceptedAnswer,
@@ -96,7 +96,7 @@ export type {
   CollectStageTurn as Turn,
   DefineCollectStageInput as DefineCollectInput,
   IssuedCollectQuestion as IssuedQuestion,
-} from "./core/collect-stage.js"
+} from "./core/answer-collection.js"
 
 export type {
   ChatStageDefinitionContract as DefinitionContract,

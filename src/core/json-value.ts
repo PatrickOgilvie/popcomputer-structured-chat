@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 
 /** Primitive value representable by JSON. */
 export type JsonPrimitive = string | number | boolean | null
@@ -22,3 +22,16 @@ export const JsonValueSchema: Schema.Codec<JsonValue> = Schema.suspend(() =>
     Schema.Record(Schema.String, JsonValueSchema),
   ]),
 )
+
+/** @internal Encode a decoded value with its codec and prove the result is JSON. */
+export const encodeJsonValue = <
+  S extends Schema.Constraint & { readonly EncodingServices: never },
+>(
+  schema: S,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the codec owns the value's shape; this boundary only proves JSON transportability
+  value: unknown,
+  options?: { readonly onExcessProperty?: "error" },
+): Effect.Effect<JsonValue, Schema.SchemaError> =>
+  Schema.encodeUnknownEffect(schema)(value, options).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(JsonValueSchema)),
+  )

@@ -1,5 +1,4 @@
-import type { Effect } from "effect"
-import { Function as Fn, Schema } from "effect"
+import { type Effect, Function as Fn, Schema } from "effect"
 
 import type { AnyDefinition, Definition } from "../../Chat.js"
 import {

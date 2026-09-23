@@ -1,5 +1,4 @@
-import type { Effect } from "effect"
-import { Context, Data, Schema, type Stream } from "effect"
+import { Context, Data, type Effect, Schema, type Stream } from "effect"
 
 import { ChatNameSchema, ChatVersionSchema } from "../core/chat-identity.js"
 import { StructuredChatPersistedTurnResponseSchema } from "../core/protocol.js"
@@ -70,7 +69,7 @@ export const Presentation = Schema.Struct({
 export interface Presentation extends Schema.Schema.Type<typeof Presentation> {}
 
 /** Safe failure at the provider connection boundary. */
-export class ConnectionFailure extends Schema.TaggedError<ConnectionFailure>()(
+export class LiveConnectionFailure extends Schema.TaggedError<LiveConnectionFailure>()(
   "LiveConnectionFailure",
   {
     reason: Schema.Literals([
@@ -86,7 +85,7 @@ export class ConnectionFailure extends Schema.TaggedError<ConnectionFailure>()(
 ) {}
 
 /** A presentation cannot be safely sent to its intended consumers. */
-export class InvalidPresentation extends Schema.TaggedError<InvalidPresentation>()(
+export class InvalidLivePresentation extends Schema.TaggedError<InvalidLivePresentation>()(
   "InvalidLivePresentation",
   {
     reason: Schema.Literals([
@@ -99,7 +98,7 @@ export class InvalidPresentation extends Schema.TaggedError<InvalidPresentation>
 ) {}
 
 /** A binding, policy decision, or action violates the Live runtime contract. */
-export class InvalidAction extends Schema.TaggedError<InvalidAction>()(
+export class InvalidLiveAction extends Schema.TaggedError<InvalidLiveAction>()(
   "InvalidLiveAction",
   {
     reason: Schema.Literals([
@@ -117,7 +116,7 @@ export class InvalidAction extends Schema.TaggedError<InvalidAction>()(
 ) {}
 
 /** An interrupted or uncertain session cannot safely resume automatically. */
-export class RecoveryRequired extends Schema.TaggedError<RecoveryRequired>()(
+export class LiveRecoveryRequired extends Schema.TaggedError<LiveRecoveryRequired>()(
   "LiveRecoveryRequired",
   {
     reason: Schema.Literals([
@@ -139,11 +138,11 @@ export interface Commentary {
 /** A connected provider session. Acquisition and cleanup belong to its supplying layer. */
 export interface ConnectionService {
   readonly sessionId: string
-  readonly events: Stream.Stream<Event, ConnectionFailure>
+  readonly events: Stream.Stream<Event, LiveConnectionFailure>
   readonly commentary: (
     input: Commentary,
-  ) => Effect.Effect<void, ConnectionFailure | InvalidPresentation>
-  readonly close: () => Effect.Effect<void, ConnectionFailure>
+  ) => Effect.Effect<void, LiveConnectionFailure | InvalidLivePresentation>
+  readonly close: () => Effect.Effect<void, LiveConnectionFailure>
 }
 
 /** Media/provider transport, independent of application workflow execution. */
@@ -170,7 +169,7 @@ export type Publication = Data.TaggedEnum<{
 export const Publication = Data.taggedEnum<Publication>()
 
 /** The application channel could not publish an update. */
-export class PublicationFailure extends Schema.TaggedError<PublicationFailure>()(
+export class LivePublicationFailure extends Schema.TaggedError<LivePublicationFailure>()(
   "LivePublicationFailure",
   { reason: Schema.Literal("publish_failed") },
 ) {}
@@ -181,6 +180,6 @@ export class Publisher extends Context.Service<
   {
     readonly publish: (
       publication: Publication,
-    ) => Effect.Effect<void, PublicationFailure>
+    ) => Effect.Effect<void, LivePublicationFailure>
   }
 >()("@popcomputer/structured-chat/live/Publisher") {}

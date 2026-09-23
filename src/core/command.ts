@@ -1,5 +1,7 @@
 import { Effect, Schema } from "effect"
 
+import { sha256Hex } from "./digest.js"
+
 /** Opaque deterministic identity shared by command attempts in one chat turn. */
 export const CommandIdSchema = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^cmd_[0-9a-f]{64}$/)),
@@ -18,9 +20,6 @@ export interface CommandIdentityInput {
   readonly expectedRevision: string | null
 }
 
-const toHex = (bytes: Uint8Array): string =>
-  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
-
 const CommandIdentity = Schema.Tuple([
   Schema.String,
   Schema.String,
@@ -34,9 +33,9 @@ const CommandIdentity = Schema.Tuple([
  * The chosen command and its arguments belong in the application receipt,
  * so a retry cannot evade that receipt by selecting another command.
  */
-export const deriveCommandId = Effect.fn("Command.deriveId")(function* (
-  input: CommandIdentityInput,
-): Effect.fn.Return<CommandId> {
+export const deriveCommandId = Effect.fn(
+  "popcomputer.structured_chat.command.derive_id",
+)(function* (input: CommandIdentityInput): Effect.fn.Return<CommandId> {
   // These typed identity fields are already parsed by the owning session.
   const identity = yield* Schema.encodeEffect(
     Schema.fromJsonString(CommandIdentity),
@@ -48,11 +47,7 @@ export const deriveCommandId = Effect.fn("Command.deriveId")(function* (
     input.expectedRevision,
   ]).pipe(Effect.orDie)
 
-  const encoded = new TextEncoder().encode(identity)
+  const digest = yield* sha256Hex(identity)
 
-  const digest = yield* Effect.promise(() =>
-    crypto.subtle.digest("SHA-256", encoded),
-  )
-
-  return CommandIdSchema.make(`cmd_${toHex(new Uint8Array(digest))}`)
+  return CommandIdSchema.make(`cmd_${digest}`)
 })

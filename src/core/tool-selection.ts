@@ -1,6 +1,6 @@
 import { Effect, Function as Fn, Schema } from "effect"
 
-import type { AcceptedAnswerEvidence } from "./collect-stage.js"
+import type { AcceptedAnswerEvidence } from "./answer-collection.js"
 import {
   structuredDefinition,
   type StructuredDefinition,
@@ -84,7 +84,9 @@ export class InvalidToolPlanningContext extends Schema.TaggedError<InvalidToolPl
   { stage: Schema.String, field: Schema.String },
 ) {}
 
-const selectorRuntime = Symbol("ToolSelectorRuntime")
+const selectorRuntime = Symbol(
+  "@popcomputer/structured-chat/ToolSelectorRuntime",
+)
 /** Sealed selector definition retaining its registered tools. */
 export interface ToolSelectorContract extends StructuredDefinition<"tool_selector"> {
   readonly tools: ToolTuple

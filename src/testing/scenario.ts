@@ -1,11 +1,11 @@
 import { Effect, Layer, Ref, Result, Schema } from "effect"
 
-import type { AnswerDetectorContract } from "../core/answer-detector.js"
 import type {
   AnswerFields,
   CollectAnswers,
   CollectStage,
-} from "../core/collect-stage.js"
+} from "../core/answer-collection.js"
+import type { AnswerDetectorContract } from "../core/answer-detector.js"
 import type { ExtractionContextContract } from "../core/extraction-context.js"
 import { JsonValueSchema, type JsonValue } from "../core/json-value.js"
 import type { ModelGuardTuple } from "../core/model-guard.js"

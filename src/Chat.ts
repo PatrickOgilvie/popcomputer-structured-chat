@@ -1,34 +1,32 @@
 import { Effect, Function as Fn } from "effect"
 
-import type { AnswerStageDefinitionContract } from "./core/answer-collection.js"
-import type { ChatContext } from "./core/chat-context.js"
 import type {
-  ChatError,
-  ChatExploreError,
-  ChatExploreInput,
-  ChatExploreRequirements,
-  ChatExplorationRun,
-  ChatExplorationTuple,
-  ChatReply,
-  ChatReplyError,
-  ChatReplyInput,
-  ChatRequirements,
-  ChatStageTuple,
-  ChatState,
-  ChatTurn,
-  DefineChatInput,
-} from "./core/chat.js"
+  AcceptedAnswer,
+  AnswerStageDefinitionContract,
+  CollectAnswers,
+  AnswerFieldsOf,
+} from "./core/answer-collection.js"
+import type { ChatContext } from "./core/chat-context.js"
 import {
+  type ChatError,
+  type ChatExplorationRun,
+  type ChatExplorationTuple,
+  type ChatExploreError,
+  type ChatExploreInput,
+  type ChatExploreRequirements,
   ChatNameSchema,
+  type ChatReply,
+  type ChatReplyError,
+  type ChatReplyInput,
+  type ChatRequirements,
+  type ChatStageTuple,
+  type ChatState,
+  type ChatTurn,
   ChatVersionSchema,
+  type DefineChatInput,
   InvalidChatTransition,
   InvalidChatTransitionReasonSchema,
 } from "./core/chat.js"
-import type {
-  AcceptedAnswer,
-  CollectAnswers,
-  CollectStage,
-} from "./core/collect-stage.js"
 import type {
   AnyComposedDefinition,
   ConversationReply,
@@ -44,20 +42,12 @@ import type {
 } from "./core/composition.js"
 import type { ConversationState } from "./core/conversation-state.js"
 import type { StructuredDefinition } from "./core/definition.js"
-import type { InterviewStage } from "./core/interview-stage.js"
 import type {
   AdvanceResult as ControlledResult,
   ControlledTurnInput,
   InvalidObservedTurn,
 } from "./core/observed-turn.js"
 import type { OutboundMessageContract } from "./core/outbound-message.js"
-import type {
-  PresentChatReplyOptions,
-  PresentChatExplorationOptions,
-  PresentableExploration,
-  StructuredChatPersistedTurnResponse,
-  StructuredChatExplorationResponse,
-} from "./core/protocol.js"
 import {
   AssistantDataPartSchema,
   AssistantMessagePartSchema,
@@ -66,27 +56,32 @@ import {
   findExplorationParts,
   findTurnParts,
   InvalidChatPresentation,
+  type PresentableExploration,
   presentAnswerValidationRejection as presentValidationRejection,
-  presentChatNotice as notice,
   presentChatExploration,
+  type PresentChatExplorationOptions,
+  presentChatNotice as notice,
   presentChatReply,
+  type PresentChatReplyOptions,
+  StructuredChatAssistantMessageSchema,
   StructuredChatExplorationCallSchema,
   StructuredChatExplorationRequestSchema,
+  type StructuredChatExplorationResponse,
   StructuredChatExplorationResponseSchema,
   StructuredChatNonProgressingResponseSchema,
+  type StructuredChatPersistedTurnResponse,
   StructuredChatPersistedTurnResponseSchema,
-  structuredChatTurnRequestSchema,
-  StructuredChatAssistantMessageSchema,
   StructuredChatSessionReferenceSchema,
+  structuredChatTurnRequestSchema,
   StructuredChatTurnRequestSchema,
   StructuredChatTurnResponseSchema,
   Text,
+  type PresentableChatReply,
+  type PresentableTurn,
 } from "./core/protocol.js"
-import type { InterviewFields } from "./core/question-selection.js"
 import type { ChatSessionStore } from "./core/session.js"
 import type { ToolTuple } from "./core/tool-set.js"
-import { TurnControl } from "./core/turn-control.js"
-import type { TurnControlFailure } from "./core/turn-control.js"
+import { TurnControl, type TurnControlFailure } from "./core/turn-control.js"
 import {
   InvalidChatUserAnswerProjection,
   InvalidChatUserAnswerProjectionReasonSchema,
@@ -205,31 +200,6 @@ export type Requirements<Chat extends AnyDefinition> =
         >
       ? ChatRequirements<Stages>
       : never
-
-type AnswerFieldsOf<Stage> =
-  Stage extends InterviewStage<
-    infer _IN,
-    infer Bank,
-    infer _IG,
-    infer _IP,
-    infer _ID,
-    infer _IC,
-    infer _IS,
-    infer _II
-  >
-    ? InterviewFields<Bank>
-    : Stage extends CollectStage<
-          infer _Name,
-          infer Fields,
-          infer _Guards,
-          infer _Profile,
-          infer _Resolver,
-          infer _Enrichment
-        >
-      ? Fields
-      : never
-
-type PresentableTurn = Parameters<typeof presentChatReply>[0]["turn"]
 
 type PresentableExplorationRun<Explorations extends ToolTuple> =
   ChatExplorationRun<Explorations> & PresentableExploration
@@ -430,7 +400,7 @@ export const present = <C extends AnyDefinition>(
         // SAFETY: both compiled runtimes emit the same presentation variants; composition adds invocation scope and issued messages.
         const presentable = Fn.cast<
           typeof reply,
-          Parameters<typeof presentChatReply>[0]
+          PresentableChatReply<PresentableTurn>
         >(reply)
 
         // SAFETY: each callback receives the exact turn union carried by this opaque chat.

@@ -11,11 +11,11 @@ import { InvalidQuestionSelection } from "./question-selection.js"
 import type { AdaptiveQuestion, FixedQuestion } from "./question.js"
 import type { ToolInputsContract } from "./tool-inputs.js"
 import { makeToolPlanner } from "./tool-planning.js"
-import { defineToolSelector, type ToolPlanningFrame } from "./tool-selection.js"
+import { type ToolPlanningFrame } from "./tool-selection.js"
 import { defineToolSet, type ToolSetCall, type ToolTuple } from "./tool-set.js"
 
 /** @internal Reuse query argument planning after the interview has chosen an action.
- * The fixed selector cannot replace that action with another tool or completion.
+ * The fixed target cannot be replaced with another tool or completion.
  */
 export const createInterviewTools = <
   P extends AnyModelProfile | undefined,
@@ -29,20 +29,8 @@ export const createInterviewTools = <
   readonly model: ModelProfileInput<P>
 }) => {
   const toolSet = defineToolSet(...input.tools)
-  const planners = new Map(
-    toolSet.models.map((tool) => [
-      tool.name,
-      makeToolPlanner({
-        ...input,
-        selection: defineToolSelector(input.tools, () =>
-          Effect.succeed({
-            _tag: "Selected",
-            target: { _tag: "Tool", name: tool.name },
-          }),
-        ),
-      }),
-    ]),
-  )
+  const registered = new Set(toolSet.models.map((tool) => tool.name))
+  const plan = makeToolPlanner(input)
   return {
     models: toolSet.models,
     run: Effect.fn("popcomputer.structured_chat.interview.tool")(function* (
@@ -50,12 +38,13 @@ export const createInterviewTools = <
       messages: ReadonlyArray<UntrustedMessage>,
       frame: ToolPlanningFrame,
     ) {
-      const plan = planners.get(name)
-      if (plan === undefined)
+      if (!registered.has(name))
         return yield* new InvalidQuestionSelection({
           reason: "target_not_offered",
         })
-      const outcome = yield* plan(messages, frame)
+      const outcome = yield* plan(messages, frame, {
+        target: { _tag: "Tool", name },
+      })
       if (outcome._tag === "Clarification") return outcome
       // SAFETY: this planner validates arguments against this exact query registry; no repair action is offered.
       const call = Fn.cast<

@@ -1,5 +1,13 @@
-import type { Redacted } from "effect"
-import { Context, Effect, Layer, Option, Queue, Schema, Stream } from "effect"
+import {
+  Context,
+  Effect,
+  Layer,
+  Option,
+  Queue,
+  type Redacted,
+  Schema,
+  Stream,
+} from "effect"
 import {
   HttpClient,
   HttpClientRequest,
@@ -9,11 +17,11 @@ import { Socket } from "effect/unstable/socket"
 
 import {
   Connection,
-  ConnectionFailure,
+  LiveConnectionFailure,
   Event,
   Fragment,
   Id,
-  InvalidPresentation,
+  InvalidLivePresentation,
   type Commentary,
 } from "../live/contracts.js"
 
@@ -21,7 +29,9 @@ import {
 export class TextTokens extends Context.Service<
   TextTokens,
   {
-    readonly count: (text: string) => Effect.Effect<number, InvalidPresentation>
+    readonly count: (
+      text: string,
+    ) => Effect.Effect<number, InvalidLivePresentation>
   }
 >()("@popcomputer/structured-chat/live/openai/TextTokens") {}
 
@@ -58,7 +68,9 @@ const Usage = Schema.Struct({
 })
 
 /** Decode only this adapter's events; unrelated media and future event kinds are ignored. */
-export const decodeEvent = Effect.fn("OpenAILive.decodeEvent")(
+export const decodeEvent = Effect.fn(
+  "popcomputer.structured_chat.live.openai.decode_event",
+)(
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the provider I/O decoder; every recognized payload is parsed here.
   function* (input: unknown) {
     const envelope = yield* Schema.decodeUnknownEffect(Envelope)(input)
@@ -133,7 +145,7 @@ export const decodeEvent = Effect.fn("OpenAILive.decodeEvent")(
         return Option.none<Event>()
     }
   },
-  Effect.mapError(() => new ConnectionFailure({ reason: "invalid_event" })),
+  Effect.mapError(() => new LiveConnectionFailure({ reason: "invalid_event" })),
 )
 
 const Append = Schema.Struct({
@@ -147,7 +159,7 @@ const Append = Schema.Struct({
 
 const connectionLayer = (
   sessionId: string,
-): Layer.Layer<Connection, ConnectionFailure, Socket.Socket | TextTokens> =>
+): Layer.Layer<Connection, LiveConnectionFailure, Socket.Socket | TextTokens> =>
   Layer.effect(
     Connection,
     Effect.gen(function* () {
@@ -155,7 +167,7 @@ const connectionLayer = (
       const tokens = yield* TextTokens
       const write = yield* socket.writer
 
-      const events = yield* Queue.make<Event, ConnectionFailure>({
+      const events = yield* Queue.make<Event, LiveConnectionFailure>({
         capacity: 256,
         strategy: "dropping",
       })
@@ -164,11 +176,14 @@ const connectionLayer = (
         .runString((frame) =>
           Effect.gen(function* () {
             if (frame.length > 1_000_000)
-              return yield* new ConnectionFailure({ reason: "invalid_event" })
+              return yield* new LiveConnectionFailure({
+                reason: "invalid_event",
+              })
 
             const json: unknown = yield* Effect.try({
               try: () => JSON.parse(frame),
-              catch: () => new ConnectionFailure({ reason: "invalid_event" }),
+              catch: () =>
+                new LiveConnectionFailure({ reason: "invalid_event" }),
             })
 
             const event = yield* decodeEvent(json)
@@ -177,21 +192,21 @@ const connectionLayer = (
               Option.isSome(event) &&
               !(yield* Queue.offer(events, event.value))
             )
-              return yield* new ConnectionFailure({ reason: "read_failed" })
+              return yield* new LiveConnectionFailure({ reason: "read_failed" })
           }),
         )
         .pipe(
           Effect.mapError((error) =>
-            Schema.is(ConnectionFailure)(error)
+            Schema.is(LiveConnectionFailure)(error)
               ? error
-              : new ConnectionFailure({ reason: "read_failed" }),
+              : new LiveConnectionFailure({ reason: "read_failed" }),
           ),
           Effect.matchCauseEffect({
             onFailure: (cause) => Queue.failCause(events, cause),
             onSuccess: () =>
               Queue.fail(
                 events,
-                new ConnectionFailure({ reason: "unexpected_end" }),
+                new LiveConnectionFailure({ reason: "unexpected_end" }),
               ),
           }),
           Effect.forkScoped,
@@ -200,26 +215,28 @@ const connectionLayer = (
       return Connection.of({
         sessionId,
         events: Stream.fromQueue(events),
-        commentary: Effect.fn("OpenAILive.commentary")(function* (
-          input: Commentary,
-        ) {
+        commentary: Effect.fn(
+          "popcomputer.structured_chat.live.openai.commentary",
+        )(function* (input: Commentary) {
           const append = yield* Schema.decodeEffect(Append)(input, {
             onExcessProperty: "error",
           }).pipe(
             Effect.mapError(
-              () => new InvalidPresentation({ reason: "invalid_output" }),
+              () => new InvalidLivePresentation({ reason: "invalid_output" }),
             ),
           )
 
           const count = yield* tokens.count(append.content)
 
           if (!Number.isSafeInteger(count) || count < 1)
-            return yield* new InvalidPresentation({
+            return yield* new InvalidLivePresentation({
               reason: "token_count_unavailable",
             })
 
           if (count > 500)
-            return yield* new InvalidPresentation({ reason: "speech_budget" })
+            return yield* new InvalidLivePresentation({
+              reason: "speech_budget",
+            })
           yield* write(
             JSON.stringify({
               type: "session.commentary.append",
@@ -229,14 +246,14 @@ const connectionLayer = (
             }),
           ).pipe(
             Effect.mapError(
-              () => new ConnectionFailure({ reason: "write_failed" }),
+              () => new LiveConnectionFailure({ reason: "write_failed" }),
             ),
           )
         }),
-        close: Effect.fn("OpenAILive.close")(() =>
+        close: Effect.fn("popcomputer.structured_chat.live.openai.close")(() =>
           write(JSON.stringify({ type: "session.close" })).pipe(
             Effect.mapError(
-              () => new ConnectionFailure({ reason: "write_failed" }),
+              () => new LiveConnectionFailure({ reason: "write_failed" }),
             ),
           ),
         ),
@@ -246,7 +263,9 @@ const connectionLayer = (
 
 const parseSessionId = (sessionId: string) =>
   Schema.decodeEffect(Id)(sessionId).pipe(
-    Effect.mapError(() => new ConnectionFailure({ reason: "invalid_input" })),
+    Effect.mapError(
+      () => new LiveConnectionFailure({ reason: "invalid_input" }),
+    ),
   )
 
 const urlForSession = (sessionId: string) =>
@@ -263,7 +282,7 @@ const urlForSession = (sessionId: string) =>
 export const connection = <E, R>(options: {
   readonly sessionId: string
   readonly socket: (url: string) => Layer.Layer<Socket.Socket, E, R>
-}): Layer.Layer<Connection, ConnectionFailure | E, TextTokens | R> =>
+}): Layer.Layer<Connection, LiveConnectionFailure | E, TextTokens | R> =>
   Layer.unwrap(
     parseSessionId(options.sessionId).pipe(
       Effect.map((sessionId) =>
@@ -277,7 +296,7 @@ export const connection = <E, R>(options: {
 /** Validated sideband URL for advanced integrations constructing their own transport adapter. */
 export const sidebandUrl = (
   sessionId: string,
-): Effect.Effect<string, ConnectionFailure> =>
+): Effect.Effect<string, LiveConnectionFailure> =>
   parseSessionId(sessionId).pipe(Effect.map(urlForSession))
 
 const SessionOffer = Schema.Struct({
@@ -306,38 +325,42 @@ export interface SessionAnswer extends Schema.Schema.Type<
  * instructions and the API key must be supplied by trusted application code.
  * No automatic retry: an uncertain create can have created a billable session.
  */
-export const createSession = Effect.fn("OpenAILive.createSession")(
-  function* (options: {
-    readonly apiKey: Redacted.Redacted<string>
-    readonly sdp: string
-    readonly instructions: string
-  }) {
-    const offer = yield* Schema.decodeEffect(SessionOffer)({
-      sdp: options.sdp,
-      instructions: options.instructions,
-    }).pipe(
-      Effect.mapError(() => new ConnectionFailure({ reason: "invalid_input" })),
-    )
+export const createSession = Effect.fn(
+  "popcomputer.structured_chat.live.openai.create_session",
+)(function* (options: {
+  readonly apiKey: Redacted.Redacted<string>
+  readonly sdp: string
+  readonly instructions: string
+}) {
+  const offer = yield* Schema.decodeEffect(SessionOffer)({
+    sdp: options.sdp,
+    instructions: options.instructions,
+  }).pipe(
+    Effect.mapError(
+      () => new LiveConnectionFailure({ reason: "invalid_input" }),
+    ),
+  )
 
-    const request = yield* HttpClientRequest.post(
-      "https://api.openai.com/v1/live/sessions",
-    ).pipe(
-      HttpClientRequest.bearerToken(options.apiKey),
-      HttpClientRequest.bodyJson({
-        session: {
-          model: "gpt-live-1",
-          instructions: offer.instructions,
-          delegation: { type: "client" },
-        },
-        transport: { type: "webrtc", sdp: offer.sdp },
-      }),
-      Effect.mapError(() => new ConnectionFailure({ reason: "invalid_input" })),
-    )
+  const request = yield* HttpClientRequest.post(
+    "https://api.openai.com/v1/live/sessions",
+  ).pipe(
+    HttpClientRequest.bearerToken(options.apiKey),
+    HttpClientRequest.bodyJson({
+      session: {
+        model: "gpt-live-1",
+        instructions: offer.instructions,
+        delegation: { type: "client" },
+      },
+      transport: { type: "webrtc", sdp: offer.sdp },
+    }),
+    Effect.mapError(
+      () => new LiveConnectionFailure({ reason: "invalid_input" }),
+    ),
+  )
 
-    return yield* HttpClient.execute(request).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(SessionAnswer)),
-      Effect.mapError(() => new ConnectionFailure({ reason: "read_failed" })),
-    )
-  },
-)
+  return yield* HttpClient.execute(request).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(SessionAnswer)),
+    Effect.mapError(() => new LiveConnectionFailure({ reason: "read_failed" })),
+  )
+})

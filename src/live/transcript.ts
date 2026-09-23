@@ -4,8 +4,7 @@ import {
   ControlledTurnInputSchema,
   type ControlledTurnInput,
 } from "../core/observed-turn.js"
-import type { Fragment } from "./contracts.js"
-import { Id, InvalidAction } from "./contracts.js"
+import { type Fragment, Id, InvalidLiveAction } from "./contracts.js"
 
 /** A revisable, exact-text candidate ending at an observed user fragment. */
 export interface Candidate {
@@ -131,12 +130,12 @@ export const freeze = (
     >
     readonly through: number
   },
-  InvalidAction
+  InvalidLiveAction
 > => {
   const end = fragments.findIndex(({ eventId }) => eventId === throughEventId)
 
   if (end < consumed || fragments[end]?.role !== "user")
-    return Effect.fail(new InvalidAction({ reason: "stale_candidate" }))
+    return Effect.fail(new InvalidLiveAction({ reason: "stale_candidate" }))
   const selected = fragments.slice(consumed, end + 1)
   const messages = group(selected)
 
@@ -144,10 +143,10 @@ export const freeze = (
     messages.length > 199 ||
     messages.some(({ content }) => content.length > 50_000)
   )
-    return Effect.fail(new InvalidAction({ reason: "history_limit" }))
+    return Effect.fail(new InvalidLiveAction({ reason: "history_limit" }))
 
   if (messages.at(-1)?.role !== "user")
-    return Effect.fail(new InvalidAction({ reason: "missing_candidate" }))
+    return Effect.fail(new InvalidLiveAction({ reason: "missing_candidate" }))
 
   return Effect.succeed({
     turn: ControlledTurnInputSchema.fields.turn.cases.Observed.make({

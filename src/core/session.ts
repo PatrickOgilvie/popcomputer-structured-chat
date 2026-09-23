@@ -1,5 +1,4 @@
-import type { Effect } from "effect"
-import { Predicate, Context, Schema } from "effect"
+import { Context, type Effect, Predicate, Schema } from "effect"
 
 import {
   ConversationMessageSchema,

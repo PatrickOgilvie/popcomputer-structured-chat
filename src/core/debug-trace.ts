@@ -1,5 +1,4 @@
-import type { Result } from "effect"
-import { Context, Effect, Schema } from "effect"
+import { Context, Effect, type Result, Schema } from "effect"
 
 import { JsonValueSchema } from "./json-value.js"
 import { ToolSelectionSchema } from "./tool-selection.js"

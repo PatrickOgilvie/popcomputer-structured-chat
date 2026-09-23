@@ -4,7 +4,7 @@ import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
-import { JsonValueSchema } from "./json-value.js"
+import { encodeJsonValue } from "./json-value.js"
 import { compileToolRegistry } from "./tool-registry.js"
 import type { ToolSelectionContext } from "./tool-selection.js"
 import type { ToolTuple, ToolSetCall } from "./tool-set.js"
@@ -27,7 +27,7 @@ export type ToolInputResolvers<Tools extends ToolTuple, E, R> = {
   >
 }
 
-const inputRuntime = Symbol("ToolInputsRuntime")
+const inputRuntime = Symbol("@popcomputer/structured-chat/ToolInputsRuntime")
 /** Sealed application input bindings for a tool registry. */
 export interface ToolInputsContract extends StructuredDefinition<"tool_inputs"> {
   readonly tools: ToolTuple
@@ -120,12 +120,9 @@ export const defineToolInputs = <
     bindings.set(tool.name, (context) =>
       resolve(context).pipe(
         Effect.flatMap((value) =>
-          Schema.encodeUnknownEffect(tool.inputSchema)(value, {
+          encodeJsonValue(tool.inputSchema, value, {
             onExcessProperty: "error",
           }).pipe(
-            Effect.flatMap((encoded) =>
-              Schema.decodeUnknownEffect(JsonValueSchema)(encoded),
-            ),
             Effect.flatMap((arguments_) =>
               registry.parseCall({ name: tool.name, arguments: arguments_ }),
             ),

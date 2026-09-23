@@ -1,4 +1,4 @@
-import { Predicate, Effect, Option, Schema } from "effect"
+import { Effect, Option, Predicate, Schema } from "effect"
 
 import type { CommandId } from "../core/command.js"
 import {
@@ -9,12 +9,12 @@ import { ChatSessionRevisionSchema } from "../core/session.js"
 import { TurnSuperseded } from "../core/turn-control.js"
 import {
   Binding,
-  ConnectionFailure,
+  LiveConnectionFailure,
   Fragment,
   Id,
-  InvalidAction,
+  InvalidLiveAction,
   Presentation,
-  RecoveryRequired,
+  LiveRecoveryRequired,
   type Commentary,
   type Event,
   Publication,
@@ -177,7 +177,7 @@ export interface Ingestion {
 
 const transition = (state: State): Transition => ({ state, value: undefined })
 
-const invalidState = () => new InvalidAction({ reason: "invalid_state" })
+const invalidState = () => new InvalidLiveAction({ reason: "invalid_state" })
 
 const replaceDelegation = (state: State, delegation: Delegation): State => ({
   ...state,
@@ -196,7 +196,7 @@ const replaceDelivery = (state: State, delivery: Delivery): State => ({
 const delegationFor = (
   state: State,
   id: string,
-): Effect.Effect<Delegation, InvalidAction> => {
+): Effect.Effect<Delegation, InvalidLiveAction> => {
   const delegation = state.delegations.find((entry) => entry.id === id)
 
   return delegation === undefined
@@ -207,7 +207,7 @@ const delegationFor = (
 const deliveryFor = (
   state: State,
   id: string,
-): Effect.Effect<Delivery, InvalidAction> => {
+): Effect.Effect<Delivery, InvalidLiveAction> => {
   const delivery = state.deliveries.find((entry) => entry.id === id)
 
   return delivery === undefined
@@ -284,7 +284,10 @@ export const context = (
 export const observe = (
   state: State,
   event: Event,
-): Effect.Effect<Transition<Ingestion>, InvalidAction | ConnectionFailure> => {
+): Effect.Effect<
+  Transition<Ingestion>,
+  InvalidLiveAction | LiveConnectionFailure
+> => {
   const result = (
     next: State,
     reassess = false,
@@ -305,7 +308,7 @@ export const observe = (
           previous.startMs === fragment.startMs &&
           previous.endMs === fragment.endMs
           ? result(state)
-          : Effect.fail(new InvalidAction({ reason: "identity_conflict" }))
+          : Effect.fail(new InvalidLiveAction({ reason: "identity_conflict" }))
 
       if (
         state.fragments.length >= maximumFragments ||
@@ -314,7 +317,7 @@ export const observe = (
           fragment.delta.length,
         ) > maximumTranscriptCharacters
       )
-        return Effect.fail(new InvalidAction({ reason: "history_limit" }))
+        return Effect.fail(new InvalidLiveAction({ reason: "history_limit" }))
 
       return result(
         { ...state, fragments: [...state.fragments, fragment] },
@@ -331,10 +334,10 @@ export const observe = (
         return previous.offsetMs === event.offsetMs &&
           previous.eventId === event.eventId
           ? result(state)
-          : Effect.fail(new InvalidAction({ reason: "identity_conflict" }))
+          : Effect.fail(new InvalidLiveAction({ reason: "identity_conflict" }))
 
       if (state.delegations.length >= maximumDelegations)
-        return Effect.fail(new InvalidAction({ reason: "history_limit" }))
+        return Effect.fail(new InvalidLiveAction({ reason: "history_limit" }))
 
       return result(
         {
@@ -358,7 +361,7 @@ export const observe = (
     case "Rejected": {
       if (event.clientEventId === null)
         return Effect.fail(
-          new ConnectionFailure({ reason: "provider_rejected" }),
+          new LiveConnectionFailure({ reason: "provider_rejected" }),
         )
 
       const delivery = state.deliveries.find(
@@ -410,7 +413,7 @@ export const claim = (
   id: string,
   throughEventId: string,
   identity: string,
-): Effect.Effect<Transition<ControlledTurnInput>, InvalidAction> =>
+): Effect.Effect<Transition<ControlledTurnInput>, InvalidLiveAction> =>
   Effect.gen(function* () {
     const delegation = yield* delegationFor(state, id)
 
@@ -533,7 +536,7 @@ export const commit = (
   state: State,
   id: string,
   revision: string,
-): Effect.Effect<Transition, InvalidAction> =>
+): Effect.Effect<Transition, InvalidLiveAction> =>
   Effect.gen(function* () {
     const delegation = yield* delegationFor(state, id)
 
@@ -560,7 +563,7 @@ export const commit = (
 export const supersede = (
   state: State,
   id: string,
-): Effect.Effect<Transition<boolean>, InvalidAction> =>
+): Effect.Effect<Transition<boolean>, InvalidLiveAction> =>
   delegationFor(state, id).pipe(
     Effect.map((delegation) => ({
       state:
@@ -575,7 +578,7 @@ export const supersede = (
 export const abandon = (
   state: State,
   id: string,
-): Effect.Effect<Transition, InvalidAction | RecoveryRequired> =>
+): Effect.Effect<Transition, InvalidLiveAction | LiveRecoveryRequired> =>
   Effect.gen(function* () {
     const delegation = yield* delegationFor(state, id)
 
@@ -584,7 +587,7 @@ export const abandon = (
       delegation.phase.commandId !== null ||
       delegation.phase.commit === "Pending"
     )
-      return yield* new RecoveryRequired({
+      return yield* new LiveRecoveryRequired({
         reason: Predicate.isTagged(delegation.phase, "Committed")
           ? "committed_presentation_missing"
           : "backend_outcome_unknown",
@@ -605,7 +608,10 @@ export const prepare = (
   id: string,
   presentation: Presentation,
   identity: string,
-): Effect.Effect<Transition<Delivery>, InvalidAction | RecoveryRequired> =>
+): Effect.Effect<
+  Transition<Delivery>,
+  InvalidLiveAction | LiveRecoveryRequired
+> =>
   Effect.gen(function* () {
     const delegation = yield* delegationFor(state, id)
     const { phase } = delegation
@@ -620,7 +626,9 @@ export const prepare = (
       Predicate.isTagged(phase, "Running") &&
       (phase.commandId !== null || phase.commit === "Pending")
     )
-      return yield* new RecoveryRequired({ reason: "backend_outcome_unknown" })
+      return yield* new LiveRecoveryRequired({
+        reason: "backend_outcome_unknown",
+      })
 
     if (
       presentation.browser !== null &&
@@ -658,7 +666,7 @@ export const prepare = (
 export const publication = (
   state: State,
   delivery: Delivery,
-): Effect.Effect<Publication, InvalidAction> =>
+): Effect.Effect<Publication, InvalidLiveAction> =>
   delegationFor(state, delivery.delegationId).pipe(
     Effect.map((delegation) =>
       Publication.Presentation({
@@ -674,7 +682,7 @@ export const publication = (
 export const published = (
   state: State,
   id: string,
-): Effect.Effect<Transition, InvalidAction> =>
+): Effect.Effect<Transition, InvalidLiveAction> =>
   deliveryFor(state, id).pipe(
     Effect.map((delivery) =>
       transition(replaceDelivery(state, { ...delivery, browser: "Published" })),
@@ -685,7 +693,7 @@ export const published = (
 export const attempt = (
   state: State,
   id: string,
-): Effect.Effect<Transition<Option.Option<Commentary>>, InvalidAction> =>
+): Effect.Effect<Transition<Option.Option<Commentary>>, InvalidLiveAction> =>
   Effect.gen(function* () {
     const delivery = yield* deliveryFor(state, id)
     const delegation = yield* delegationFor(state, delivery.delegationId)
@@ -719,7 +727,7 @@ export const deliveryFailed = (
   state: State,
   id: string,
   outcome: "Rejected" | "Unknown",
-): Effect.Effect<Transition<Option.Option<Notice>>, InvalidAction> =>
+): Effect.Effect<Transition<Option.Option<Notice>>, InvalidLiveAction> =>
   deliveryFor(state, id).pipe(
     Effect.map((delivery) =>
       delivery.voice !== "Attempted"
@@ -752,7 +760,7 @@ export const stop = (state: State): Effect.Effect<Transition> =>
 /** @internal Record the close attempt before writing; final usage still requires provider acknowledgement. */
 export const requestClose = (
   state: State,
-): Effect.Effect<Transition, InvalidAction> => {
+): Effect.Effect<Transition, InvalidLiveAction> => {
   if (state.lifecycle !== "Closing" || state.provider !== "Open")
     return Effect.fail(invalidState())
 
@@ -771,7 +779,7 @@ const settleAttempts = (
 /** @internal Finish after the provider and workers drain; unresolved append attempts remain unknown. */
 export const finish = (
   state: State,
-): Effect.Effect<Transition, InvalidAction> => {
+): Effect.Effect<Transition, InvalidLiveAction> => {
   if (
     state.provider !== "Finalized" ||
     state.delegations.some(

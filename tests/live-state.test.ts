@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { Predicate, Effect, Option, Result, Schema } from "effect"
+import { Effect, Option, Predicate, Result, Schema } from "effect"
 import { FastCheck } from "effect/testing"
 
 import { deriveCommandId } from "../src/core/command.js"

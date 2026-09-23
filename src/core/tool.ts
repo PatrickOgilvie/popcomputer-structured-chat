@@ -623,56 +623,46 @@ const makeTool = <
   const parseCall = (input: JsonValue) =>
     parseToolCall(runtime.name, callSchema, input)
 
-  const executeRuntime = (
+  const executeRuntime = Effect.fn("popcomputer.structured_chat.tool.execute", {
+    attributes: { tool: runtime.name },
+  })(function* (
     input: Schema.Schema.Type<InputSchema>,
     context: CommandExecutionContext | undefined,
-  ) =>
-    runtime
-      .executeServer(
-        input,
-        // SAFETY: command constructors expose a required context while query
-        // constructors expose no context; runtime.operation owns that invariant.
-        Fn.cast<
-          CommandExecutionContext | undefined,
-          Operation extends "command" ? CommandExecutionContext : undefined
-        >(context),
-      )
-      .pipe(
-        Effect.tap(() =>
-          recordDebugEvent({
-            _tag: "ToolCalled",
-            tool: runtime.name,
-          }),
-        ),
-        Effect.flatMap((serverResult) =>
-          Effect.all({
-            modelResult: projectModelResult(
-              runtime.name,
-              runtime.modelProjection,
-              serverResult,
-            ),
-            views: projectViews(runtime.name, runtime.presenters, serverResult),
-          }).pipe(
-            Effect.flatMap(({ modelResult, views }) =>
-              encodeToolExecutionModelContext(
-                runtime.name,
-                runtime.modelProjection,
-                modelResult,
-              ).pipe(
-                Effect.map((modelContext) => ({
-                  serverResult,
-                  modelResult,
-                  views,
-                  [toolExecutionModelContext]: modelContext,
-                })),
-              ),
-            ),
-          ),
-        ),
-        Effect.withSpan("popcomputer.structured_chat.tool.execute", {
-          attributes: { tool: runtime.name },
-        }),
-      )
+  ) {
+    const serverResult = yield* runtime.executeServer(
+      input,
+      // SAFETY: command constructors expose a required context while query
+      // constructors expose no context; runtime.operation owns that invariant.
+      Fn.cast<
+        CommandExecutionContext | undefined,
+        Operation extends "command" ? CommandExecutionContext : undefined
+      >(context),
+    )
+
+    yield* recordDebugEvent({ _tag: "ToolCalled", tool: runtime.name })
+
+    const { modelResult, views } = yield* Effect.all({
+      modelResult: projectModelResult(
+        runtime.name,
+        runtime.modelProjection,
+        serverResult,
+      ),
+      views: projectViews(runtime.name, runtime.presenters, serverResult),
+    })
+
+    const modelContext = yield* encodeToolExecutionModelContext(
+      runtime.name,
+      runtime.modelProjection,
+      modelResult,
+    )
+
+    return {
+      serverResult,
+      modelResult,
+      views,
+      [toolExecutionModelContext]: modelContext,
+    }
+  })
 
   // SAFETY: command constructors expose a required context while query
   // constructors expose no context; both feed this operation-tagged runtime.

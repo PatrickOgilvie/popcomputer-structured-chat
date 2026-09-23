@@ -1,17 +1,17 @@
 import { makeAssistantDataUI } from "@assistant-ui/core/react"
-import { Predicate, Exit, Result, Schema } from "effect"
+import { Exit, Predicate, Result, Schema } from "effect"
 import { createElement, type ComponentType, type FC } from "react"
 
 import type { StructuredChatDebugTurn } from "../core/debug-protocol.js"
 import type { StructuredChatDebugSnapshot } from "../core/debug.js"
 import { JsonValueSchema } from "../core/json-value.js"
-import type { StructuredChatTurnRequestSchema } from "../core/protocol.js"
 import {
-  type StructuredChatSessionReference,
   type StructuredChatAssistantMessage,
   type StructuredChatExplorationRequest,
   type StructuredChatExplorationResponse,
+  type StructuredChatSessionReference,
   StructuredChatSessionReferenceSchema,
+  type StructuredChatTurnRequestSchema,
 } from "../core/protocol.js"
 import type { ViewData, ViewDefinitionContract } from "../core/view.js"
 import type { StructuredChatUserAnswerUpdate as UserAnswerUpdate } from "./assistant-ui-user-answers.js"

@@ -143,7 +143,9 @@ export class InvalidQuestionPlanningContext extends Schema.TaggedError<InvalidQu
   },
 ) {}
 
-const selectorRuntime = Symbol("QuestionSelectorRuntime")
+const selectorRuntime = Symbol(
+  "@popcomputer/structured-chat/QuestionSelectorRuntime",
+)
 
 /** Authentic selector with erased Effect dependencies retained behind its runtime symbol. */
 export interface QuestionSelectorContract extends StructuredDefinition<"question_selector"> {
@@ -236,14 +238,14 @@ export const parseQuestionSelection = (
   )
 
 /** @internal Run and parse a bound selector at its capability boundary. */
-export const selectQuestion = Effect.fn("structured_chat.interview.select")(
-  function* (
-    selector: QuestionSelectorContract,
-    context: QuestionSelectionContext,
-  ) {
-    return yield* parseQuestionSelection(
-      yield* selector[selectorRuntime](context),
-      context,
-    )
-  },
-)
+export const selectQuestion = Effect.fn(
+  "popcomputer.structured_chat.interview.select",
+)(function* (
+  selector: QuestionSelectorContract,
+  context: QuestionSelectionContext,
+) {
+  return yield* parseQuestionSelection(
+    yield* selector[selectorRuntime](context),
+    context,
+  )
+})

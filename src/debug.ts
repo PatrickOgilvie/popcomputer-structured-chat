@@ -1,4 +1,4 @@
-import { Predicate, Effect, Function as Fn, Result, Schema } from "effect"
+import { Effect, Function as Fn, Predicate, Result, Schema } from "effect"
 
 import {
   turn as runTurn,
@@ -18,14 +18,17 @@ import type {
 import type { AnyComposedDefinition } from "./core/composition.js"
 import type { ConversationState } from "./core/conversation-state.js"
 import {
-  presentChatDebugReply,
   type CapturedChatDebugOutcome,
+  debugTrace,
+  presentChatDebugReply,
   type PresentChatDebugReplyOptions,
   type StructuredChatDebugTurnResponse,
+  StructuredChatDebugTurnResponseSchema,
 } from "./core/debug-protocol.js"
-import { StructuredChatDebugTurnResponseSchema } from "./core/debug-protocol.js"
-import { captureDebugEvents } from "./core/debug-trace.js"
-import type { StructuredChatDebugEvent } from "./core/debug-trace.js"
+import {
+  captureDebugEvents,
+  type StructuredChatDebugEvent,
+} from "./core/debug-trace.js"
 import {
   inspectChatState,
   type InspectChatStateOptions,
@@ -36,9 +39,9 @@ import {
   presentChatReply,
   type PresentChatReplyOptions,
   type InvalidChatPresentation,
+  type PresentableTurn,
 } from "./core/protocol.js"
-import type { ChatSessionStore } from "./core/session.js"
-import { ChatSessionIdSchema } from "./core/session.js"
+import { ChatSessionIdSchema, type ChatSessionStore } from "./core/session.js"
 import {
   hasComposition,
   readConversation,
@@ -152,9 +155,7 @@ const inspectInvocation = (
     )
 
 type PresentationOptions<C extends AnyDefinition> = {
-  readonly presentation?: PresentChatReplyOptions<
-    TurnOf<C> & Parameters<typeof presentChatReply>[0]["turn"]
-  >
+  readonly presentation?: PresentChatReplyOptions<TurnOf<C> & PresentableTurn>
   readonly inspection?: InspectChatStateOptions
 }
 
@@ -188,7 +189,7 @@ export const present = <C extends AnyDefinition>(
       ? input
       : { _tag: "Succeeded" as const, reply: input, events: [] }
 
-  const trace = { schemaVersion: 1 as const, events: outcome.events }
+  const trace = debugTrace(outcome.events)
 
   const parse = Schema.decodeUnknownEffect(
     StructuredChatDebugTurnResponseSchema,
@@ -219,10 +220,7 @@ export const present = <C extends AnyDefinition>(
       reply,
       Fn.cast<
         typeof options.presentation,
-        | PresentChatReplyOptions<
-            Parameters<typeof presentChatReply>[0]["turn"]
-          >
-        | undefined
+        PresentChatReplyOptions<PresentableTurn> | undefined
       >(options.presentation),
     )
 

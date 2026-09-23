@@ -160,24 +160,17 @@ export const defineInteractionStage = <
       ...modelInput,
     })
 
-  const runRuntime = <E>(
+  const runRuntime = Effect.fn("popcomputer.structured_chat.interaction.run", {
+    attributes: { stage: definition.name },
+  })(function* <E>(
     messages: ReadonlyArray<UntrustedMessage>,
     context: InteractionCommandContext<E>,
-  ) =>
-    plan(messages).pipe(
-      Effect.flatMap((call) =>
-        registry.run(call, context).pipe(
-          Effect.map(({ name, execution }) => ({
-            name,
-            complete: completeOn.includes(name),
-            execution,
-          })),
-        ),
-      ),
-      Effect.withSpan("popcomputer.structured_chat.interaction.run", {
-        attributes: { stage: definition.name },
-      }),
-    )
+  ) {
+    const call = yield* plan(messages)
+    const { name, execution } = yield* registry.run(call, context)
+
+    return { name, complete: completeOn.includes(name), execution }
+  })
 
   // SAFETY: dispatch preserves each registered tool's result, failures and requirements.
   const run = Fn.cast<

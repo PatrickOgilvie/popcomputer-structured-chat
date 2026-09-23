@@ -1,5 +1,11 @@
-import type { Effect } from "effect"
-import { Data, Predicate, cast, Pipeable, Schema } from "effect"
+import {
+  Data,
+  type Effect,
+  Function as Fn,
+  Pipeable,
+  Predicate,
+  Schema,
+} from "effect"
 
 import type { JsonValue } from "./json-value.js"
 import type {
@@ -169,7 +175,7 @@ const makeAnswer = <
 
   // SAFETY: defineProperty installed the private presentation policy while
   // the seed and pipe method retain the exact answer generics.
-  return cast<
+  return Fn.cast<
     typeof answer,
     AnswerDefinition<Mode, ValueSchema, Error, Requirements>
   >(answer)

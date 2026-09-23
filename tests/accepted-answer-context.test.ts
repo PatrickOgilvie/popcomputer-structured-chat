@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 
-import { Predicate, Effect, Layer, Result, Schema } from "effect"
+import { Effect, Layer, Predicate, Result, Schema } from "effect"
 
 import {
   Answer,

@@ -1,11 +1,11 @@
-import { Predicate, Context, Effect, Schema } from "effect"
+import { Context, Effect, Predicate, Schema } from "effect"
 
 import type { BranchContract } from "./branch.js"
 import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
-import { JsonValueSchema, type JsonValue } from "./json-value.js"
+import { encodeJsonValue, type JsonValue } from "./json-value.js"
 import { TrustedInstructionSchema } from "./model.js"
 import { AssistantTextPartSchema } from "./protocol.js"
 import {
@@ -115,9 +115,9 @@ export const defineMessage = <
   const invalidHint = () =>
     new InvalidOutboundMessage({ reason: "invalid_hint" })
 
-  const prepareHints = Effect.fn("Message.prepareHints")(function* (
-    value: Input["Type"],
-  ) {
+  const prepareHints = Effect.fn(
+    "popcomputer.structured_chat.message.prepare_hints",
+  )(function* (value: Input["Type"]) {
     const candidates = yield* Effect.try({
       try: () => input.replies?.(value) ?? [],
       catch: invalidHint,
@@ -139,9 +139,7 @@ export const defineMessage = <
           Schema.toType(schema),
         )(candidate.arguments, { onExcessProperty: "error" })
 
-        const encodedArguments = yield* Schema.encodeUnknownEffect(schema)(
-          arguments_,
-        ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(JsonValueSchema)))
+        const encodedArguments = yield* encodeJsonValue(schema, arguments_)
 
         return { target: candidate.target, arguments: encodedArguments, when }
       }).pipe(Effect.mapError(invalidHint)),
@@ -160,10 +158,7 @@ export const defineMessage = <
             onExcessProperty: "error",
           }).pipe(Effect.mapError(invalidInput))
 
-          const encoded = yield* Schema.encodeUnknownEffect(input.input)(
-            parsed,
-          ).pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(JsonValueSchema)),
+          const encoded = yield* encodeJsonValue(input.input, parsed).pipe(
             Effect.mapError(invalidInput),
           )
 

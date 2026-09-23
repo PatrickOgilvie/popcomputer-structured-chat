@@ -1,11 +1,9 @@
 import {
+  type AnswerFields,
+  type CollectStage,
   createAnswerCollection,
+  type DefineCollectStageInput,
   withAnswerStageRuntime,
-} from "./answer-collection.js"
-import type {
-  AnswerFields,
-  CollectStage,
-  DefineCollectStageInput,
 } from "./answer-collection.js"
 import type { AnswerDetectorContract } from "./answer-detector.js"
 import { structuredDefinition } from "./definition.js"
@@ -53,44 +51,3 @@ export const defineCollectStage = <
     ),
   )
 }
-
-/** Deterministic collection public contract, backed by shared answer acceptance. */
-export {
-  InvalidCollectStageResponseReasonSchema,
-  InvalidCollectStageResponse,
-  CollectAnswerFieldNameSchema,
-  AnswerValidationRejected,
-  withAnswerStageRuntime,
-  isAnswerStage,
-  readCollectStageRuntime,
-  readCollectStageInspection,
-} from "./answer-collection.js"
-export type {
-  AnswerFields,
-  CollectAnswers,
-  AcceptedAnswerEvidence,
-  AcceptedAnswer,
-  CollectAcceptedAnswers,
-  IssuedQuestionContext,
-  IssuedCollectQuestion,
-  CollectStageState,
-  CollectStageQuestion,
-  CollectStagePrompt,
-  CollectAnswerValidationError,
-  CollectAnswerValidationRequirements,
-  CollectStageTurn,
-  RuntimeCollectStageState,
-  RuntimeCollectStagePrompt,
-  RuntimeCollectStageTurn,
-  AnswerCollectionResult,
-  ProposedQuestionWording,
-  AnswerCollectionInput,
-  CollectStageRuntime,
-  CollectStageInspectionField,
-  CollectStageInspection,
-  AnswerStageDefinitionContract,
-  CollectStageDefinitionContract,
-  CollectQuestionPolicy,
-  DefineCollectStageInput,
-  CollectStage,
-} from "./answer-collection.js"

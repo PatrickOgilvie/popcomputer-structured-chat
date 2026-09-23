@@ -1,4 +1,4 @@
-import { Predicate, cast, Effect, Result, Schema } from "effect"
+import { Effect, Function as Fn, Predicate, Result, Schema } from "effect"
 
 import { JsonValueSchema } from "./json-value.js"
 import { ChatSessionIdSchema, ChatSessionRevisionSchema } from "./session.js"
@@ -205,7 +205,9 @@ const findViewParts = <View extends ViewDefinitionContract>(
       // SAFETY: view.partSchema decodes data to exactly ViewData<View>; the
       // generic constraint only exposes its upper bound.
       matched.push(
-        cast<typeof decoded.success.data, ViewData<View>>(decoded.success.data),
+        Fn.cast<typeof decoded.success.data, ViewData<View>>(
+          decoded.success.data,
+        ),
       )
     }
   }
@@ -293,6 +295,18 @@ export type PresentableTurn =
   | PresentableQuestionTurn
   | PresentableToolTurn
   | PresentableClarificationTurn
+
+/** Minimum persisted reply accepted by browser presentation. */
+export interface PresentableChatReply<Turn extends PresentableTurn> {
+  readonly sessionId: Schema.Schema.Type<typeof ChatSessionIdSchema>
+  readonly revision: Schema.Schema.Type<typeof ChatSessionRevisionSchema>
+  readonly turn: Turn
+  readonly userAnswers: StructuredChatUserAnswerSnapshot
+  readonly invocation?: Schema.Schema.Type<
+    typeof StructuredChatInvocationSchema
+  >
+  readonly emittedMessages?: ReadonlyArray<StructuredChatAssistantMessage>
+}
 
 /** Optional application projections for question and tool-result messages. */
 export interface PresentChatReplyOptions<Turn extends PresentableTurn> {
@@ -470,22 +484,17 @@ export const presentAnswerValidationRejection = (input: {
  * results use their validated views unless the application adds text or a
  * different ordered composition.
  */
-export const presentChatReply = <Turn extends PresentableTurn>(
-  reply: {
-    readonly sessionId: Schema.Schema.Type<typeof ChatSessionIdSchema>
-    readonly revision: Schema.Schema.Type<typeof ChatSessionRevisionSchema>
-    readonly turn: Turn
-    readonly userAnswers: StructuredChatUserAnswerSnapshot
-    readonly invocation?: Schema.Schema.Type<
-      typeof StructuredChatInvocationSchema
-    >
-    readonly emittedMessages?: ReadonlyArray<StructuredChatAssistantMessage>
-  },
+export const presentChatReply = Effect.fn(
+  "popcomputer.structured_chat.presentation.reply",
+)(function* <Turn extends PresentableTurn>(
+  reply: PresentableChatReply<Turn>,
   options: PresentChatReplyOptions<Turn> = {},
-): Effect.Effect<
+): Effect.fn.Return<
   StructuredChatPersistedTurnResponse,
   InvalidChatPresentation
-> => {
+> {
+  yield* Effect.annotateCurrentSpan({ stage: reply.turn.stage })
+
   const buildContent = (): ReadonlyArray<AssistantMessagePart> => {
     if (Predicate.isTagged(reply.turn, "Clarification"))
       return [Text.make(reply.turn.clarification.text)]
@@ -519,48 +528,46 @@ export const presentChatReply = <Turn extends PresentableTurn>(
     return options.result?.(toolTurn) ?? reply.turn.result.views
   }
 
-  return buildPresentation(buildContent).pipe(
-    Effect.flatMap((content) => {
-      const candidate: StructuredChatPersistedResponseCandidate = {
-        schemaVersion: 2,
-        session: {
-          id: reply.sessionId,
-          revision: reply.revision,
-        },
-        message: {
-          role: "assistant",
-          content: [
-            ...(reply.emittedMessages ?? []).flatMap(
-              (message) => message.content,
-            ),
-            ...content,
-          ],
-        },
-        answers: reply.userAnswers,
-      }
+  const content = yield* buildPresentation(buildContent)
 
-      return parsePersistedResponse(
-        reply.invocation === undefined
-          ? candidate
-          : { ...candidate, invocation: reply.invocation },
-      )
-    }),
-    Effect.withSpan("popcomputer.structured_chat.presentation.reply", {
-      attributes: { stage: reply.turn.stage },
-    }),
+  const candidate: StructuredChatPersistedResponseCandidate = {
+    schemaVersion: 2,
+    session: {
+      id: reply.sessionId,
+      revision: reply.revision,
+    },
+    message: {
+      role: "assistant",
+      content: [
+        ...(reply.emittedMessages ?? []).flatMap((message) => message.content),
+        ...content,
+      ],
+    },
+    answers: reply.userAnswers,
+  }
+
+  return yield* parsePersistedResponse(
+    reply.invocation === undefined
+      ? candidate
+      : { ...candidate, invocation: reply.invocation },
   )
-}
+})
 
 /** Project one exploration result into the strict browser protocol. */
-export const presentChatExploration = <Run extends PresentableExploration>(
+export const presentChatExploration = Effect.fn(
+  "popcomputer.structured_chat.presentation.exploration",
+)(function* <Run extends PresentableExploration>(
   run: Run,
   options: PresentChatExplorationOptions<Run> = {},
-): Effect.Effect<StructuredChatExplorationResponse, InvalidChatPresentation> =>
-  buildPresentation(() => options.result?.(run) ?? run.execution.views).pipe(
-    Effect.flatMap((content) =>
-      parseExplorationResponse({ schemaVersion: 1, content }),
-    ),
-    Effect.withSpan("popcomputer.structured_chat.presentation.exploration", {
-      attributes: { tool: run.name },
-    }),
+): Effect.fn.Return<
+  StructuredChatExplorationResponse,
+  InvalidChatPresentation
+> {
+  yield* Effect.annotateCurrentSpan({ tool: run.name })
+
+  const content = yield* buildPresentation(
+    () => options.result?.(run) ?? run.execution.views,
   )
+
+  return yield* parseExplorationResponse({ schemaVersion: 1, content })
+})

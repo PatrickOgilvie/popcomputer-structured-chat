@@ -1,16 +1,17 @@
-import { Predicate, Context, Effect, Layer, Option, Schema } from "effect"
+import { Context, Effect, Layer, Option, Predicate, Schema } from "effect"
 
+import { sha256Hex } from "../core/digest.js"
 import {
   ChatSessionReplacementSchema,
   ChatSessionRevisionSchema,
   ChatSessionStore,
   type ChatSessionScope,
 } from "../core/session.js"
-import { Binding, Id, RecoveryRequired } from "./contracts.js"
+import { Binding, Id, LiveRecoveryRequired } from "./contracts.js"
 import { State } from "./state.js"
 
 /** Journal storage was unavailable, malformed, or concurrently replaced. */
-export class JournalFailure extends Schema.TaggedError<JournalFailure>()(
+export class LiveJournalFailure extends Schema.TaggedError<LiveJournalFailure>()(
   "LiveJournalFailure",
   {
     reason: Schema.Literals([
@@ -35,35 +36,29 @@ export class Journal extends Context.Service<
     readonly own: <A, E, R>(
       binding: Binding,
       program: Effect.Effect<A, E, R>,
-    ) => Effect.Effect<A, E | JournalFailure | RecoveryRequired, R>
+    ) => Effect.Effect<A, E | LiveJournalFailure | LiveRecoveryRequired, R>
     readonly load: (
       binding: Binding,
-    ) => Effect.Effect<Option.Option<Snapshot>, JournalFailure>
+    ) => Effect.Effect<Option.Option<Snapshot>, LiveJournalFailure>
     readonly replace: (
       binding: Binding,
       revision: Option.Option<string>,
       state: State,
-    ) => Effect.Effect<string, JournalFailure>
+    ) => Effect.Effect<string, LiveJournalFailure>
   }
 >()("@popcomputer/structured-chat/live/Journal") {}
 
 /** @internal Deterministic tuple identity, shared by journal keys and observation identities. */
 export const identity = (binding: Binding): Effect.Effect<string> =>
-  Effect.promise(async () => {
-    const bytes = new TextEncoder().encode(
-      JSON.stringify([
-        binding.namespace,
-        binding.sessionId,
-        binding.chat,
-        binding.version,
-        binding.liveSessionId,
-      ]),
-    )
-
-    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))
-
-    return `live_${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`
-  })
+  sha256Hex(
+    JSON.stringify([
+      binding.namespace,
+      binding.sessionId,
+      binding.chat,
+      binding.version,
+      binding.liveSessionId,
+    ]),
+  ).pipe(Effect.map((digest) => `live_${digest}`))
 
 const Owner = Schema.Struct({
   liveSessionId: Id,
@@ -112,7 +107,7 @@ export const journal = (options: {
               .load(key)
               .pipe(
                 Effect.mapError(
-                  () => new JournalFailure({ reason: "read_failed" }),
+                  () => new LiveJournalFailure({ reason: "read_failed" }),
                 ),
               )
 
@@ -127,12 +122,13 @@ export const journal = (options: {
                     }),
                   )(raw, { onExcessProperty: "error" }).pipe(
                     Effect.mapError(
-                      () => new JournalFailure({ reason: "invalid_snapshot" }),
+                      () =>
+                        new LiveJournalFailure({ reason: "invalid_snapshot" }),
                     ),
                   )
 
             if (previous?.state.status === "Owned")
-              return yield* new RecoveryRequired({
+              return yield* new LiveRecoveryRequired({
                 reason: "session_already_owned",
               })
 
@@ -149,7 +145,7 @@ export const journal = (options: {
               .pipe(
                 Effect.mapError(
                   (error) =>
-                    new JournalFailure({
+                    new LiveJournalFailure({
                       reason: Predicate.isTagged(error, "ChatSessionConflict")
                         ? "conflict"
                         : "write_failed",
@@ -160,7 +156,8 @@ export const journal = (options: {
                     value,
                   ).pipe(
                     Effect.mapError(
-                      () => new JournalFailure({ reason: "invalid_snapshot" }),
+                      () =>
+                        new LiveJournalFailure({ reason: "invalid_snapshot" }),
                     ),
                   ),
                 ),
@@ -181,7 +178,7 @@ export const journal = (options: {
               })
               .pipe(
                 Effect.mapError(
-                  () => new JournalFailure({ reason: "write_failed" }),
+                  () => new LiveJournalFailure({ reason: "write_failed" }),
                 ),
                 Effect.flatMap((value) =>
                   Schema.decodeUnknownEffect(ChatSessionReplacementSchema)(
@@ -189,7 +186,8 @@ export const journal = (options: {
                     { onExcessProperty: "error" },
                   ).pipe(
                     Effect.mapError(
-                      () => new JournalFailure({ reason: "invalid_snapshot" }),
+                      () =>
+                        new LiveJournalFailure({ reason: "invalid_snapshot" }),
                     ),
                   ),
                 ),
@@ -197,53 +195,62 @@ export const journal = (options: {
 
             return result
           }),
-        load: Effect.fn("LiveJournal.load")(function* (binding) {
-          const key = yield* scope(binding)
+        load: Effect.fn("popcomputer.structured_chat.live.journal.load")(
+          function* (binding) {
+            const key = yield* scope(binding)
 
-          const raw = yield* store
-            .load(key)
-            .pipe(
+            const raw = yield* store
+              .load(key)
+              .pipe(
+                Effect.mapError(
+                  () => new LiveJournalFailure({ reason: "read_failed" }),
+                ),
+              )
+
+            if (raw === null) return Option.none()
+
+            const parsed = yield* Schema.decodeUnknownEffect(
+              Schema.Struct({
+                revision: ChatSessionRevisionSchema,
+                state: State,
+                messages: Schema.Array(Schema.Never),
+              }),
+            )(raw, { onExcessProperty: "error" }).pipe(
               Effect.mapError(
-                () => new JournalFailure({ reason: "read_failed" }),
+                () => new LiveJournalFailure({ reason: "invalid_snapshot" }),
               ),
             )
 
-          if (raw === null) return Option.none()
+            if (
+              (yield* identity(parsed.state.binding)) !==
+              (yield* identity(binding))
+            )
+              return yield* new LiveJournalFailure({
+                reason: "invalid_snapshot",
+              })
 
-          const parsed = yield* Schema.decodeUnknownEffect(
-            Schema.Struct({
-              revision: ChatSessionRevisionSchema,
-              state: State,
-              messages: Schema.Array(Schema.Never),
-            }),
-          )(raw, { onExcessProperty: "error" }).pipe(
-            Effect.mapError(
-              () => new JournalFailure({ reason: "invalid_snapshot" }),
-            ),
-          )
-
-          if (
-            (yield* identity(parsed.state.binding)) !==
-            (yield* identity(binding))
-          )
-            return yield* new JournalFailure({ reason: "invalid_snapshot" })
-
-          return Option.some({ revision: parsed.revision, state: parsed.state })
-        }),
-        replace: Effect.fn("LiveJournal.replace")(
+            return Option.some({
+              revision: parsed.revision,
+              state: parsed.state,
+            })
+          },
+        ),
+        replace: Effect.fn("popcomputer.structured_chat.live.journal.replace")(
           function* (binding, revision, state) {
             const parsed = yield* Schema.decodeEffect(State)(state, {
               onExcessProperty: "error",
             }).pipe(
               Effect.mapError(
-                () => new JournalFailure({ reason: "invalid_snapshot" }),
+                () => new LiveJournalFailure({ reason: "invalid_snapshot" }),
               ),
             )
 
             if (
               (yield* identity(parsed.binding)) !== (yield* identity(binding))
             )
-              return yield* new JournalFailure({ reason: "invalid_snapshot" })
+              return yield* new LiveJournalFailure({
+                reason: "invalid_snapshot",
+              })
             const key = yield* scope(binding)
 
             const raw = yield* store
@@ -256,7 +263,7 @@ export const journal = (options: {
               .pipe(
                 Effect.mapError(
                   (error) =>
-                    new JournalFailure({
+                    new LiveJournalFailure({
                       reason: Predicate.isTagged(error, "ChatSessionConflict")
                         ? "conflict"
                         : "write_failed",
@@ -268,7 +275,7 @@ export const journal = (options: {
               ChatSessionReplacementSchema,
             )(raw, { onExcessProperty: "error" }).pipe(
               Effect.mapError(
-                () => new JournalFailure({ reason: "invalid_snapshot" }),
+                () => new LiveJournalFailure({ reason: "invalid_snapshot" }),
               ),
             )
 

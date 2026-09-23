@@ -1,10 +1,8 @@
-import { Predicate, cast, Effect, Schema } from "effect"
+import { Effect, Function as Fn, Predicate, Schema } from "effect"
 
 import { AnswerModeSchema } from "./answer.js"
-import {
-  inspectChatAnswers,
-  type TrustedChatAnswerState,
-} from "./chat-answer-inspection.js"
+import { inspectChatAnswers } from "./chat-answer-inspection.js"
+import type { RuntimeChatState } from "./chat-state.js"
 import {
   ChatNameSchema,
   ChatVersionSchema,
@@ -14,8 +12,10 @@ import {
   type ChatState,
 } from "./chat.js"
 import { readInteractionStageRuntime } from "./interaction-stage.js"
+import { readInterviewProgress } from "./interview-stage.js"
 import { JsonValueSchema } from "./json-value.js"
 import type { QuestionDefinitionContract } from "./question.js"
+import { getOwn } from "./record.js"
 import { StageNameSchema } from "./stage-name.js"
 import {
   readCommandStageRuntime,
@@ -213,14 +213,6 @@ type DebugStage = StructuredChatDebugSnapshot["stages"][number]
 
 type DebugStageStatus = DebugStage["status"]
 
-interface RuntimeChatState extends TrustedChatAnswerState {
-  readonly stage: number
-  readonly status: "active" | "complete"
-  readonly repair?: {
-    readonly pendingStages: ReadonlyArray<number>
-  }
-}
-
 const invalidProjection = (
   reason: InvalidChatDebugProjectionReason,
 ): InvalidChatDebugProjection => new InvalidChatDebugProjection({ reason })
@@ -319,7 +311,9 @@ export const inspectChatState = <
     // SAFETY: this definition's exact state schema parsed the envelope and all
     // named collect-stage states immediately above; only tuple correlations are
     // erased for definition-ordered read-only projection.
-    const runtimeState = cast<typeof parsedState, RuntimeChatState>(parsedState)
+    const runtimeState = Fn.cast<typeof parsedState, RuntimeChatState>(
+      parsedState,
+    )
     const currentStage = chat.stages[runtimeState.stage]
 
     if (currentStage === undefined) {
@@ -448,21 +442,13 @@ export const inspectChatState = <
       }
 
       if (stage._tag === "InterviewStage") {
-        const details = yield* Schema.decodeUnknownEffect(
-          Schema.Struct({
-            phase: Schema.TaggedUnion({
-              Ready: {},
-              Complete: {},
-              AwaitingReply: {
-                field: Schema.String,
-                issuedMessageIndex: Schema.Natural,
-              },
-            }),
-            declined: Schema.Record(Schema.String, Schema.Unknown),
-          }),
-        )(runtimeState.stages[stage.name]).pipe(
-          Effect.mapError(() => invalidProjection("invalid_state")),
-        )
+        const stageState = getOwn(runtimeState.stages, stage.name)
+
+        if (stageState === undefined) {
+          return yield* invalidProjection("invalid_state")
+        }
+
+        const progress = readInterviewProgress(stage, stageState)
         stages.push({
           _tag: "InterviewStage",
           index,
@@ -475,10 +461,9 @@ export const inspectChatState = <
           fields,
           requiredFields: Object.keys(stage.required),
           optionalFields: Object.keys(stage.optional),
-          phase: details.phase._tag,
-          focus:
-            details.phase._tag === "AwaitingReply" ? details.phase.field : null,
-          declinedFields: Object.keys(details.declined),
+          phase: progress.phase,
+          focus: progress.focus,
+          declinedFields: progress.declined,
         })
         continue
       }

@@ -1,5 +1,4 @@
-import type { Result } from "effect"
-import { Effect, Function as Fn, Schema } from "effect"
+import { Effect, Function as Fn, type Result, Schema } from "effect"
 
 import type { JsonValue } from "./json-value.js"
 

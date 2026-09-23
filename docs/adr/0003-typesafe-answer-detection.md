@@ -1,5 +1,9 @@
 # Detect answered questions before generative extraction
 
+> Amended by [ADR 0004](./0004-detection-only-answer-strategy.md): the finite
+> `resolver` this decision was made alongside has since been removed, and
+> detection is the only collect-stage answer strategy.
+
 A collect stage is an interactive form that should not feel like one. One user
 message may answer none, one, or several of its questions, and the system must
 not re-ask what the user already said. The generative model previously made

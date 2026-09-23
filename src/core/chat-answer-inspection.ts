@@ -1,16 +1,17 @@
 import { Effect, Schema } from "effect"
 
-import { isAnswerStage } from "./answer-collection.js"
-import type { AnswerMode } from "./answer.js"
 import {
-  readCollectStageInspection,
   type AcceptedAnswerEvidence,
   type AnswerStageDefinitionContract,
-  type CollectStageInspectionField,
+  type AnswerStageInspectionField,
+  isAnswerStage,
   type IssuedCollectQuestion,
-} from "./collect-stage.js"
-import { JsonValueSchema, type JsonValue } from "./json-value.js"
+  readAnswerStageInspection,
+} from "./answer-collection.js"
+import type { AnswerMode } from "./answer.js"
+import { type JsonValue } from "./json-value.js"
 import type { QuestionDefinitionContract } from "./question.js"
+import { getOwn } from "./record.js"
 
 /** @internal Safe failure reason produced by trusted answer inspection. */
 export const InvalidChatAnswerInspectionReasonSchema = Schema.Literals([
@@ -91,17 +92,12 @@ export interface InspectChatAnswersInput {
     readonly stages: ReadonlyArray<ChatAnswerInspectionStage>
   }
   readonly state: TrustedChatAnswerState
-  readonly include: (field: CollectStageInspectionField) => boolean
+  readonly include: (field: AnswerStageInspectionField) => boolean
 }
 
 const invalidInspection = (
   reason: "invalid_state" | "invalid_answer_value",
 ): InvalidChatAnswerInspection => new InvalidChatAnswerInspection({ reason })
-
-const hasOwn = <Owner extends object>(
-  value: Owner,
-  key: PropertyKey,
-): boolean => Object.prototype.hasOwnProperty.call(value, key)
 
 /**
  * @internal Traverse trusted collect state in declaration order and encode
@@ -118,7 +114,7 @@ export const inspectChatAnswers = (
         continue
       }
 
-      if (!hasOwn(input.state.stages, stage.name)) {
+      if (!Object.hasOwn(input.state.stages, stage.name)) {
         return yield* invalidInspection("invalid_state")
       }
 
@@ -130,20 +126,16 @@ export const inspectChatAnswers = (
 
       const fields: Array<InspectedAnswerField> = []
 
-      for (const field of readCollectStageInspection(stage).fields) {
+      for (const field of readAnswerStageInspection(stage).fields) {
         // Disclosure filtering deliberately precedes every state lookup and
         // codec invocation so hidden values cannot leak or break projection.
         if (!input.include(field)) {
           continue
         }
 
-        const accepted = hasOwn(collectState.accepted, field.field)
-          ? collectState.accepted[field.field]
-          : undefined
+        const accepted = getOwn(collectState.accepted, field.field)
 
-        const issuedQuestion = hasOwn(collectState.asked, field.field)
-          ? collectState.asked[field.field]
-          : undefined
+        const issuedQuestion = getOwn(collectState.asked, field.field)
 
         const fieldBase = {
           field: field.field,
@@ -168,16 +160,11 @@ export const inspectChatAnswers = (
           continue
         }
 
-        const encoded = yield* field
+        const value = yield* field
           .encodeValue(accepted.value)
           .pipe(
             Effect.mapError(() => invalidInspection("invalid_answer_value")),
           )
-
-        const value = yield* Schema.decodeUnknownEffect(JsonValueSchema)(
-          encoded,
-          { onExcessProperty: "error" },
-        ).pipe(Effect.mapError(() => invalidInspection("invalid_answer_value")))
 
         fields.push({
           ...fieldBase,

@@ -11,8 +11,8 @@ import {
   Layer,
   Result,
   Schema,
-  Tracer,
   type Scope,
+  Tracer,
 } from "effect"
 import { TestClock } from "effect/testing"
 import { SqlClient } from "effect/unstable/sql"

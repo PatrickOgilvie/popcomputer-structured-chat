@@ -1,7 +1,10 @@
 import { Effect, Function as Fn, Schema } from "effect"
 
+import type {
+  AnswerFields,
+  IssuedCollectQuestion,
+} from "./answer-collection.js"
 import type { AnswerMode } from "./answer.js"
-import type { AnswerFields, IssuedCollectQuestion } from "./collect-stage.js"
 import {
   canGroundAnswer,
   type ConversationMessage,
@@ -10,6 +13,7 @@ import {
   structuredDefinition,
   type StructuredDefinition,
 } from "./definition.js"
+import { getOwn } from "./record.js"
 
 /** Evidence prepared by the core; a detector judges it but never authors values. */
 export interface EligibleEvidence {
@@ -71,7 +75,9 @@ interface DetectorRuntime {
     context: DetectionDecisionContext,
   ) => Effect.Effect<DetectionResolution, unknown, unknown>
 }
-const detectorRuntime = Symbol("AnswerDetectorRuntime")
+const detectorRuntime = Symbol(
+  "@popcomputer/structured-chat/AnswerDetectorRuntime",
+)
 /** Authentic optional detection strategy with its bound field definitions. */
 export interface AnswerDetectorContract extends StructuredDefinition<"answer_detector"> {
   readonly fields: AnswerFields
@@ -139,9 +145,7 @@ export const prepareAnswerDetection = (
   }
   const fields: Array<DetectionFieldDecision> = []
   for (const [name, field] of Object.entries(detector.fields)) {
-    const issued = Object.hasOwn(input.asked, name)
-      ? input.asked[name]
-      : undefined
+    const issued = getOwn(input.asked, name)
     if (
       !canGroundAnswer(latest, field.mode) ||
       (field.mode === "confirmed" &&

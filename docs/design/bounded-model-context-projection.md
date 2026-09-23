@@ -1,6 +1,6 @@
 # Bounded model-context projection
 
-Status: **positive direction, parked until message provenance is modeled**
+Status: **positive direction; the provenance prerequisite shipped in 0.6.0, still parked until a caller supplies a context budget**
 
 ## 1. Summary
 
@@ -114,3 +114,9 @@ When activated:
 ## 10. Decision and activation condition
 
 Do not implement untagged truncation. Activate this design when a caller supplies a concrete model context limit or compaction policy; provenance and migration are part of that feature, not follow-up work.
+
+> Amended 2026-09: persisted messages now carry `Submitted`, `Authored`, or
+> `Observed` provenance (since 0.6.0), so the prerequisite in section 1 is
+> met. The remaining activation condition is a concrete context budget from a
+> production caller; the projection contracts in section 5 still describe the
+> intended shape.

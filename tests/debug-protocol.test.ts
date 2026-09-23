@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { Predicate, Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Predicate, Schema } from "effect"
 
 import { recordDebugEvent } from "../src/core/debug-trace.js"
 import { JsonValueSchema } from "../src/core/json-value.js"

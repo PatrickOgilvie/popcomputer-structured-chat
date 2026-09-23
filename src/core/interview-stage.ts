@@ -12,20 +12,17 @@ import {
   type CollectStagePrompt,
   type CollectStageState,
   type DefineCollectStageInput,
-  type CollectStageRuntime,
+  type AnswerStageRuntime,
   type CollectQuestionPolicy,
   type RuntimeCollectStageState,
 } from "./answer-collection.js"
 import type { AnswerDetectorContract } from "./answer-detector.js"
-import {
-  canGroundAnswer,
-  type ConversationMessage,
-} from "./conversation-message.js"
+import { isEscapeReply } from "./answer-registry.js"
+import type { ConversationMessage } from "./conversation-message.js"
 import { recordDebugEvent } from "./debug-trace.js"
 import { structuredDefinition } from "./definition.js"
 import type { ExtractionContextContract } from "./extraction-context.js"
 import { createInterviewTools } from "./interview-tools.js"
-import { JsonValueSchema } from "./json-value.js"
 import type { ModelGuardTuple } from "./model-guard.js"
 import {
   Instruction,
@@ -131,13 +128,35 @@ export interface InterviewPlanningFrame {
   readonly accepted: ReadonlyArray<SelectionAcceptedAnswer>
 }
 
+/** @internal Persisted interview progress read from already-parsed state. */
+export interface InterviewProgress {
+  readonly phase: InterviewPhase<string>["_tag"]
+  readonly focus: string | null
+  readonly declined: ReadonlyArray<string>
+}
+
+interface InterviewStageRuntime {
+  readonly progress: (state: RuntimeCollectStageState) => InterviewProgress
+}
+
+const interviewStageRuntime = Symbol(
+  "@popcomputer/structured-chat/InterviewStageRuntime",
+)
+
 /** Minimum sealed interview definition consumed by chat and trusted projections. */
 export interface InterviewStageDefinitionContract extends AnswerStageDefinitionContract {
   readonly _tag: "InterviewStage"
   readonly required: AnswerFields
   readonly optional: AnswerFields
   readonly tools: readonly [] | ToolTuple
+  readonly [interviewStageRuntime]: InterviewStageRuntime
 }
+
+/** @internal Read question focus and declines from an authentic interview stage. */
+export const readInterviewProgress = (
+  stage: InterviewStageDefinitionContract,
+  state: RuntimeCollectStageState,
+): InterviewProgress => stage[interviewStageRuntime].progress(state)
 
 type Collection<
   Name extends string,
@@ -535,11 +554,8 @@ export const defineInterviewStage = <
         focus !== undefined &&
         optional.includes(focus) &&
         fields[focus]?.escape === undefined &&
-        collection.questions.escape !== undefined &&
         latest !== undefined &&
-        canGroundAnswer(latest, "explicit") &&
-        latest.content.toLowerCase() ===
-          collection.questions.escape.toLowerCase()
+        isEscapeReply(latest, collection.questions.escape)
       ) {
         acceptedValues.delete(focus)
         clarifying.delete(focus)
@@ -564,9 +580,6 @@ export const defineInterviewStage = <
         const answer = state.accepted[field.field]
         if (answer === undefined) continue
         const value = yield* field.encodeValue(answer.value).pipe(
-          Effect.flatMap((encoded) =>
-            Schema.decodeUnknownEffect(JsonValueSchema)(encoded),
-          ),
           Effect.mapError(
             () =>
               new InvalidQuestionPlanningContext({
@@ -671,7 +684,7 @@ export const defineInterviewStage = <
   // SAFETY: chat parses this definition's state codec before using its sealed runtime.
   const parsedState = (state: RuntimeCollectStageState): State =>
     Fn.cast<RuntimeCollectStageState, State>(state)
-  const runtime: CollectStageRuntime = {
+  const runtime: AnswerStageRuntime = {
     ...base,
     stateFields: rawStateSchema.fields,
     stateSchema,
@@ -726,6 +739,19 @@ export const defineInterviewStage = <
           Schema.decodeUnknownEffect(stateSchema)(input, {
             onExcessProperty: "error",
           }),
+        [interviewStageRuntime]: {
+          progress: (state) => {
+            const parsed = parsedState(state)
+            return {
+              phase: parsed.phase._tag,
+              focus:
+                parsed.phase._tag === "AwaitingReply"
+                  ? parsed.phase.field
+                  : null,
+              declined: Object.keys(parsed.declined),
+            }
+          },
+        } satisfies InterviewStageRuntime,
       },
       runtime,
       inspection,

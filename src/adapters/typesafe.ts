@@ -13,6 +13,7 @@ import {
   Layer,
   Predicate,
   Redacted,
+  Ref,
   Schedule,
   Schema,
 } from "effect"
@@ -322,11 +323,11 @@ export const typeSafeLayer = (
       })
       return TypeSafeService.of({
         limits: parsed.limits,
-        evaluate: <const Q extends QuestionMap>(input: {
-          readonly state: Description
-          readonly questions: Batch<Q>
-        }) =>
-          Effect.gen(function* () {
+        evaluate: Effect.fn("popcomputer.structured_chat.typesafe.evaluate")(
+          function* <const Q extends QuestionMap>(input: {
+            readonly state: Description
+            readonly questions: Batch<Q>
+          }) {
             const state = yield* Schema.decodeUnknownEffect(DescriptionSchema)(
               input.state,
             ).pipe(
@@ -353,9 +354,12 @@ export const typeSafeLayer = (
               model: parsed.model,
               questionCount: Object.keys(questions).length,
             })
-            let providerAttempt = 0
+            const attempts = yield* Ref.make(0)
             const attempt = Effect.gen(function* () {
-              providerAttempt++
+              const providerAttempt = yield* Ref.modify(
+                attempts,
+                (count) => [count + 1, count + 1] as const,
+              )
               const call = yield* nextDebugModelCall
               const body = {
                 model: parsed.model,
@@ -425,9 +429,8 @@ export const typeSafeLayer = (
               outputTokens: result.usage.outputTokens,
             })
             return result
-          }).pipe(
-            Effect.withSpan("popcomputer.structured_chat.typesafe.evaluate"),
-          ),
+          },
+        ),
       })
     }),
   )

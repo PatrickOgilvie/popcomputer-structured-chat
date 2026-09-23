@@ -1,6 +1,6 @@
 import { Effect, Function as Fn, Schema } from "effect"
 
-import type { AnswerFields, CollectStageState } from "./collect-stage.js"
+import type { AnswerFields, CollectStageState } from "./answer-collection.js"
 import type { ConversationMessage } from "./conversation-message.js"
 import {
   structuredDefinition,
@@ -26,7 +26,9 @@ interface ContextRuntime {
     input: ExtractionContextInput<AnswerFields>,
   ) => Effect.Effect<JsonValue, unknown, unknown>
 }
-const contextRuntime = Symbol("ExtractionContextRuntime")
+const contextRuntime = Symbol(
+  "@popcomputer/structured-chat/ExtractionContextRuntime",
+)
 
 /** Authentic application context capability bound to one field registry. */
 export interface ExtractionContextContract extends StructuredDefinition<"extraction_context"> {

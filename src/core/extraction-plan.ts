@@ -1,5 +1,5 @@
+import type { AcceptedAnswerEvidence } from "./answer-collection.js"
 import type { AnswerMode } from "./answer.js"
-import type { AcceptedAnswerEvidence } from "./collect-stage.js"
 import type { ConversationMessage } from "./conversation-message.js"
 import type { JsonValue } from "./json-value.js"
 import type { UntrustedMessage } from "./model.js"

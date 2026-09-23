@@ -1,4 +1,4 @@
-import { Data, Predicate, Effect, Schema } from "effect"
+import { Data, Effect, Predicate, Schema } from "effect"
 
 import {
   ObservationIdSchema,

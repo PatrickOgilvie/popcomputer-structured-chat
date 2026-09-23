@@ -308,6 +308,12 @@ function structuredDefinition<Kind extends StructuredDefinitionKind>(
 ) => Definition & StructuredDefinition<Kind>
 ```
 
+> Amended 2026-09: the kind union above shows the original four kinds. Every
+> later definition type (chats, branches, outbound messages, interview stages,
+> question selectors, interaction stages, repair, detectors, extraction
+> context, tool selectors, and tool inputs) added its own kind, so
+> `src/core/definition.ts` is the authoritative list.
+
 `ToolDefinitionContract`, stage definition contracts, and guard definition contracts
 extend the appropriate branded contract. Constructors attach the brand.
 Registries no longer claim that a public `_tag` alone proves authenticity.

@@ -1,5 +1,15 @@
-import type { Context, JsonSchema } from "effect"
-import { cast, Effect, Exit, Layer, Result, Schema } from "effect"
+import {
+  type Context,
+  Effect,
+  Exit,
+  Function as Fn,
+  type JsonSchema,
+  Layer,
+  Ref,
+  Result,
+  Schedule,
+  Schema,
+} from "effect"
 
 import { nextDebugModelCall, recordDebugEvent } from "../core/debug-trace.js"
 import { JsonValueSchema, type JsonValue } from "../core/json-value.js"
@@ -638,7 +648,9 @@ export const makeStructuredChatModel = (
 
       // SAFETY: the adapter constructs input only from JSON-compatible request
       // options, messages, and tool schema documents; model is a string.
-      const request = cast<typeof providerRequest, JsonValue>(providerRequest)
+      const request = Fn.cast<typeof providerRequest, JsonValue>(
+        providerRequest,
+      )
       yield* recordDebugEvent({
         _tag: "ModelInput",
         call,
@@ -702,42 +714,39 @@ export const makeStructuredChatModel = (
    * parsing stay outside, and interruption never becomes a classified
    * failure.
    */
-  const attemptParsedCall = (
+  const requestParsedCall = (
     input: OpenAICompatibleInput,
-    attemptNumber: number,
-    remainingAttempts: number,
   ): Effect.Effect<
     { readonly name: string; readonly arguments: JsonValue },
     ChatModelUnavailable
   > =>
-    Effect.suspend(() => {
-      const once = attemptProviderCall(input, attemptNumber)
+    Effect.gen(function* () {
+      const attempts = yield* Ref.make(0)
 
-      // Content-free observability: the attempt count is annotated only for
-      // follow-up attempts; reasons stay behind the stable failure tag.
-      const annotatedOnce =
-        attemptNumber > 1
-          ? once.pipe(
+      const once = Effect.gen(function* () {
+        const attempt = yield* Ref.modify(
+          attempts,
+          (count) => [count + 1, count + 1] as const,
+        )
+        const call = attemptProviderCall(input, attempt)
+
+        // Content-free observability: the attempt count is annotated only for
+        // follow-up attempts; reasons stay behind the stable failure tag.
+        return yield* attempt > 1
+          ? call.pipe(
               Effect.withSpan("popcomputer.structured_chat.model.attempt", {
-                attributes: { attempt: attemptNumber },
+                attributes: { attempt },
               }),
             )
-          : once
+          : call
+      })
 
-      return annotatedOnce.pipe(
-        Effect.catchIf(isRetryableUnavailable, (error) =>
-          remainingAttempts <= 0
-            ? Effect.fail(error)
-            : Effect.sleep(delayMilliseconds).pipe(
-                Effect.andThen(() =>
-                  attemptParsedCall(
-                    input,
-                    attemptNumber + 1,
-                    remainingAttempts - 1,
-                  ),
-                ),
-              ),
-        ),
+      return yield* once.pipe(
+        Effect.retry({
+          times: maximumAttempts - 1,
+          while: isRetryableUnavailable,
+          schedule: Schedule.spaced(delayMilliseconds),
+        }),
       )
     })
 
@@ -748,11 +757,7 @@ export const makeStructuredChatModel = (
         runtime.requestOptions,
         runtime.toolArguments,
         runtime.guidanceSchemaOverride,
-      ).pipe(
-        Effect.flatMap((input) =>
-          attemptParsedCall(input, 1, maximumAttempts - 1),
-        ),
-      ),
+      ).pipe(Effect.flatMap(requestParsedCall)),
   }
 }
 

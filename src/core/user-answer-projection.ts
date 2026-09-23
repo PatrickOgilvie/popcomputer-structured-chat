@@ -1,15 +1,15 @@
-import { Predicate, Effect, Schema } from "effect"
+import { Effect, Predicate, Schema } from "effect"
 
+import {
+  CollectAnswerFieldNameSchema,
+  type AnswerStageDefinitionContract,
+} from "./answer-collection.js"
 import {
   inspectChatAnswers,
   type InspectChatAnswersInput,
   type TrustedChatAnswerState,
 } from "./chat-answer-inspection.js"
 import { ChatNameSchema, ChatVersionSchema } from "./chat-identity.js"
-import {
-  CollectAnswerFieldNameSchema,
-  type AnswerStageDefinitionContract,
-} from "./collect-stage.js"
 import { JsonValueSchema } from "./json-value.js"
 import { StageNameSchema } from "./stage-name.js"
 
@@ -118,81 +118,82 @@ const defaultLabel = (identifier: string): string => {
 }
 
 /** Project explicitly disclosed answers into a complete browser-safe snapshot. */
-export const projectUserAnswers = (
+export const projectUserAnswers = Effect.fn(
+  "popcomputer.structured_chat.user_answers.project",
+)(function* (
   input: ProjectUserAnswersInput,
-): Effect.Effect<
+): Effect.fn.Return<
   StructuredChatUserAnswerSnapshot,
   InvalidChatUserAnswerProjection
-> =>
-  Effect.gen(function* () {
-    const inspected = yield* inspectChatAnswers({
-      definition: input.definition,
-      state: input.state,
-      include: ({ userPresentation }) => userPresentation !== undefined,
-    } satisfies InspectChatAnswersInput).pipe(
-      Effect.mapError(({ reason }) => invalidProjection(reason)),
-    )
+> {
+  const inspected = yield* inspectChatAnswers({
+    definition: input.definition,
+    state: input.state,
+    include: ({ userPresentation }) => userPresentation !== undefined,
+  } satisfies InspectChatAnswersInput).pipe(
+    Effect.mapError(({ reason }) => invalidProjection(reason)),
+  )
 
-    const sections: Array<StructuredChatUserAnswerSection> = []
-    let visibleFieldCount = 0
-    let acceptedVisibleFieldCount = 0
+  const sections: Array<StructuredChatUserAnswerSection> = []
+  let visibleFieldCount = 0
+  let acceptedVisibleFieldCount = 0
 
-    for (const section of inspected.sections) {
-      if (section.fields.length === 0) {
-        continue
-      }
+  for (const section of inspected.sections) {
+    if (section.fields.length === 0) {
+      continue
+    }
 
-      const fields: Array<StructuredChatUserAnswerField> = []
+    const fields: Array<StructuredChatUserAnswerField> = []
 
-      for (const field of section.fields) {
-        visibleFieldCount += 1
+    for (const field of section.fields) {
+      visibleFieldCount += 1
 
-        if (Predicate.isTagged(field.state, "Accepted")) {
-          acceptedVisibleFieldCount += 1
-          fields.push({
-            key: field.field,
-            label: field.userPresentation?.label ?? defaultLabel(field.field),
-            state: {
-              _tag: "Accepted",
-              value: field.state.value,
-            },
-          })
-          continue
-        }
-
+      if (Predicate.isTagged(field.state, "Accepted")) {
+        acceptedVisibleFieldCount += 1
         fields.push({
           key: field.field,
           label: field.userPresentation?.label ?? defaultLabel(field.field),
-          state: { _tag: "Missing" },
+          state: {
+            _tag: "Accepted",
+            value: field.state.value,
+          },
         })
-      }
-
-      const [firstField, ...remainingFields] = fields
-
-      if (firstField === undefined) {
         continue
       }
 
-      sections.push({
-        key: section.stage,
-        label: defaultLabel(section.stage),
-        fields: [firstField, ...remainingFields],
+      fields.push({
+        key: field.field,
+        label: field.userPresentation?.label ?? defaultLabel(field.field),
+        state: { _tag: "Missing" },
       })
     }
 
-    yield* Effect.annotateCurrentSpan({
-      chat: inspected.chat.name,
-      version: inspected.chat.version,
-      visibleFieldCount,
-      acceptedVisibleFieldCount,
-    })
+    const [firstField, ...remainingFields] = fields
 
-    return yield* Schema.decodeEffect(StructuredChatUserAnswerSnapshotSchema)(
-      {
-        schemaVersion: 1,
-        chat: inspected.chat,
-        sections,
-      },
-      { onExcessProperty: "error" },
-    ).pipe(Effect.mapError(() => invalidProjection("invalid_snapshot")))
-  }).pipe(Effect.withSpan("popcomputer.structured_chat.user_answers.project"))
+    if (firstField === undefined) {
+      continue
+    }
+
+    sections.push({
+      key: section.stage,
+      label: defaultLabel(section.stage),
+      fields: [firstField, ...remainingFields],
+    })
+  }
+
+  yield* Effect.annotateCurrentSpan({
+    chat: inspected.chat.name,
+    version: inspected.chat.version,
+    visibleFieldCount,
+    acceptedVisibleFieldCount,
+  })
+
+  return yield* Schema.decodeEffect(StructuredChatUserAnswerSnapshotSchema)(
+    {
+      schemaVersion: 1,
+      chat: inspected.chat,
+      sections,
+    },
+    { onExcessProperty: "error" },
+  ).pipe(Effect.mapError(() => invalidProjection("invalid_snapshot")))
+})

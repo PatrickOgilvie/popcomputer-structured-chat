@@ -8,6 +8,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Emit trace schema version 2 for composed-chat debug responses; they previously carried version-2 events under a version-1 label.
+
+### Changed
+
+- Adopt `oxfmt` for the package sources and tests, with `bun run fmt:check` in `verify`; span names are all prefixed `popcomputer.structured_chat`, and function-shaped operations use `Effect.fn`.
+- Share one uncertainty-escape matcher between collect and interview stages, and read interview focus and declines through the sealed stage instead of re-decoding persisted state in the debug projection.
+- Split shared answer acceptance into registry, state, prompt, repair, proposal, and extraction modules; the OpenAI-compatible model adapter retries through `Schedule` instead of a hand-rolled loop.
+- Live error classes are named after their `_tag`; the `/live` entry keeps its existing short names.
+
 ## [0.12.0] - 2026-09-23
 
 ### Added

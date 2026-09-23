@@ -1,16 +1,21 @@
-import { Predicate, Context, Effect, Schema } from "effect"
+import { Context, Effect, Predicate, Schema } from "effect"
 
 import * as Chat from "../Chat.js"
-import { presentChatReply, Text } from "../core/protocol.js"
-import type { ChatSessionStore } from "../core/session.js"
-import type { Binding } from "./contracts.js"
 import {
-  InvalidAction,
-  InvalidPresentation,
+  presentChatReply,
+  Text,
+  type PresentableChatReply,
+  type PresentableTurn,
+} from "../core/protocol.js"
+import type { ChatSessionStore } from "../core/session.js"
+import {
+  type Binding,
+  InvalidLiveAction,
+  InvalidLivePresentation,
   Presentation,
-  RecoveryRequired,
+  LiveRecoveryRequired,
 } from "./contracts.js"
-import type { JournalFailure } from "./journal.js"
+import type { LiveJournalFailure } from "./journal.js"
 
 /** @internal Runtime-owned capability scoped to one claimed delegation action. */
 export class ActionScope extends Context.Service<
@@ -19,10 +24,10 @@ export class ActionScope extends Context.Service<
     readonly binding: Binding
     readonly input: Chat.AdvanceInput
     readonly control: Chat.TurnControlService
-    readonly begin: () => Effect.Effect<void, InvalidAction>
+    readonly begin: () => Effect.Effect<void, InvalidLiveAction>
     readonly committed: (
       revision: string,
-    ) => Effect.Effect<void, JournalFailure | InvalidAction>
+    ) => Effect.Effect<void, LiveJournalFailure | InvalidLiveAction>
   }
 >()("@popcomputer/structured-chat/live/ActionScope") {}
 
@@ -31,21 +36,25 @@ export class ActionScope extends Context.Service<
  * observed input, revision, provenance, and command admission authority.
  * @template C The definition retaining its precise result, failure, and service types.
  */
-export const turn = <C extends Chat.AnyDefinition>(
-  chat: C,
-): Effect.Effect<
-  Chat.Reply<C>,
-  Chat.AdvanceError<C> | InvalidAction | JournalFailure | RecoveryRequired,
-  ActionScope | ChatSessionStore | Chat.Requirements<C>
-> =>
-  Effect.gen(function* () {
+export const turn = Effect.fn("popcomputer.structured_chat.live.turn")(
+  function* <C extends Chat.AnyDefinition>(
+    chat: C,
+  ): Effect.fn.Return<
+    Chat.Reply<C>,
+    | Chat.AdvanceError<C>
+    | InvalidLiveAction
+    | LiveJournalFailure
+    | LiveRecoveryRequired,
+    ActionScope | ChatSessionStore | Chat.Requirements<C>
+  > {
+    yield* Effect.annotateCurrentSpan({ chat: chat.name })
     const action = yield* ActionScope
 
     if (
       chat.name !== action.binding.chat ||
       chat.version !== action.binding.version
     )
-      return yield* new InvalidAction({ reason: "wrong_chat" })
+      return yield* new InvalidLiveAction({ reason: "wrong_chat" })
     yield* action.begin()
 
     const result = yield* Chat.advance(chat, action.input).pipe(
@@ -53,26 +62,23 @@ export const turn = <C extends Chat.AnyDefinition>(
     )
 
     if (Predicate.isTagged(result, "AlreadyApplied"))
-      return yield* new RecoveryRequired({
+      return yield* new LiveRecoveryRequired({
         reason: "committed_presentation_missing",
       })
     yield* action.committed(result.reply.revision)
 
     return result.reply
-  }).pipe(
-    Effect.withSpan("popcomputer.structured_chat.live.turn", {
-      attributes: { chat: chat.name },
-    }),
-  )
+  },
+)
 
 /**
  * Project a committed reply to browser views and explicit speech. Questions
  * default to their authored text; tool results require a caller-owned summary.
  */
 export const present = (
-  reply: Parameters<typeof presentChatReply>[0],
+  reply: PresentableChatReply<PresentableTurn>,
   options: { readonly speech?: string | null } = {},
-): Effect.Effect<Presentation, InvalidPresentation> =>
+): Effect.Effect<Presentation, InvalidLivePresentation> =>
   Effect.gen(function* () {
     const speech =
       options.speech === undefined
@@ -84,7 +90,7 @@ export const present = (
         : options.speech
 
     if (speech === undefined)
-      return yield* new InvalidPresentation({
+      return yield* new InvalidLivePresentation({
         reason: "missing_speech_projection",
       })
 
@@ -93,7 +99,7 @@ export const present = (
         speech === null ? result.views : [Text.make(speech), ...result.views],
     }).pipe(
       Effect.mapError(
-        () => new InvalidPresentation({ reason: "invalid_output" }),
+        () => new InvalidLivePresentation({ reason: "invalid_output" }),
       ),
     )
 
@@ -102,7 +108,7 @@ export const present = (
       { onExcessProperty: "error" },
     ).pipe(
       Effect.mapError(
-        () => new InvalidPresentation({ reason: "invalid_output" }),
+        () => new InvalidLivePresentation({ reason: "invalid_output" }),
       ),
     )
   })
@@ -110,9 +116,9 @@ export const present = (
 /** Construct a voice-only response without serializing application results. */
 export const say = (
   speech: string,
-): Effect.Effect<Presentation, InvalidPresentation> =>
+): Effect.Effect<Presentation, InvalidLivePresentation> =>
   Schema.decodeEffect(Presentation)({ speech, browser: null }).pipe(
     Effect.mapError(
-      () => new InvalidPresentation({ reason: "invalid_output" }),
+      () => new InvalidLivePresentation({ reason: "invalid_output" }),
     ),
   )

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 
-import { Predicate, Effect, Layer, Result, Schema } from "effect"
+import { Effect, Layer, Predicate, Result, Schema } from "effect"
 
 import * as Debug from "../src/debug.js"
 import {
@@ -1150,6 +1150,45 @@ test("debug capture and presentation inspect the child that produced a reply", a
   if (result.outcome === "failure") throw new Error("Expected success")
   expect(result.invocation?.chat).toBe("dispute_flow")
   expect(result.debug.chat.name).toBe("dispute_flow")
+})
+
+test("composed debug traces use the current trace schema version", async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const started = yield* Chat.start(Support, {
+        sessionId: "debug-trace",
+        input: null,
+      })
+
+      const posted = yield* Chat.post(Support, {
+        sessionId: "debug-trace",
+        expectedRevision: started.revision,
+        messageId: "notice",
+        message: Notice,
+        input: { noticeId: "debug" },
+      })
+
+      const outcome = yield* Debug.turn(
+        Support,
+        {
+          sessionId: "debug-trace",
+          expectedRevision: posted.session.revision,
+          message: "Dispute",
+        },
+        { modelPayloads: "literal" },
+      )
+
+      return yield* Debug.present(Support, outcome, {
+        presentation: { result: () => [Chat.Text.make("Dispute complete")] },
+      })
+    }).pipe(
+      Effect.provide(inMemoryChatSessionStore),
+      Effect.provide(scripted(call("reply_0_0"), call("resolve_dispute"))),
+    ),
+  )
+
+  expect(result.trace.schemaVersion).toBe(2)
+  expect(result.trace.events.length).toBeGreaterThan(0)
 })
 
 test("persisted invocation graphs and issued identities are strictly checked", async () => {

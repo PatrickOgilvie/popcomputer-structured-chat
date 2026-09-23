@@ -365,18 +365,17 @@ const defineToolStage = <
     definition.afterExecution ?? "stay",
   )
 
-  const legacyPlan = (messages: ReadonlyArray<UntrustedMessage>) =>
-    planToolCall<Tools, Guards, Profile>({
+  const directPlan = Effect.fn("popcomputer.structured_chat.stage.plan", {
+    attributes: { stage: definition.name },
+  })(function* (messages: ReadonlyArray<UntrustedMessage>) {
+    return yield* planToolCall<Tools, Guards, Profile>({
       instructions,
       messages,
       tools: toolSet,
       guards,
       ...modelInput,
-    }).pipe(
-      Effect.withSpan("popcomputer.structured_chat.stage.plan", {
-        attributes: { stage: definition.name },
-      }),
-    )
+    })
+  })
 
   if (
     definition.selection === undefined &&
@@ -401,7 +400,7 @@ const defineToolStage = <
     frame?: ToolPlanningFrame,
   ) =>
     selectedPlan === undefined
-      ? legacyPlan(messages)
+      ? directPlan(messages)
       : selectedPlan(messages, frame)
   // SAFETY: configuration chooses exactly the result/error/service branch exposed by Selection.
   const plan = Fn.cast<
@@ -413,7 +412,7 @@ const defineToolStage = <
     frame?: ToolPlanningFrame,
   ) => {
     if (selectedPlan === undefined)
-      return legacyPlan(messages).pipe(
+      return directPlan(messages).pipe(
         Effect.flatMap(toolSet.execute),
         Effect.map((execution) => ({ _tag: "Executed" as const, execution })),
       )
@@ -446,7 +445,7 @@ const defineToolStage = <
     frame?: ToolPlanningFrame,
   ) =>
     selectedPlan === undefined
-      ? legacyPlan(messages).pipe(Effect.flatMap(toolSet.execute))
+      ? directPlan(messages).pipe(Effect.flatMap(toolSet.execute))
       : runSelected(messages, frame)
   // SAFETY: the configured selection branch determines the public result; all tool errors/services are retained.
   const run = Fn.cast<
@@ -462,7 +461,7 @@ const defineToolStage = <
       frame?: ToolPlanningFrame,
     ) => {
       if (selectedPlan !== undefined)
-        return selectedPlan(messages, frame, repair).pipe(
+        return selectedPlan(messages, frame, { repair }).pipe(
           Effect.map((result) => {
             if (result._tag === "Clarification") return result
             // SAFETY: the same repair and query definitions were used by the planner and registry.
@@ -538,29 +537,28 @@ const defineCommandStage = <
 
   const registry = compileToolRegistry([definition.command] as const)
 
-  const plan = (messages: ReadonlyArray<UntrustedMessage>) =>
-    planToolCall<readonly [Command], Guards, Profile>({
+  const plan = Effect.fn("popcomputer.structured_chat.command_stage.plan", {
+    attributes: { stage: definition.name },
+  })(function* (messages: ReadonlyArray<UntrustedMessage>) {
+    return yield* planToolCall<readonly [Command], Guards, Profile>({
       instructions,
       messages,
       tools: registry,
       guards,
       ...modelInput,
-    }).pipe(
-      Effect.withSpan("popcomputer.structured_chat.command_stage.plan", {
-        attributes: { stage: definition.name },
-      }),
-    )
+    })
+  })
 
-  const runScoped = <E>(
+  const runScoped = Effect.fn("popcomputer.structured_chat.command_stage.run", {
+    attributes: { stage: definition.name },
+  })(function* <E>(
     messages: ReadonlyArray<UntrustedMessage>,
     context: CommandContextSource<E>,
-  ) =>
-    plan(messages).pipe(
-      Effect.flatMap((call) => registry.execute(call, context)),
-      Effect.withSpan("popcomputer.structured_chat.command_stage.run", {
-        attributes: { stage: definition.name },
-      }),
-    )
+  ) {
+    const call = yield* plan(messages)
+
+    return yield* registry.execute(call, context)
+  })
 
   const runRuntime = (
     messages: ReadonlyArray<UntrustedMessage>,

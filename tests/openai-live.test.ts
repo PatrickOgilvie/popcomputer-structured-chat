@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 
 import {
-  Predicate,
   Deferred,
   Effect,
   Fiber,
   Layer,
   Option,
+  Predicate,
   Queue,
   Redacted,
   Ref,
