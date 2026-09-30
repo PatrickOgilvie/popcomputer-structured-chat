@@ -808,4 +808,60 @@ describe("collection proposal recovery", () => {
         .join(" "),
     ).toContain('"clarifying":["market"]')
   })
+
+  test("hands a reply to the issued question to extraction even when detection says undetected", async () => {
+    const judged: Array<string> = []
+    const brief = Stage.collect({
+      name: "brief",
+      fields,
+      detector: Stage.detector(fields, (context) =>
+        Effect.sync(() => {
+          judged.push(...context.fields.map(({ field }) => field))
+          return {
+            _tag: "Resolved",
+            selections: context.fields.map(({ field }) => ({
+              _tag: "Undetected",
+              field,
+            })),
+          }
+        }),
+      ),
+    })
+    const model = scripted([
+      call({ market: "UK" }, [{ field: "market", quote: "yeah" }]),
+    ])
+    const turn = await Effect.runPromise(
+      brief
+        .run({
+          state: {
+            ...ukState,
+            asked: {
+              market: {
+                messageIndex: 1,
+                text: "Should I treat the UK as your team's country?",
+              },
+            },
+          },
+          messages: [
+            Session.Message.submitted("We need a local agency."),
+            Session.Message.authored(
+              "Should I treat the UK as your team's country?",
+            ),
+            Session.Message.submitted("yeah"),
+          ],
+        })
+        .pipe(Effect.provide(model.layer)),
+    )
+    expect(judged).toEqual(["location", "market", "timeline"])
+    expect(turn.state.accepted.market).toEqual({
+      value: "UK",
+      evidence: { messageIndex: 2, quote: "yeah" },
+    })
+    expect(model.requests).toHaveLength(1)
+    expect(
+      JSON.parse(model.requests[0]?.untrustedMessages[0]?.content ?? "null"),
+    ).toMatchObject({
+      extracting: [{ field: "market", assessment: "Uncertain" }],
+    })
+  })
 })

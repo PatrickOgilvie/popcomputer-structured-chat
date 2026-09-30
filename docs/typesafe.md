@@ -49,7 +49,7 @@ One request batches a Noul for each eligible field. The core receives three prov
 | --- | --- |
 | `Detected` | Ask the LLM to extract a value; null remains valid if evidence is insufficient. |
 | `Uncertain` | Let the LLM assess whether the input answers the field, then extract if supported. |
-| `Undetected` | Exclude the field from extraction and preserve any previously accepted value, unless an eligible reply is resolving a pending clarification. |
+| `Undetected` | Exclude the field from extraction and preserve any previously accepted value, unless an eligible reply is resolving a pending clarification or replying to that field's issued pending question. |
 
 `Stage.detector(fields, detect)` remains the custom detector seam. Its typed errors and Effect requirements propagate through the stage and chat. Results are parsed and must contain exactly one decision for each offered field. The detector never supplies accepted values or authors evidence.
 
@@ -70,7 +70,7 @@ Conversation, accepted values, and application context remain untrusted data, se
 
 An accepted value requires successful extraction, schema parsing, grounding, and validation. Acceptance accumulates across turns; a later grounded correction can replace an answer while collection is active. Confirmed fields require an issued question followed by a submitted answer. Observed speech cannot confirm them. The first issuance retains confirmation authority while subsequent question wording and options are recorded separately.
 
-Repeated accepted values retain their existing evidence. Invalid values or evidence are recovered per field, with at most two extraction requests in one collection operation. Valid proposals survive an exhausted model repair. Unresolved answers or corrections lead to clarification; a pending correction retains its previous value but blocks stage completion. An eligible clarification reply reaches the LLM even when detection reports `Undetected`. Application validator and infrastructure failures still reject the turn without changing the persisted session. See [collection proposal recovery](collect-proposal-recovery.md).
+Repeated accepted values retain their existing evidence. Invalid values or evidence are recovered per field, with at most two extraction requests in one collection operation. Valid proposals survive an exhausted model repair. Unresolved answers or corrections lead to clarification; a pending correction retains its previous value but blocks stage completion. An eligible clarification reply, or any reply to the issued pending question, reaches the LLM even when detection reports `Undetected`: the detector judges the reply alone, so it cannot resolve "yes" against a value the question proposed. Application validator and infrastructure failures still reject the turn without changing the persisted session. See [collection proposal recovery](collect-proposal-recovery.md).
 
 The core selects the next clarification or missing question after merging values. The model may suggest adaptive wording, but cannot choose a different pending field. When no field needs extraction, collection uses the trusted pending question without calling the model. An exact uncertainty escape bypasses detection and retains its application-owned resolution and follow-up behavior.
 

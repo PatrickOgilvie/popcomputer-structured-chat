@@ -946,13 +946,24 @@ export const createAnswerCollection = <
         resolution._tag === "NotApplicable" ? fallback : resolution.selections
       // Validate the detector contract before overriding a decision. A pending
       // clarification needs value interpretation even if detection says no.
+      // So does a reply to the issued pending question: judged alone, "yes"
+      // or "the second one" cannot resolve against what the question proposed.
       yield* readExtractionFields(
         prepared.context.fields.map((field) => field.field),
         detected,
       )
+      const issuedPending =
+        pending === undefined ? undefined : getOwn(state.asked, pending.field)
+      const replyingTo =
+        issuedPending !== undefined &&
+        (issuedPending.latest ?? issuedPending).messageIndex <
+          messages.length - 1
+          ? pending?.field
+          : undefined
       const decisions = detected.map((decision) =>
         state.clarifying?.includes(decision.field) === true ||
-        declinable.includes(decision.field)
+        declinable.includes(decision.field) ||
+        decision.field === replyingTo
           ? { _tag: "Uncertain" as const, field: decision.field }
           : decision,
       )

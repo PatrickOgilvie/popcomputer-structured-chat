@@ -946,6 +946,77 @@ describe("interview stage", () => {
     )
   })
 
+  test("a confirmation of the focused question reaches extraction despite an Undetected assessment", async () => {
+    const fields = { ...bank.required, ...bank.optional }
+    const interview = Stage.interview({
+      name: "brief",
+      ...bank,
+      detector: Stage.detector(fields, (context) =>
+        Effect.succeed({
+          _tag: "Resolved",
+          selections: context.fields.map(({ field }) => ({
+            _tag: "Undetected",
+            field,
+          })),
+        }),
+      ),
+      instructions: ["Collect a brief"],
+      selection: Stage.questionSelector(bank, (context) =>
+        Effect.succeed({
+          _tag: "Selected",
+          target: context.candidates.some(
+            (candidate) =>
+              candidate.target._tag === "Question" &&
+              candidate.target.field === "budget",
+          )
+            ? { _tag: "Question", field: "budget" }
+            : { _tag: "Finish" },
+        }),
+      ),
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const messages = [
+          Session.Message.submitted("Brand strategy: £30k design, £20k social"),
+        ]
+        const first = yield* interview.run({
+          state: interview.initialState,
+          messages,
+        })
+        expect(first.question?.field).toBe("budget")
+        const second = yield* interview.run({
+          state: first.state,
+          messages: [
+            ...messages,
+            Session.Message.authored(first.question?.text ?? ""),
+            Session.Message.submitted("yeah"),
+          ],
+        })
+        expect(second.state.accepted.budget).toEqual({
+          value: 50_000,
+          evidence: { messageIndex: 2, quote: "yeah" },
+        })
+      }).pipe(
+        Effect.provide(
+          model(
+            proposal({ goal: "Brand strategy", budget: null, timeline: null }, [
+              { field: "goal", quote: "Brand strategy" },
+            ]),
+            {
+              name: "submit_answers",
+              arguments: {
+                answers: { budget: 50_000, timeline: null },
+                evidence: [{ field: "budget", quote: "yeah" }],
+                declines: [],
+                nextQuestion: null,
+              },
+            },
+          ),
+        ),
+      ),
+    )
+  })
+
   test("malformed model selection falls back to an eligible required question", async () => {
     const interview = Stage.interview({
       name: "brief",

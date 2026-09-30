@@ -11,6 +11,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Fixed
 
 - Emit trace schema version 2 for composed-chat debug responses; they previously carried version-2 events under a version-1 label.
+- A reply to the issued pending question always reaches extraction, even when the detector judges it `Undetected`. The detector sees the reply alone, so a bare "yeah" to "Should I treat £277k as the budget?" was dropped and the question asked again. Extraction instructions now say that choosing an option or accepting a value the question proposed states that value.
 
 ### Changed
 
