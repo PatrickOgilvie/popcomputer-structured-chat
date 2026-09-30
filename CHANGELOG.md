@@ -8,6 +8,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-09-30
+
 ### Fixed
 
 - Emit trace schema version 2 for composed-chat debug responses; they previously carried version-2 events under a version-1 label.
@@ -385,7 +387,10 @@ const reply = Chat.turn(chat, input)
   questions, tools, commands, session persistence, browser presentation,
   assistant-ui integration, and transcript scenarios.
 
-[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.11.1...v0.12.0
+[0.11.1]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/4bf19c2...v0.10.0
 [0.9.1]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.9.0...v0.9.1
