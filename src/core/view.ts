@@ -6,7 +6,7 @@ import type { JsonValue } from "./json-value.js"
 export const ViewNameSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
   Schema.isMaxLength(100),
-  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/u),
 )
 
 /** Positive protocol version for one structured chat view. */

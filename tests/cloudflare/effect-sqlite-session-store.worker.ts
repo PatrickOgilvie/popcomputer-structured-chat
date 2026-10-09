@@ -2,7 +2,7 @@ import { SqliteClient } from "@effect/sql-sqlite-do"
 import { runInDurableObject } from "cloudflare:test"
 import { env } from "cloudflare:workers"
 import { Cause, Deferred, Effect, Exit, Fiber, Schema } from "effect"
-import { SqlClient } from "effect/unstable/sql"
+import { SqlClient } from "effect/sql"
 import { expect, test } from "vitest"
 
 import {

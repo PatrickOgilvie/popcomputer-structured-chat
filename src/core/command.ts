@@ -4,7 +4,7 @@ import { sha256Hex } from "./digest.js"
 
 /** Opaque deterministic identity shared by command attempts in one chat turn. */
 export const CommandIdSchema = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^cmd_[0-9a-f]{64}$/)),
+  Schema.check(Schema.isPattern(/^cmd_[0-9a-f]{64}$/u)),
   Schema.brand("CommandId"),
 )
 

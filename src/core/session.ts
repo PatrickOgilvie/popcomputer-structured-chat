@@ -9,21 +9,21 @@ import {
 export const ChatSessionIdSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
   Schema.isMaxLength(200),
-  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u),
 )
 
 /** Optional application-owned partition for otherwise public session IDs. */
 export const ChatSessionNamespaceSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
   Schema.isMaxLength(200),
-  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u),
 )
 
 /** Opaque optimistic revision emitted by a session store adapter. */
 export const ChatSessionRevisionSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
   Schema.isMaxLength(200),
-  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u),
 )
 
 /** Persisted session snapshot revalidated by the chat runtime after loading. */

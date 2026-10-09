@@ -4,7 +4,7 @@ import { Schema } from "effect"
 export const ChatNameSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
   Schema.isMaxLength(100),
-  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/u),
 )
 
 /** Positive persisted-state version for one structured chat definition. */

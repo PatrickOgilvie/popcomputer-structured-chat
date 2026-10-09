@@ -59,7 +59,7 @@ When session writes must commit with other application writes, create the store
 from the same client and use the client's `withTransaction`:
 
 ```ts
-import { SqlClient } from "effect/unstable/sql"
+import { SqlClient } from "effect/sql"
 
 const commit = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient

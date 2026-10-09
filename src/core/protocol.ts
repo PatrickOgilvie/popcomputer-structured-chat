@@ -25,7 +25,7 @@ export const AssistantDataPartSchema = Schema.Struct({
   name: Schema.Trimmed.check(
     Schema.isNonEmpty(),
     Schema.isMaxLength(100),
-    Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+    Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/u),
   ),
   data: Schema.Unknown,
 })

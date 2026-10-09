@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { Effect, Option, Predicate, Result, Schema } from "effect"
-import { FastCheck } from "effect/testing"
+import { Arbitrary, Effect, Option, Predicate, Result, Schema } from "effect"
 
 import { deriveCommandId } from "../src/core/command.js"
 import type { Binding, Event } from "../src/live/contracts.js"
@@ -59,46 +58,51 @@ const claimed = waiting.pipe(
 
 describe("Live domain transitions", () => {
   test("retains receipt order and ignores exact duplicates through generated persistence round trips", async () => {
-    await FastCheck.assert(
-      FastCheck.asyncProperty(
-        FastCheck.array(FastCheck.string({ maxLength: 32 }), {
-          minLength: 1,
-          maxLength: 20,
-        }),
-        async (deltas) => {
-          const state = await Effect.runPromise(
-            Effect.gen(function* () {
-              let current = persisted(State.initial(binding, null))
+    const result = await Effect.runPromise(
+      Arbitrary.checkEffect(
+        Arbitrary.array(
+          Arbitrary.schema(Schema.String.check(Schema.isMaxLength(32))),
+          { minLength: 1, maxLength: 20 },
+        ),
+        (deltas) =>
+          Effect.gen(function* () {
+            let current = persisted(State.initial(binding, null))
 
-              for (const [index, delta] of deltas.entries()) {
-                const event: Event = {
-                  _tag: "Transcript",
-                  fragment: {
-                    eventId: `event-${index}`,
-                    role: index % 2 === 0 ? "user" : "assistant",
-                    delta,
-                    startMs: index,
-                    endMs: index + 1,
-                  },
-                }
-
-                const next = yield* State.observe(current, event)
-                expect(next.value.reassess).toBe(true)
-                current = persisted(next.state)
-                const duplicate = yield* State.observe(current, event)
-                expect(duplicate.state).toBe(current)
-                expect(duplicate.value.reassess).toBe(false)
+            for (const [index, delta] of deltas.entries()) {
+              const event: Event = {
+                _tag: "Transcript",
+                fragment: {
+                  eventId: `event-${index}`,
+                  role: index % 2 === 0 ? "user" : "assistant",
+                  delta,
+                  startMs: index,
+                  endMs: index + 1,
+                },
               }
 
-              return current
-            }),
-          )
+              const next = yield* State.observe(current, event)
+              expect(next.value.reassess).toBe(true)
+              current = persisted(next.state)
+              const duplicate = yield* State.observe(current, event)
+              expect(duplicate.state).toBe(current)
+              expect(duplicate.value.reassess).toBe(false)
+            }
 
-          expect(state.fragments.map(({ delta }) => delta)).toEqual(deltas)
-        },
+            return current
+          }).pipe(
+            Effect.map((state) => {
+              expect(state.fragments.map(({ delta }) => delta)).toEqual(deltas)
+
+              return true
+            }),
+            // A thrown assertion is a shrinkable falsification, not a defect.
+            Effect.catchDefect(Effect.fail),
+          ),
+        { runs: 50 },
       ),
-      { numRuns: 50 },
     )
+
+    expect(Arbitrary.formatCheckFailure(result)).toBeUndefined()
   })
 
   test("distinguishes duplicate evidence from conflicting identities", async () => {

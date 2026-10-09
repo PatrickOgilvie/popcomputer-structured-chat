@@ -14,7 +14,7 @@ The framework derives the model tool schemas, runtime validation, workflow
 state, browser protocol, and Effect requirements from those definitions.
 
 ```sh
-bun add @popcomputer/structured-chat@next effect@^4.0.0-rc.109
+bun add @popcomputer/structured-chat@next effect@^4.0.0
 ```
 
 The published entry points are ESM-only and support Node.js 22 or newer.

@@ -13,8 +13,8 @@ import {
   Schema,
   Stream,
 } from "effect"
-import { HttpClient, HttpClientResponse } from "effect/unstable/http"
-import { Socket } from "effect/unstable/socket"
+import { HttpClient, HttpClientResponse } from "effect/http"
+import { Socket } from "effect/socket"
 
 import * as Live from "../src/integrations/live.js"
 import * as OpenAI from "../src/integrations/openai-live.js"
@@ -177,21 +177,23 @@ describe("OpenAI Live adapter", () => {
         const frames = yield* Queue.make<string>()
         const writes = yield* Ref.make<ReadonlyArray<unknown>>([])
 
-        const socket = Socket.make({
-          runRaw: (handler, options) =>
-            Effect.andThen(
-              options?.onOpen ?? Effect.void,
-              Stream.runForEach(
-                Stream.fromQueue(frames),
-                (frame) => handler(frame) ?? Effect.void,
-              ),
-            ),
-          writer: Effect.succeed((frame) => {
-            const parsed: unknown = JSON.parse(
-              Schema.decodeUnknownSync(Schema.String)(frame),
-            )
+        const write = (frame: Uint8Array | string | Socket.CloseEvent) => {
+          const parsed: unknown = JSON.parse(
+            Schema.decodeUnknownSync(Schema.String)(frame),
+          )
 
-            return Ref.update(writes, (values) => [...values, parsed])
+          return Ref.update(writes, (values) => [...values, parsed])
+        }
+
+        const socket = Socket.make({
+          reader: Effect.succeed({
+            pull: Queue.takeAll(frames),
+            upgrade: Socket.SocketUpgradeError.unsupported,
+          }),
+          writer: Effect.succeed({
+            write,
+            writeAll: (chunks) =>
+              Effect.forEach(chunks, write, { discard: true }),
           }),
         })
 
@@ -265,8 +267,14 @@ describe("OpenAI Live adapter", () => {
     const released: Array<string> = []
 
     const socket = Socket.make({
-      runRaw: () => Effect.never,
-      writer: Effect.succeed(() => Effect.void),
+      reader: Effect.succeed({
+        pull: Effect.never,
+        upgrade: Socket.SocketUpgradeError.unsupported,
+      }),
+      writer: Effect.succeed({
+        write: () => Effect.void,
+        writeAll: () => Effect.void,
+      }),
     })
 
     const identity = await Effect.runPromise(
@@ -393,8 +401,14 @@ describe("OpenAI Live adapter", () => {
         const ready = yield* Deferred.make<void>()
 
         const socket = Socket.make({
-          runRaw: () => Effect.never,
-          writer: Effect.succeed(() => Effect.void),
+          reader: Effect.succeed({
+            pull: Effect.never,
+            upgrade: Socket.SocketUpgradeError.unsupported,
+          }),
+          writer: Effect.succeed({
+            write: () => Effect.void,
+            writeAll: () => Effect.void,
+          }),
         })
 
         const consumer = yield* Live.Connection.pipe(

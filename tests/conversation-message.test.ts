@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { Predicate, Result, Schema } from "effect"
-import { FastCheck } from "effect/testing"
+import { Arbitrary, Effect, Predicate, Result, Schema } from "effect"
 
 import { Session } from "../src/index.js"
 
@@ -91,24 +90,34 @@ describe("source-bearing conversation messages", () => {
     ).toBeUndefined()
   })
 
-  test("preserves source authority through JSON round trips for every variant", () => {
-    FastCheck.assert(
-      FastCheck.property(
-        Schema.toArbitrary(Message.ConversationMessageSchema)(FastCheck),
-        (message) => {
-          const decoded = Schema.decodeUnknownSync(
-            Message.ConversationMessageSchema,
-          )(JSON.parse(JSON.stringify(message)), { onExcessProperty: "error" })
+  test("preserves source authority through JSON round trips for every variant", async () => {
+    const result = await Effect.runPromise(
+      Arbitrary.checkEffect(
+        Arbitrary.schema(Message.ConversationMessageSchema),
+        (message) =>
+          Effect.sync(() => {
+            const decoded = Schema.decodeUnknownSync(
+              Message.ConversationMessageSchema,
+            )(JSON.parse(JSON.stringify(message)), {
+              onExcessProperty: "error",
+            })
 
-          expect(decoded).toEqual(message)
-          expect(Message.canGroundAnswer(decoded, "confirmed")).toBe(
-            Predicate.isTagged(decoded, "Submitted"),
-          )
-          expect(Message.isAuthored(decoded)).toBe(
-            Predicate.isTagged(decoded, "Authored"),
-          )
-        },
+            expect(decoded).toEqual(message)
+            expect(Message.canGroundAnswer(decoded, "confirmed")).toBe(
+              Predicate.isTagged(decoded, "Submitted"),
+            )
+            expect(Message.isAuthored(decoded)).toBe(
+              Predicate.isTagged(decoded, "Authored"),
+            )
+
+            return true
+          }).pipe(
+            // A thrown assertion is a shrinkable falsification, not a defect.
+            Effect.catchDefect(Effect.fail),
+          ),
       ),
     )
+
+    expect(Arbitrary.formatCheckFailure(result)).toBeUndefined()
   })
 })
