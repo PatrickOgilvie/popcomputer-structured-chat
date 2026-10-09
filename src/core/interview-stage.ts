@@ -45,6 +45,7 @@ import {
   type QuestionSelectorRequirements,
 } from "./question-selection.js"
 import type { FixedQuestion, AdaptiveQuestion } from "./question.js"
+import { ownFields } from "./record.js"
 import { ToolContext } from "./tool-context.js"
 import type {
   ToolInputsContract,
@@ -391,9 +392,11 @@ export const defineInterviewStage = <
   })
   const rawStateSchema = Schema.Struct({
     ...base.stateFields,
-    declined: Schema.Struct(
-      Object.fromEntries(
-        optional.map((field) => [field, Schema.optionalKey(evidenceSchema)]),
+    declined: ownFields(
+      Schema.Struct(
+        Object.fromEntries(
+          optional.map((field) => [field, Schema.optionalKey(evidenceSchema)]),
+        ),
       ),
     ),
     phase: phaseSchema,

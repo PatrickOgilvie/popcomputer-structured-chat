@@ -8,12 +8,8 @@ import {
   Schema,
   Stream,
 } from "effect"
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http"
-import { Socket } from "effect/unstable/socket"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
+import { Socket } from "effect/socket"
 
 import {
   Connection,
@@ -165,16 +161,22 @@ const connectionLayer = (
     Effect.gen(function* () {
       const socket = yield* Socket.Socket
       const tokens = yield* TextTokens
-      const write = yield* socket.writer
+      const writer = yield* socket.writer
 
       const events = yield* Queue.make<Event, LiveConnectionFailure>({
         capacity: 256,
         strategy: "dropping",
       })
 
-      yield* socket
-        .runString((frame) =>
-          Effect.gen(function* () {
+      // The reader's pull never ends successfully: every close, clean or not,
+      // fails it with a SocketError, which is reported as `read_failed`.
+      yield* Effect.gen(function* () {
+        const pull = yield* Socket.readerString(socket)
+
+        while (true) {
+          const frames = yield* pull
+
+          for (const frame of frames) {
             if (frame.length > 1_000_000)
               return yield* new LiveConnectionFailure({
                 reason: "invalid_event",
@@ -193,24 +195,18 @@ const connectionLayer = (
               !(yield* Queue.offer(events, event.value))
             )
               return yield* new LiveConnectionFailure({ reason: "read_failed" })
-          }),
-        )
-        .pipe(
-          Effect.mapError((error) =>
-            Schema.is(LiveConnectionFailure)(error)
-              ? error
-              : new LiveConnectionFailure({ reason: "read_failed" }),
-          ),
-          Effect.matchCauseEffect({
-            onFailure: (cause) => Queue.failCause(events, cause),
-            onSuccess: () =>
-              Queue.fail(
-                events,
-                new LiveConnectionFailure({ reason: "unexpected_end" }),
-              ),
-          }),
-          Effect.forkScoped,
-        )
+          }
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.mapError((error) =>
+          Schema.is(LiveConnectionFailure)(error)
+            ? error
+            : new LiveConnectionFailure({ reason: "read_failed" }),
+        ),
+        Effect.catchCause((cause) => Queue.failCause(events, cause)),
+        Effect.forkScoped,
+      )
 
       return Connection.of({
         sessionId,
@@ -237,25 +233,29 @@ const connectionLayer = (
             return yield* new InvalidLivePresentation({
               reason: "speech_budget",
             })
-          yield* write(
-            JSON.stringify({
-              type: "session.commentary.append",
-              event_id: append.eventId,
-              delegation_id: append.delegationId,
-              content: append.content,
-            }),
-          ).pipe(
-            Effect.mapError(
-              () => new LiveConnectionFailure({ reason: "write_failed" }),
-            ),
-          )
+          yield* writer
+            .write(
+              JSON.stringify({
+                type: "session.commentary.append",
+                event_id: append.eventId,
+                delegation_id: append.delegationId,
+                content: append.content,
+              }),
+            )
+            .pipe(
+              Effect.mapError(
+                () => new LiveConnectionFailure({ reason: "write_failed" }),
+              ),
+            )
         }),
         close: Effect.fn("popcomputer.structured_chat.live.openai.close")(() =>
-          write(JSON.stringify({ type: "session.close" })).pipe(
-            Effect.mapError(
-              () => new LiveConnectionFailure({ reason: "write_failed" }),
+          writer
+            .write(JSON.stringify({ type: "session.close" }))
+            .pipe(
+              Effect.mapError(
+                () => new LiveConnectionFailure({ reason: "write_failed" }),
+              ),
             ),
-          ),
         ),
       })
     }),

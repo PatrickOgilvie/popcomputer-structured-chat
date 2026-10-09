@@ -75,7 +75,7 @@ import {
   type QuestionDefinitionContract,
   type QuestionChoice,
 } from "./question.js"
-import { getOwn } from "./record.js"
+import { getOwn, ownFields } from "./record.js"
 import type { RepairCorrection } from "./repair.js"
 import { StageNameSchema } from "./stage-name.js"
 import type { ToolPlanningFrame } from "./tool-selection.js"
@@ -115,7 +115,7 @@ export type AnswerStateEntryOf<Stage> = Stage extends {
 /** Stable machine-facing key for one collect-stage answer field. */
 export const CollectAnswerFieldNameSchema = Schema.String.check(
   Schema.isMaxLength(60),
-  Schema.isPattern(/^[a-z][a-zA-Z0-9_]*$/),
+  Schema.isPattern(/^[a-z][a-zA-Z0-9_]*$/u),
 )
 
 type AnswerValue<Answer> =
@@ -785,10 +785,12 @@ export const createAnswerCollection = <
     Object.fromEntries(fieldNames.map((field) => [field, issuedQuestionSchema]))
 
   const rawStateSchema = Schema.Struct({
-    accepted: Schema.Struct(acceptedFields).mapFields(
-      Struct.map(Schema.optional),
+    accepted: ownFields(
+      Schema.Struct(acceptedFields).mapFields(Struct.map(Schema.optional)),
     ),
-    asked: Schema.Struct(askedFields).mapFields(Struct.map(Schema.optional)),
+    asked: ownFields(
+      Schema.Struct(askedFields).mapFields(Struct.map(Schema.optional)),
+    ),
     clarifying: Schema.optionalKey(
       Schema.Array(fieldSchema).check(
         Schema.isMaxLength(fieldNames.length),

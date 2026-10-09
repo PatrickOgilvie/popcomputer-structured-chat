@@ -10,7 +10,7 @@ import type { UntrustedMessage } from "./model.js"
 export const ModelGuardNameSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
   Schema.isMaxLength(100),
-  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/u),
 )
 
 /** Safe context supplied before a structured model request begins. */

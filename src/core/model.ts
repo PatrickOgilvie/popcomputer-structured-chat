@@ -120,7 +120,7 @@ const ModelProfileTypeId: unique symbol = Symbol.for(
 export const ModelProfileNameSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
   Schema.isMaxLength(100),
-  Schema.isPattern(/^(?!default$)[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+  Schema.isPattern(/^(?!default$)[a-z0-9]+(?:[._-][a-z0-9]+)*$/u),
 )
 
 /** Stable machine-facing name for one named model profile. */

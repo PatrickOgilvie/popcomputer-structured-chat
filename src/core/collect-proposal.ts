@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect"
 
 import { JsonValueSchema } from "./json-value.js"
+import { ownFields } from "./record.js"
 import { defineToolSet } from "./tool-set.js"
 import { defineTool } from "./tool.js"
 
@@ -14,9 +15,11 @@ export const collectProposalPlanner = (
   modelInput: Schema.Codec<unknown, unknown>,
 ) => {
   const input = Schema.Struct({
-    answers: Schema.Struct(
-      Object.fromEntries(
-        fields.map((field) => [field, Schema.optionalKey(JsonValueSchema)]),
+    answers: ownFields(
+      Schema.Struct(
+        Object.fromEntries(
+          fields.map((field) => [field, Schema.optionalKey(JsonValueSchema)]),
+        ),
       ),
     ),
     evidence: Schema.Array(

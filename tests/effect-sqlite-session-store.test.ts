@@ -14,8 +14,8 @@ import {
   type Scope,
   Tracer,
 } from "effect"
+import { SqlClient } from "effect/sql"
 import { TestClock } from "effect/testing"
-import { SqlClient } from "effect/unstable/sql"
 
 import {
   makeSqliteChatSessionStore,

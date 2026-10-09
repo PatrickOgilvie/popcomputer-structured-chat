@@ -45,7 +45,7 @@ import {
 } from "@popcomputer/structured-chat/testing"
 import * as TypeSafe from "@popcomputer/structured-chat/typesafe"
 import { Effect, Layer, Schema } from "effect"
-import { Socket } from "effect/unstable/socket"
+import { Socket } from "effect/socket"
 
 const liveSpeech: Effect.Effect<Live.Presentation, Live.InvalidPresentation> =
   Live.say("Hello.")
@@ -321,12 +321,12 @@ const sqlApi = await import("@popcomputer/structured-chat/sqlite")
 const sqliteStore: Effect.Effect<
   Root.Session.StoreService,
   never,
-  import("effect/unstable/sql/SqlClient").SqlClient
+  import("effect/sql/SqlClient").SqlClient
 > = sqliteApi.makeSqliteChatSessionStore()
 const sqliteLayer: Layer.Layer<
   Root.Session.Store,
   never,
-  import("effect/unstable/sql/SqlClient").SqlClient
+  import("effect/sql/SqlClient").SqlClient
 > = sqliteApi.layer()
 const sqlPort: import("@popcomputer/structured-chat/sqlite").ChatSessionSql = {
   read: () => Effect.succeed(null),

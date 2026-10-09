@@ -21,7 +21,7 @@ import type { ViewDefinitionContract, ViewInput, ViewPart } from "./view.js"
 export const ToolNameSchema = Schema.Trimmed.check(
   Schema.isNonEmpty(),
   Schema.isMaxLength(100),
-  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+  Schema.isPattern(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/u),
 )
 
 /** Bounded model-facing description for one structured chat tool. */
@@ -521,8 +521,10 @@ const projectViews = <
   )
 
 const makeModelInputSchema = (schema: ToolSchema): JsonSchema.JsonSchema => {
+  // Tool inputs are decoded with `onExcessProperty: "error"`; the model-facing
+  // schema closes unmodeled properties to match.
   const document = JsonSchema.toDocumentDraft07(
-    Schema.toJsonSchemaDocument(schema),
+    Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" }),
   )
 
   const definitions =

@@ -8,6 +8,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- Require stable Effect 4: the `effect` peer range is `^4.0.0`, and the package is developed and tested against `effect` and the `@effect/sql-sqlite-*` drivers at 4.0.2. Effect's former `effect/unstable/*` entry points are now `effect/*`, so `/effect-sqlite` and its guide use `effect/sql`.
+- The `/live/openai` connection reads host sockets through Effect 4's pull-based `Socket` reader and writer. Any socket close, clean or not, still fails the event stream with `read_failed`.
+- Model tool input schemas keep `additionalProperties: false`; Effect 4.0.2 otherwise leaves unmodeled properties open when generating JSON Schema.
+- Identifier, name, and digest patterns use Unicode (`u`) regular expressions, so they still appear as `pattern` in generated JSON Schema. Effect 4.0.2 exports a pattern only when the expression is Unicode; matching is unchanged.
+- Answer field names that are also `Object.prototype` members, such as `constructor`, keep working. Stage state and the collection transport envelope treat these fields as present only when they are own properties, although Effect 4.0.2 Structs read declared fields through the prototype chain.
+
+### Consumer notes
+
+- Upgrade `effect` to 4.0.x, with every `@effect/*` package on the same version. Socket layers passed to `OpenAILive.connection` must provide Effect 4's `Socket` (`reader` and `writer`); `Socket.fromWebSocket`, `Socket.makeWebSocket` and `Socket.layerWebSocket` do. Their `closeCodeIsError` option no longer exists.
+- A tool whose input is `Schema.Struct({})` now advertises `{ "not": { "type": "null" } }` instead of `{ "anyOf": [{ "type": "object" }, { "type": "array" }] }`, following Effect 4.0.2's JSON Schema output. Other generated tool schemas are unchanged apart from compacted constraint and definition layout.
+
 ## [0.12.1] - 2026-09-30
 
 ### Fixed
