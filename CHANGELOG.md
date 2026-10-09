@@ -8,6 +8,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-09
+
 ### Changed
 
 - Require stable Effect 4: the `effect` peer range is `^4.0.0`, and the package is developed and tested against `effect` and the `@effect/sql-sqlite-*` drivers at 4.0.2. Effect's former `effect/unstable/*` entry points are now `effect/*`, so `/effect-sqlite` and its guide use `effect/sql`.
@@ -400,7 +402,8 @@ const reply = Chat.turn(chat, input)
   questions, tools, commands, session persistence, browser presentation,
   assistant-ui integration, and transcript scenarios.
 
-[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/PatrickOgilvie/popcomputer-structured-chat/compare/v0.11.0...v0.11.1
